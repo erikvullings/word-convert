@@ -1,0 +1,19 @@
+{
+  "name": "active-svg.docx",
+  "category": "hostile",
+  "features": [
+    "active-svg",
+    "script",
+    "event-handler",
+    "external-svg-resource"
+  ],
+  "sha256": "306ee521c95875c9fc6fb63afc64964bd55201f13198c27f0cbff8e7346b885f",
+  "byteLength": 2433,
+  "entries": [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "word/document.xml",
+    "word/styles.xml",
+    "word/media/active.svg"
+  ]
+}

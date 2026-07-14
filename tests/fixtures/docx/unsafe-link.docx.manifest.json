@@ -1,0 +1,17 @@
+{
+  "name": "unsafe-link.docx",
+  "category": "hostile",
+  "features": [
+    "javascript-url",
+    "remote-resource"
+  ],
+  "sha256": "c7f84f891a4a1d470aee03041d9f58ca9b669c6c6fde1b910a85e55bb1fe444c",
+  "byteLength": 1813,
+  "entries": [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "word/document.xml",
+    "word/styles.xml",
+    "word/_rels/document.xml.rels"
+  ]
+}

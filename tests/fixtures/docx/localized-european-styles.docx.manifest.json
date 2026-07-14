@@ -1,0 +1,24 @@
+{
+  "name": "localized-european-styles.docx",
+  "category": "localized",
+  "features": [
+    "dutch",
+    "german",
+    "french",
+    "spanish",
+    "italian",
+    "polish",
+    "swedish",
+    "caption",
+    "quotation",
+    "subtitle"
+  ],
+  "sha256": "3f11c51a55e47244d017626de9c361bd2955884f67bd94eeb1314c4368ab84dd",
+  "byteLength": 1501,
+  "entries": [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "word/document.xml",
+    "word/styles.xml"
+  ]
+}

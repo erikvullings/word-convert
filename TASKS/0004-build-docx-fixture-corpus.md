@@ -1,9 +1,9 @@
 # 0004 Build DOCX fixture corpus
 
-Status: open
+Status: done
 Priority: high
-Owner: unassigned
-Agent: unassigned
+Owner: erikvullings
+Agent: codex
 Area: testing
 Depends on: 0003
 
@@ -26,3 +26,5 @@ Create reproducible valid, edge-case, localized, mathematical, and hostile DOCX 
 ## Agent Notes
 
 - Next step: create a fixture matrix mapping requirements to files and assertions.
+- 2026-07-14: Started implementation. The corpus will use a dependency-free Node generator with deterministic ZIP metadata, small committed fixtures and JSON structural manifests. Oversized entry-count and expanded-size limit cases will remain generated on demand.
+- 2026-07-14: Completed `scripts/generate-docx-fixtures.mjs`, the committed synthetic corpus and per-file structural manifests under `tests/fixtures/docx/`, and `tests/fixtures.test.ts`. The comprehensive fixture covers document structures, metadata, media, notes, revisions, page furniture, Unicode/RTL, and OMML; focused fixtures cover localized styles, visual heading inference, malformed/traversal/compression limits, unsafe links, active SVG, unsafe XML, and macro content. Entry-count and expanded-size fixtures are generated on demand to keep Git small. Verified byte-for-byte regeneration, ZIP integrity, workspace tests, typecheck, lint, formatting, and production build.

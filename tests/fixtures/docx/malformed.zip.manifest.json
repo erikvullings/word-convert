@@ -1,0 +1,10 @@
+{
+  "name": "malformed.zip",
+  "category": "hostile",
+  "features": [
+    "malformed-zip"
+  ],
+  "sha256": "f9567e0e55b04cc97a1e13fef25100ef5713a21b34a212f334ea30164623907c",
+  "byteLength": 31,
+  "entries": []
+}

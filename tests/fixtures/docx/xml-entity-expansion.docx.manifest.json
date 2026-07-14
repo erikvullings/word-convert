@@ -1,0 +1,17 @@
+{
+  "name": "xml-entity-expansion.docx",
+  "category": "hostile",
+  "features": [
+    "doctype",
+    "external-entity",
+    "entity-expansion"
+  ],
+  "sha256": "5689a1401f557408e9550b9662dce03fc52859c7d3953ed890f345e7c8de9e83",
+  "byteLength": 1502,
+  "entries": [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "word/document.xml",
+    "word/styles.xml"
+  ]
+}

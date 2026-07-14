@@ -1,0 +1,28 @@
+{
+  "name": "unsupported-macro.docm",
+  "category": "unsupported",
+  "features": [
+    "macro-enabled-content"
+  ],
+  "sha256": "b9d6c4c369c3ea01ceb88e51754b0a13bb55e5e6ca1906fcdb2e8d860731320f",
+  "byteLength": 5729,
+  "entries": [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "word/document.xml",
+    "word/styles.xml",
+    "word/_rels/document.xml.rels",
+    "word/numbering.xml",
+    "word/footnotes.xml",
+    "word/endnotes.xml",
+    "word/comments.xml",
+    "word/header1.xml",
+    "word/footer1.xml",
+    "docProps/core.xml",
+    "docProps/app.xml",
+    "docProps/custom.xml",
+    "word/media/image1.png",
+    "word/media/image2.png",
+    "word/vbaProject.bin"
+  ]
+}

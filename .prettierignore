@@ -3,3 +3,5 @@ dist
 coverage
 pnpm-lock.yaml
 *.md
+tests/fixtures/docx/*.manifest.json
+tests/fixtures/docx/corpus.json

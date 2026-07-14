@@ -1,0 +1,239 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2024-01-01T00:00:00.000Z",
+  "fixtures": [
+    {
+      "name": "standard-comprehensive.docx",
+      "category": "valid",
+      "features": [
+        "standard-headings",
+        "custom-styles",
+        "lists",
+        "nested-lists",
+        "tables",
+        "hyperlinks",
+        "footnotes",
+        "endnotes",
+        "comments",
+        "tracked-changes",
+        "headers",
+        "footers",
+        "watermark",
+        "multiple-images",
+        "cover-page",
+        "metadata",
+        "omml-inline",
+        "omml-display",
+        "fraction",
+        "root",
+        "matrix",
+        "superscript",
+        "subscript",
+        "unicode",
+        "rtl"
+      ],
+      "sha256": "8304d5ad8939a8525c0aaa83bd528650f2a4cac9a182d6b01c7e8ddd32eb090b",
+      "byteLength": 5591,
+      "entries": [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "word/document.xml",
+        "word/styles.xml",
+        "word/_rels/document.xml.rels",
+        "word/numbering.xml",
+        "word/footnotes.xml",
+        "word/endnotes.xml",
+        "word/comments.xml",
+        "word/header1.xml",
+        "word/footer1.xml",
+        "docProps/core.xml",
+        "docProps/app.xml",
+        "docProps/custom.xml",
+        "word/media/image1.png",
+        "word/media/image2.png"
+      ]
+    },
+    {
+      "name": "localized-european-styles.docx",
+      "category": "localized",
+      "features": [
+        "dutch",
+        "german",
+        "french",
+        "spanish",
+        "italian",
+        "polish",
+        "swedish",
+        "caption",
+        "quotation",
+        "subtitle"
+      ],
+      "sha256": "3f11c51a55e47244d017626de9c361bd2955884f67bd94eeb1314c4368ab84dd",
+      "byteLength": 1501,
+      "entries": [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "word/document.xml",
+        "word/styles.xml"
+      ]
+    },
+    {
+      "name": "visual-heading.docx",
+      "category": "edge-case",
+      "features": [
+        "unstyled-visual-heading",
+        "font-size",
+        "bold",
+        "spacing",
+        "short-paragraph"
+      ],
+      "sha256": "bec8fddc743193425218772e57a7e6214a9ca84ba0b0ead3c99b3b0a4a01a570",
+      "byteLength": 1525,
+      "entries": [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "word/document.xml",
+        "word/styles.xml"
+      ]
+    },
+    {
+      "name": "path-traversal.docx",
+      "category": "hostile",
+      "features": [
+        "zip-path-traversal"
+      ],
+      "sha256": "e25be67f054d4d8eeca8bf9b318c92a757746250ef2e50d0381323ad6c2a302f",
+      "byteLength": 1876,
+      "entries": [
+        "../outside.xml",
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "word/document.xml"
+      ]
+    },
+    {
+      "name": "compression-ratio.docx",
+      "category": "hostile",
+      "features": [
+        "extreme-compression-ratio"
+      ],
+      "sha256": "f3d9078e03e3d7af9920dba5e25a4cf025aaa3e266729a7fea7f0e55211e99d6",
+      "byteLength": 404,
+      "entries": [
+        "word/document.xml"
+      ]
+    },
+    {
+      "name": "unsafe-link.docx",
+      "category": "hostile",
+      "features": [
+        "javascript-url",
+        "remote-resource"
+      ],
+      "sha256": "c7f84f891a4a1d470aee03041d9f58ca9b669c6c6fde1b910a85e55bb1fe444c",
+      "byteLength": 1813,
+      "entries": [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "word/document.xml",
+        "word/styles.xml",
+        "word/_rels/document.xml.rels"
+      ]
+    },
+    {
+      "name": "active-svg.docx",
+      "category": "hostile",
+      "features": [
+        "active-svg",
+        "script",
+        "event-handler",
+        "external-svg-resource"
+      ],
+      "sha256": "306ee521c95875c9fc6fb63afc64964bd55201f13198c27f0cbff8e7346b885f",
+      "byteLength": 2433,
+      "entries": [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "word/document.xml",
+        "word/styles.xml",
+        "word/media/active.svg"
+      ]
+    },
+    {
+      "name": "xml-entity-expansion.docx",
+      "category": "hostile",
+      "features": [
+        "doctype",
+        "external-entity",
+        "entity-expansion"
+      ],
+      "sha256": "5689a1401f557408e9550b9662dce03fc52859c7d3953ed890f345e7c8de9e83",
+      "byteLength": 1502,
+      "entries": [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "word/document.xml",
+        "word/styles.xml"
+      ]
+    },
+    {
+      "name": "unsupported-macro.docm",
+      "category": "unsupported",
+      "features": [
+        "macro-enabled-content"
+      ],
+      "sha256": "b9d6c4c369c3ea01ceb88e51754b0a13bb55e5e6ca1906fcdb2e8d860731320f",
+      "byteLength": 5729,
+      "entries": [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "word/document.xml",
+        "word/styles.xml",
+        "word/_rels/document.xml.rels",
+        "word/numbering.xml",
+        "word/footnotes.xml",
+        "word/endnotes.xml",
+        "word/comments.xml",
+        "word/header1.xml",
+        "word/footer1.xml",
+        "docProps/core.xml",
+        "docProps/app.xml",
+        "docProps/custom.xml",
+        "word/media/image1.png",
+        "word/media/image2.png",
+        "word/vbaProject.bin"
+      ]
+    },
+    {
+      "name": "malformed.zip",
+      "category": "hostile",
+      "features": [
+        "malformed-zip"
+      ],
+      "sha256": "f9567e0e55b04cc97a1e13fef25100ef5713a21b34a212f334ea30164623907c",
+      "byteLength": 31,
+      "entries": []
+    }
+  ],
+  "generatedOnDemand": [
+    {
+      "name": "entry-count-limit.zip",
+      "features": [
+        "excessive-entry-count"
+      ],
+      "defaults": {
+        "entries": 2048
+      }
+    },
+    {
+      "name": "expanded-size-limit.zip",
+      "features": [
+        "excessive-expanded-size",
+        "memory-exhaustion"
+      ],
+      "defaults": {
+        "bytes": 8388608
+      }
+    }
+  ]
+}

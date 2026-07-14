@@ -1,0 +1,19 @@
+{
+  "name": "visual-heading.docx",
+  "category": "edge-case",
+  "features": [
+    "unstyled-visual-heading",
+    "font-size",
+    "bold",
+    "spacing",
+    "short-paragraph"
+  ],
+  "sha256": "bec8fddc743193425218772e57a7e6214a9ca84ba0b0ead3c99b3b0a4a01a570",
+  "byteLength": 1525,
+  "entries": [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "word/document.xml",
+    "word/styles.xml"
+  ]
+}

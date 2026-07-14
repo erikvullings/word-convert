@@ -1,0 +1,12 @@
+{
+  "name": "compression-ratio.docx",
+  "category": "hostile",
+  "features": [
+    "extreme-compression-ratio"
+  ],
+  "sha256": "f3d9078e03e3d7af9920dba5e25a4cf025aaa3e266729a7fea7f0e55211e99d6",
+  "byteLength": 404,
+  "entries": [
+    "word/document.xml"
+  ]
+}

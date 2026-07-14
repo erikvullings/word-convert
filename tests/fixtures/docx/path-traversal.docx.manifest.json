@@ -1,0 +1,15 @@
+{
+  "name": "path-traversal.docx",
+  "category": "hostile",
+  "features": [
+    "zip-path-traversal"
+  ],
+  "sha256": "e25be67f054d4d8eeca8bf9b318c92a757746250ef2e50d0381323ad6c2a302f",
+  "byteLength": 1876,
+  "entries": [
+    "../outside.xml",
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "word/document.xml"
+  ]
+}
