@@ -55,6 +55,23 @@ describe('SPA state', () => {
     expect(loadPreferences(storage)).toEqual(preferences);
   });
 
+  it('rejects stored presets with unknown mapping values', () => {
+    const storage = new MemoryStorage();
+    persistPreferences(storage, {
+      theme: 'dark',
+      outputFormat: 'html',
+      mappingPresets: { unsafe: { Heading1: 'heading1' } },
+    });
+    const key = [...storage.values.keys()][0];
+    if (!key) throw new Error('No preference key');
+    storage.values.set(
+      key,
+      '{"theme":"dark","outputFormat":"html","mappingPresets":{"unsafe":{"Heading1":"script"}}}',
+    );
+
+    expect(loadPreferences(storage).mappingPresets).toEqual({});
+  });
+
   it('accepts DOCX files and rejects unsafe or misleading input', () => {
     expect(validateDocxFile({ name: 'report.docx', type: '' })).toBeUndefined();
     expect(validateDocxFile({ name: 'macro.docm', type: '' })).toContain(

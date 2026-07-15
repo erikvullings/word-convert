@@ -4,6 +4,7 @@ import type {
   DocumentModel,
   StyleMapping,
 } from '@wordconvert/document-model';
+import { STYLE_MAPPINGS } from './editors.ts';
 
 export const WORKFLOW_STAGES = [
   'Select document',
@@ -41,6 +42,9 @@ export interface AppState {
   model?: DocumentModel;
   output?: DownloadOutput;
   error?: ConversionError;
+  styleMappings: Record<string, StyleMapping>;
+  presetText: string;
+  editorNotice?: string;
   preferences: Preferences;
 }
 
@@ -67,7 +71,14 @@ export function createInitialState(
   conversionDate: string,
   preferences: Preferences = DEFAULT_PREFERENCES,
 ): AppState {
-  return { stage: 0, status: 'idle', conversionDate, preferences };
+  return {
+    stage: 0,
+    status: 'idle',
+    conversionDate,
+    styleMappings: {},
+    presetText: '',
+    preferences,
+  };
 }
 
 export function validateDocxFile(file: FileDescriptor): string | undefined {
@@ -93,14 +104,37 @@ export function loadPreferences(storage: PreferenceStorage): Preferences {
     if (
       !['system', 'light', 'dark'].includes(value.theme ?? '') ||
       !['html', 'markdown'].includes(value.outputFormat ?? '') ||
-      typeof value.mappingPresets !== 'object' ||
-      value.mappingPresets === null
+      !isMappingPresets(value.mappingPresets)
     )
       return DEFAULT_PREFERENCES;
     return value as Preferences;
   } catch {
     return DEFAULT_PREFERENCES;
   }
+}
+
+function isMappingPresets(
+  value: unknown,
+): value is Record<string, Record<string, StyleMapping>> {
+  if (!isPlainRecord(value)) return false;
+  return Object.values(value).every(
+    (preset) =>
+      isPlainRecord(preset) &&
+      Object.values(preset).every(
+        (mapping) =>
+          typeof mapping === 'string' &&
+          (STYLE_MAPPINGS as readonly string[]).includes(mapping),
+      ),
+  );
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
 }
 
 export { DOCX_MEDIA_TYPE };

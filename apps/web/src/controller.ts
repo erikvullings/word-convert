@@ -1,6 +1,18 @@
 import m from 'mithril';
+import type { Person, StyleMapping } from '@wordconvert/document-model';
 
 import type { AppController } from './app.ts';
+import {
+  acceptHighConfidenceMappings,
+  addAuthor,
+  exportStylePreset,
+  importStylePreset,
+  removeAuthor,
+  setMetadataField,
+  setSubjects,
+  updateAuthor,
+  type EditableMetadataField,
+} from './editors.ts';
 import {
   createInitialState,
   loadPreferences,
@@ -19,6 +31,8 @@ export function createBrowserController(): AppController {
   const worker = new Worker(new URL('./worker/index.ts', import.meta.url), {
     type: 'module',
   });
+  let sourceInput: ArrayBuffer | undefined;
+  let sourceFilename: string | undefined;
   worker.addEventListener('message', (event: MessageEvent<WorkerResponse>) => {
     applyResponse(state, event.data);
     m.redraw();
@@ -47,14 +61,16 @@ export function createBrowserController(): AppController {
       state.status = 'analysing';
       state.operationId = operationId('analyse');
       void file.arrayBuffer().then((input) => {
+        sourceInput = input;
+        sourceFilename = file.name;
         const request: WorkerRequest = {
           type: 'analyse',
           operationId: state.operationId ?? operationId('analyse'),
-          input,
+          input: input.slice(0),
           filename: file.name,
           conversionDate: state.conversionDate,
         };
-        worker.postMessage(request, [input]);
+        worker.postMessage(request, [request.input]);
       });
     },
     cancel() {
@@ -95,6 +111,95 @@ export function createBrowserController(): AppController {
     setOutputFormat(format) {
       state.preferences.outputFormat = format;
       persistPreferences(localStorage, state.preferences);
+    },
+    setStyleMapping(styleId: string, mapping: StyleMapping) {
+      state.styleMappings = { ...state.styleMappings, [styleId]: mapping };
+    },
+    acceptHighConfidence() {
+      state.styleMappings = acceptHighConfidenceMappings(
+        state.model?.styles ?? [],
+        state.styleMappings,
+      );
+    },
+    rerunAnalysis() {
+      if (!sourceInput || !sourceFilename) return;
+      state.status = 'analysing';
+      state.operationId = operationId('analyse');
+      const input = sourceInput.slice(0);
+      worker.postMessage(
+        {
+          type: 'analyse',
+          operationId: state.operationId,
+          input,
+          filename: sourceFilename,
+          conversionDate: state.conversionDate,
+          styleMappings: state.styleMappings,
+        } satisfies WorkerRequest,
+        [input],
+      );
+    },
+    setPresetText(value: string) {
+      state.presetText = value;
+      delete state.editorNotice;
+    },
+    importPreset() {
+      const result = importStylePreset(state.presetText);
+      if (!result.ok || !result.mappings) {
+        state.editorNotice = result.error ?? 'The preset is invalid.';
+        return;
+      }
+      state.styleMappings = result.mappings;
+      state.editorNotice = 'Preset imported. Rerun analysis to apply it.';
+    },
+    exportPreset() {
+      state.presetText = exportStylePreset(state.styleMappings);
+      state.editorNotice = 'Preset JSON is ready to copy or save.';
+    },
+    savePreset(name: string) {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      state.preferences.mappingPresets[trimmed] = { ...state.styleMappings };
+      persistPreferences(localStorage, state.preferences);
+      state.editorNotice = `Saved preset “${trimmed}”.`;
+    },
+    loadPreset(name: string) {
+      const preset = state.preferences.mappingPresets[name];
+      if (preset) state.styleMappings = { ...preset };
+    },
+    setMetadata(field: EditableMetadataField, value: string) {
+      if (!state.model) return;
+      state.model = {
+        ...state.model,
+        metadata: setMetadataField(state.model.metadata, field, value),
+      };
+    },
+    setSubjects(value: string) {
+      if (!state.model) return;
+      state.model = {
+        ...state.model,
+        metadata: setSubjects(state.model.metadata, value.split(',')),
+      };
+    },
+    addAuthor() {
+      if (!state.model) return;
+      state.model = {
+        ...state.model,
+        metadata: addAuthor(state.model.metadata),
+      };
+    },
+    updateAuthor(index: number, person: Person) {
+      if (!state.model) return;
+      state.model = {
+        ...state.model,
+        metadata: updateAuthor(state.model.metadata, index, person),
+      };
+    },
+    removeAuthor(index: number) {
+      if (!state.model) return;
+      state.model = {
+        ...state.model,
+        metadata: removeAuthor(state.model.metadata, index),
+      };
     },
   };
 }

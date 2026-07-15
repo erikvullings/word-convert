@@ -41,7 +41,9 @@ body {
   color: var(--ink);
 }
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 .app {
@@ -204,6 +206,89 @@ h1 {
 .progress-status {
   margin-top: 2rem;
 }
+.editor {
+  display: grid;
+  gap: 1.5rem;
+}
+.editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.table-scroll:focus-visible,
+.editor :is(input, select, textarea, button):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.style-table {
+  width: 100%;
+  min-width: 62rem;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+.style-table th,
+.style-table td {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.style-table th small,
+.sample,
+.provenance {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--muted);
+}
+.preset-editor,
+.authors {
+  display: grid;
+  gap: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  padding: 1rem;
+}
+.preset-editor label,
+.metadata-field,
+.author-card label {
+  display: grid;
+  gap: 0.35rem;
+}
+.editor :is(input, select, textarea) {
+  max-width: 100%;
+  padding: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.35rem;
+  background: var(--panel);
+  color: var(--ink);
+}
+.metadata-editor {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.metadata-editor > .help,
+.metadata-editor > .authors,
+.metadata-editor > button {
+  grid-column: 1 / -1;
+}
+.author-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
 
 @media (max-width: 720px) {
   .app-header {
@@ -215,5 +300,9 @@ h1 {
   }
   .summary {
     order: -1;
+  }
+  .metadata-editor,
+  .author-card {
+    grid-template-columns: 1fr;
   }
 }

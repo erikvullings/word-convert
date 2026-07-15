@@ -41,6 +41,9 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
             {
               filename: request.filename,
               conversionDate: request.conversionDate,
+              ...(request.styleMappings
+                ? { styleMappings: request.styleMappings }
+                : {}),
               cancellation: signal,
               onProgress: (progress) =>
                 send({

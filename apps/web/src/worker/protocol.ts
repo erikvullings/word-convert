@@ -2,6 +2,7 @@ import type {
   ConversionError,
   ConversionProgress,
   DocumentModel,
+  StyleMapping,
 } from '@wordconvert/document-model';
 
 export type WorkerRequest =
@@ -11,6 +12,7 @@ export type WorkerRequest =
       input: ArrayBuffer;
       filename: string;
       conversionDate: string;
+      styleMappings?: Readonly<Record<string, StyleMapping>>;
     }
   | {
       type: 'convert';

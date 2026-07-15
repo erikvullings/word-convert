@@ -8,6 +8,10 @@ The Mithril SPA presents the eight conversion stages from document selection thr
 
 Analysis and output generation run in a Web Worker through a typed protocol with transferable input/output buffers, progress messages, cancellation, private structured errors, and per-operation cleanup. The worker delegates directly to `@wordconvert/docx-reader`, `@wordconvert/html-writer`, and `@wordconvert/markdown-writer`; it contains no conversion logic. The initial flow supports standalone HTML and single-file Markdown downloads.
 
+The style review table exposes each proposal, confidence, evidence, examples, effective formatting, and every semantic mapping. Mappings can be edited individually, accepted in bulk when confidence is high, and applied by rerunning analysis. Versioned JSON presets can be validated, imported, exported as plain text, and saved locally; invalid schema versions and mapping values are rejected.
+
+The metadata review stage covers title, subtitle, structured authors, language, publisher, description, subjects, version, source creation and modification dates, publication and conversion dates, identifier, and rights. Each value shows its provenance, confidence, and extracted, inferred, default, or user-edited status. Editor state remains in memory while moving between workflow stages.
+
 ## Style and metadata analysis
 
 `@wordconvert/docx-reader` separates OOXML extraction from analysis and final model construction. `analyseStyles` reports every used paragraph and character style with inherited effective formatting, usage samples, a proposed semantic mapping, confidence, and reasons. Heading evidence follows the documented precedence; font size is never sufficient by itself.

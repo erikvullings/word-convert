@@ -39,6 +39,43 @@ describe('worker runtime', () => {
     expect(runtime.activeOperationCount()).toBe(0);
   });
 
+  it('rebuilds the model with explicit edited style mappings', async () => {
+    const sent: WorkerResponse[] = [];
+    const runtime = createWorkerRuntime((message) => sent.push(message));
+    await runtime.handle({
+      type: 'analyse',
+      operationId: 'initial',
+      input: await fixtureBuffer(),
+      filename: 'fixture.docx',
+      conversionDate: '2026-07-15',
+    });
+    const initial = sent.find((message) => message.type === 'analysed');
+    if (!initial || initial.type !== 'analysed') throw new Error('No model');
+    const styleId = initial.model.styles[0]?.id;
+    if (!styleId) throw new Error('No analysed style');
+
+    await runtime.handle({
+      type: 'analyse',
+      operationId: 'rerun',
+      input: await fixtureBuffer(),
+      filename: 'fixture.docx',
+      conversionDate: '2026-07-15',
+      styleMappings: { [styleId]: 'ignore' },
+    });
+
+    const rerun = sent.find(
+      (message) =>
+        message.type === 'analysed' && message.operationId === 'rerun',
+    );
+    expect(
+      rerun?.type === 'analysed' &&
+        rerun.model.styles.find(({ id }) => id === styleId),
+    ).toMatchObject({
+      proposedMapping: 'ignore',
+      provenance: { method: 'user', confidence: 'certain' },
+    });
+  });
+
   it.each([
     ['html', 'document.html', '<!doctype html>'],
     ['markdown', 'document.md', '#'],
