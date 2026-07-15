@@ -6,3 +6,5 @@
 - Keep raw OOXML extraction, style/metadata proposal analysis, user overrides, and final `DocumentModel` construction separate.
 - Heading classification precedence and metadata source priority are specified in `REQUIREMENTS.md`; do not bypass them in readers or writers.
 - `@wordconvert/docx-reader` exposes deterministic `stylePreset` and `styleMappings` inputs for conversion reruns.
+- `@wordconvert/html-writer` is the semantic reference renderer. Use its fragment mode for previews and apply DOMPurify at the browser insertion boundary; use standalone mode or `writeHtmlZip` for downloads.
+- Keep writer asset paths generated and POSIX-relative. Do not pass source filenames, active media types, or remote resource URLs into HTML output.
