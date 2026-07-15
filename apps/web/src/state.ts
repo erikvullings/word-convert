@@ -8,7 +8,7 @@ import { STYLE_MAPPINGS } from './editors.ts';
 
 export const WORKFLOW_STAGES = [
   'Document',
-  'Format',
+  'Output Format',
   'Preview',
   'Download',
 ] as const;
@@ -39,6 +39,7 @@ export interface AppState {
   progress?: ConversionProgress;
   model?: DocumentModel;
   output?: DownloadOutput;
+  selectedEpubFile?: string;
   error?: ConversionError;
   styleMappings: Record<string, StyleMapping>;
   presetText: string;

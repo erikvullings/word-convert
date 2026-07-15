@@ -27,7 +27,7 @@ describe('SPA state', () => {
       stages: WORKFLOW_STAGES,
       state: JSON.parse(JSON.stringify(state)),
     }).toMatchObject({
-      stages: ['Document', 'Format', 'Preview', 'Download'],
+      stages: ['Document', 'Output Format', 'Preview', 'Download'],
       state: { stage: 0, status: 'idle', conversionDate: '2026-07-15' },
     });
   });

@@ -117,6 +117,33 @@ describe('secure DOCX reader', () => {
     expect(JSON.stringify(model.blocks)).not.toContain('Deleted text');
   });
 
+  it('normalizes numeric language metadata and infers an identifier from filename', async () => {
+    const input = createZip([
+      {
+        name: '[Content_Types].xml',
+        data: `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`,
+      },
+      {
+        name: 'word/document.xml',
+        data: `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p></w:body></w:document>`,
+      },
+      {
+        name: 'docProps/core.xml',
+        data: `<?xml version="1.0"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Quarterly report</dc:title><dc:language>2057</dc:language></cp:coreProperties>`,
+      },
+    ]);
+
+    const model = await secureDocxReader.read(input, {
+      ...options,
+      filename: 'Quarterly Report.docx',
+    });
+
+    expect(model.metadata.language?.value).toBe('en-GB');
+    expect(model.metadata.identifier?.value).toBe(
+      'urn:wordconvert:quarterly-report',
+    );
+  });
+
   it.each([
     ['malformed.zip', 'invalid-input'],
     ['path-traversal.docx', 'invalid-input'],

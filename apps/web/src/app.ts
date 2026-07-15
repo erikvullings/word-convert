@@ -1,5 +1,6 @@
 import m, { type Component } from 'mithril';
 import type {
+  DocumentMetadata,
   EffectiveFormatting,
   Person,
   StyleMapping,
@@ -11,6 +12,7 @@ import {
   Select,
 } from 'mithril-materialized';
 import DOMPurify from 'dompurify';
+import { strFromU8, unzipSync } from 'fflate';
 import { render as renderMarkdown } from 'slimdown-js';
 
 import {
@@ -150,7 +152,7 @@ function outputChooser(controller: AppController): m.Vnode {
     m('p', 'Analysis is complete. Choose how you want to use the document.'),
     m(
       'div.format-cards',
-      (['html', 'markdown', 'epub'] as const).map((format) =>
+      (['markdown', 'html', 'epub'] as const).map((format) =>
         m(
           'button.format-card',
           {
@@ -184,9 +186,7 @@ function outputChooser(controller: AppController): m.Vnode {
         'button.link-button',
         {
           type: 'button',
-          onclick: () => {
-            state.review = 'styles';
-          },
+          onclick: () => openReview(state, 'styles'),
         },
         'Review style mapping',
       ),
@@ -195,27 +195,18 @@ function outputChooser(controller: AppController): m.Vnode {
         'button.link-button',
         {
           type: 'button',
-          onclick: () => {
-            state.review = 'metadata';
-          },
+          onclick: () => openReview(state, 'metadata'),
         },
         'review metadata',
       ),
       '.',
     ]),
-    state.preferences.outputFormat === 'epub'
-      ? epubConfiguration(controller)
-      : null,
   ]);
 }
 
 function epubConfiguration(controller: AppController): m.Vnode {
   const metadata = controller.state.model?.metadata;
-  const missing = [
-    !metadata?.title?.value.trim() && 'title',
-    !metadata?.language?.value.trim() && 'language',
-    !metadata?.identifier?.value.trim() && 'identifier',
-  ].filter((value): value is string => Boolean(value));
+  const issues = epubMetadataIssues(metadata);
   return m('section.epub-config', [
     m('h3', 'EPUB configuration'),
     m(
@@ -224,40 +215,63 @@ function epubConfiguration(controller: AppController): m.Vnode {
     ),
     m('label', [
       m('span', 'Cover image (optional)'),
-      m('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp' }),
+      m('input', {
+        type: 'file',
+        accept: 'image/png,image/jpeg,image/webp',
+        onchange: (event: Event) => {
+          const files = (event.currentTarget as HTMLInputElement).files;
+          if (files?.[0] && issues.length === 0) controller.convert();
+        },
+      }),
       m(
         'small',
         'Cover embedding is not yet enabled; the selected file stays on this device.',
       ),
     ]),
-    missing.length
+    issues.length
       ? m('p.error[role="alert"]', [
-          `Add the required ${missing.join(', ')} metadata before creating the EPUB. `,
+          `Update required EPUB metadata: ${issues.join('; ')}. `,
           m(
             'button.link-button',
             {
               type: 'button',
-              onclick: () => {
-                controller.state.review = 'metadata';
-              },
+              onclick: () => openReview(controller.state, 'metadata'),
             },
             'Review metadata',
           ),
         ])
-      : null,
-    m(Button, {
-      disabled: missing.length > 0,
-      label: 'Create EPUB preview',
-      onclick: () => {
-        controller.state.stage = 2;
-        controller.convert();
-      },
-    }),
+      : m(
+          'p',
+          controller.state.status === 'converting'
+            ? 'Refreshing EPUB preview…'
+            : 'EPUB preview updates automatically when metadata changes.',
+        ),
   ]);
+}
+
+function epubMetadataIssues(metadata?: DocumentMetadata): string[] {
+  const title = metadata?.title?.value.trim() ?? '';
+  const language = metadata?.language?.value.trim() ?? '';
+  const identifier = metadata?.identifier?.value.trim() ?? '';
+  const issues: string[] = [];
+  if (!title) issues.push('title is missing');
+  if (!language) issues.push('language is missing');
+  else if (!/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(language))
+    issues.push('language must be a BCP 47 tag (for example en or en-GB)');
+  if (!identifier) issues.push('identifier is missing');
+  return issues;
 }
 
 function preview(controller: AppController): m.Vnode {
   const state = controller.state;
+  if (state.preferences.outputFormat === 'epub')
+    return m('div.preview-panel', [
+      previewActions(controller),
+      epubConfiguration(controller),
+      epubLayoutPreview(controller),
+      previewActions(controller),
+    ]);
+
   if (!state.output)
     return m('div', [
       m(
@@ -273,20 +287,12 @@ function preview(controller: AppController): m.Vnode {
         },
       }),
     ]);
-  if (state.preferences.outputFormat === 'epub')
-    return m('div.preview-panel', [
-      m('h3', 'EPUB file layout'),
-      m(
-        'ul.file-layout',
-        (state.output.files ?? []).map((file) => m('li', m('code', file))),
-      ),
-      previewActions(controller),
-    ]);
   const source = new TextDecoder().decode(state.output.data);
   const isMarkdown = state.preferences.outputFormat === 'markdown';
   const rendered = isMarkdown ? renderMarkdown(source) : source;
   const previewMarkup = isMarkdown ? rendered : extractHtmlBody(rendered);
   return m('div.preview-panel', [
+    previewActions(controller),
     isMarkdown
       ? m(
           'div.preview-mode',
@@ -318,6 +324,91 @@ function preview(controller: AppController): m.Vnode {
   ]);
 }
 
+function epubLayoutPreview(controller: AppController): m.Vnode {
+  const state = controller.state;
+  if (!state.output)
+    return m(
+      'p',
+      state.status === 'converting'
+        ? 'Creating preview…'
+        : 'No preview is available yet.',
+    );
+
+  const archive = unzipSync(new Uint8Array(state.output.data));
+  const files =
+    state.output.files?.filter((file) => archive[file] !== undefined) ??
+    Object.keys(archive).sort();
+  const selected =
+    state.selectedEpubFile && files.includes(state.selectedEpubFile)
+      ? state.selectedEpubFile
+      : files[0];
+  if (selected && selected !== state.selectedEpubFile)
+    state.selectedEpubFile = selected;
+
+  return m('section.epub-layout', [
+    m('h3', 'EPUB file layout'),
+    m('div.epub-layout-grid', [
+      m(
+        'ul.file-layout.epub-file-list',
+        files.map((file) =>
+          m('li', [
+            m(
+              'button.epub-file-button',
+              {
+                type: 'button',
+                'aria-pressed': file === selected,
+                ...(file === selected
+                  ? { class: 'epub-file-button-selected' }
+                  : {}),
+                onclick: () => {
+                  state.selectedEpubFile = file;
+                },
+              },
+              m('code', file),
+            ),
+          ]),
+        ),
+      ),
+      m('div.epub-file-viewer', renderEpubFilePreview(selected, archive)),
+    ]),
+  ]);
+}
+
+function renderEpubFilePreview(
+  filename: string | undefined,
+  archive: Record<string, Uint8Array>,
+): m.Children {
+  if (!filename) return m('p', 'No EPUB files are available.');
+  const data = archive[filename];
+  if (!data) return m('p', 'The selected file is not available.');
+  const lower = filename.toLowerCase();
+  if (lower.endsWith('.xhtml') || lower.endsWith('.html') || lower.endsWith('.htm')) {
+    const source = strFromU8(data);
+    return m(
+      'article.document-preview',
+      m.trust(
+        DOMPurify.sanitize(extractHtmlBody(source), {
+          FORBID_TAGS: ['style', 'link', 'meta', 'title'],
+          FORBID_ATTR: ['style'],
+        }),
+      ),
+    );
+  }
+  if (
+    lower.endsWith('.opf') ||
+    lower.endsWith('.xml') ||
+    lower.endsWith('.css') ||
+    lower.endsWith('.ncx') ||
+    lower.endsWith('.txt') ||
+    lower.endsWith('.svg')
+  )
+    return m('pre.markdown-source', strFromU8(data));
+  return m(
+    'p',
+    `Binary asset preview is not rendered for ${filename} (${data.byteLength} bytes).`,
+  );
+}
+
 export function extractHtmlBody(source: string): string {
   return /<body(?:\s[^>]*)?>([\s\S]*?)<\/body\s*>/i.exec(source)?.[1] ?? source;
 }
@@ -327,15 +418,14 @@ function previewActions(controller: AppController): m.Vnode {
   return m('div.preview-actions', [
     m(Button, {
       label: `Download ${state.output?.filename ?? 'output'}`,
+      disabled: !state.output,
       onclick: () => controller.download(),
     }),
     m(
       'button.link-button',
       {
         type: 'button',
-        onclick: () => {
-          state.review = 'styles';
-        },
+        onclick: () => openReview(state, 'styles'),
       },
       'Review style mapping',
     ),
@@ -343,9 +433,7 @@ function previewActions(controller: AppController): m.Vnode {
       'button.link-button',
       {
         type: 'button',
-        onclick: () => {
-          state.review = 'metadata';
-        },
+        onclick: () => openReview(state, 'metadata'),
       },
       'Review metadata',
     ),
@@ -354,8 +442,11 @@ function previewActions(controller: AppController): m.Vnode {
       {
         type: 'button',
         onclick: () => {
-          state.stage = 1;
-          delete state.output;
+          if (typeof history !== 'undefined') history.back();
+          else {
+            state.stage = 1;
+            delete state.output;
+          }
         },
       },
       'Choose another format',
@@ -498,10 +589,11 @@ function styleEditor(controller: AppController): m.Vnode {
       state.editorNotice ? m('p[role="status"]', state.editorNotice) : null,
     ]),
     m(Button, {
-      label: 'Return to preview',
+      label: 'Back',
       onclick: () => {
-        delete state.review;
-        if (state.output) controller.convert();
+        navigateBackFromReview(state, () => {
+          if (state.output) controller.convert();
+        });
       },
     }),
   ]);
@@ -552,13 +644,38 @@ function metadataEditor(controller: AppController): m.Vnode {
       m(Button, { label: 'Add author', onclick: () => controller.addAuthor() }),
     ]),
     m(Button, {
-      label: 'Return to preview',
+      label: 'Back',
       onclick: () => {
-        delete controller.state.review;
-        if (controller.state.output) controller.convert();
+        navigateBackFromReview(controller.state, () => {
+          if (controller.state.output) controller.convert();
+        });
       },
     }),
   ]);
+}
+
+function openReview(state: AppState, review: 'styles' | 'metadata'): void {
+  state.review = review;
+  if (typeof history !== 'undefined') {
+    history.pushState(
+      {
+        stage: state.stage,
+        format: state.preferences.outputFormat,
+        review,
+      },
+      '',
+      window.location.href,
+    );
+  }
+}
+
+function navigateBackFromReview(state: AppState, fallback: () => void): void {
+  if (typeof history !== 'undefined') {
+    history.back();
+    return;
+  }
+  delete state.review;
+  fallback();
 }
 
 function metadataField(

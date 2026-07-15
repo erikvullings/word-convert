@@ -4,6 +4,7 @@ import {
   DOCUMENT_MODEL_VERSION,
   type DocumentModel,
 } from '@wordconvert/document-model';
+import { strToU8, zipSync } from 'fflate';
 
 import { extractHtmlBody, renderApp, type AppController } from './app.ts';
 import { createInitialState } from './state.ts';
@@ -151,7 +152,7 @@ describe('App', () => {
     expect(metadata).toContain('default · certain · conversion settings');
   });
 
-  it('offers output formats before optional review and only shows EPUB configuration for EPUB', () => {
+  it('offers output formats without preview configuration and lists Markdown first', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 1;
     state.status = 'ready';
@@ -164,11 +165,106 @@ describe('App', () => {
     expect(formats).toContain('EPUB 3');
     expect(formats).toContain('Review style mapping');
     expect(formats).not.toContain('Cover image');
+    expect(formats.indexOf('Markdown')).toBeLessThan(formats.indexOf('HTML'));
+    expect(formats.indexOf('HTML')).toBeLessThan(formats.indexOf('EPUB 3'));
+  });
 
+  it('shows EPUB configuration in preview stage and explains metadata issues', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'ready';
     state.preferences.outputFormat = 'epub';
+    state.model = editorModel();
+    state.model.metadata.title = {
+      value: 'Fixture',
+      provenance: {
+        source: 'test',
+        method: 'user',
+        confidence: 'certain',
+      },
+    };
+    state.model.metadata.language = {
+      value: '2057',
+      provenance: {
+        source: 'docProps/core.xml',
+        method: 'extracted',
+        confidence: 'certain',
+      },
+    };
+    delete state.model.metadata.identifier;
+    const controller = controllerFor(state);
+
     const epub = JSON.stringify(renderApp(controller));
-    expect(epub).toContain('Cover image');
     expect(epub).toContain('EPUB configuration');
+    expect(epub).toContain('Cover image');
+    expect(epub).toContain('language must be a BCP 47 tag');
+    expect(epub).toContain('identifier is missing');
+    expect(epub).not.toContain('Create EPUB preview');
+  });
+
+  it('renders EPUB file list as a selector with a right-side content viewer', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.preferences.outputFormat = 'epub';
+    state.selectedEpubFile = 'EPUB/styles.css';
+    state.model = editorModel();
+    state.model.metadata.title = {
+      value: 'Fixture',
+      provenance: {
+        source: 'test',
+        method: 'user',
+        confidence: 'certain',
+      },
+    };
+    state.model.metadata.language = {
+      value: 'en-GB',
+      provenance: {
+        source: 'docProps/core.xml',
+        method: 'extracted',
+        confidence: 'certain',
+      },
+    };
+    state.model.metadata.identifier = {
+      value: 'urn:fixture',
+      provenance: {
+        source: 'test',
+        method: 'user',
+        confidence: 'certain',
+      },
+    };
+    state.output = {
+      filename: 'fixture.epub',
+      mediaType: 'application/epub+zip',
+      data: epubFixtureBuffer(),
+      files: ['EPUB/nav.xhtml', 'EPUB/styles.css'],
+    };
+
+    const epub = JSON.stringify(renderApp(controllerFor(state)));
+    expect(epub).toContain('epub-layout-grid');
+    expect(epub).toContain('epub-file-button');
+    expect(epub).toContain('EPUB/nav.xhtml');
+    expect(epub).toContain('epub-file-viewer');
+    expect(epub).toContain('body{font-family:serif;}');
+  });
+
+  it('renders preview actions both above and below preview content', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.preferences.outputFormat = 'markdown';
+    state.previewMode = 'source';
+    state.model = editorModel();
+    state.output = {
+      filename: 'report.md',
+      mediaType: 'text/markdown',
+      data: new TextEncoder().encode('# Report').buffer,
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+    expect((rendered.match(/Choose another format/g) ?? []).length).toBe(2);
+    expect((rendered.match(/Review metadata/g) ?? []).length).toBe(2);
+    expect((rendered.match(/Download report.md/g) ?? []).length).toBe(2);
   });
 });
 
@@ -197,6 +293,19 @@ function controllerFor(
     updateAuthor: () => undefined,
     removeAuthor: () => undefined,
   };
+}
+
+function epubFixtureBuffer(): ArrayBuffer {
+  const zipped = zipSync({
+    'EPUB/nav.xhtml': strToU8(
+      '<!doctype html><html><body><h1>Navigation</h1></body></html>',
+    ),
+    'EPUB/styles.css': strToU8('body{font-family:serif;}'),
+  });
+  return zipped.buffer.slice(
+    zipped.byteOffset,
+    zipped.byteOffset + zipped.byteLength,
+  );
 }
 
 function editorModel(): DocumentModel {

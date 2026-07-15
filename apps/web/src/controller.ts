@@ -33,6 +33,48 @@ export function createBrowserController(): AppController {
   });
   let sourceInput: ArrayBuffer | undefined;
   let sourceFilename: string | undefined;
+  const requestConvert = (): void => {
+    if (!state.model) return;
+    state.status = 'converting';
+    state.operationId = operationId('convert');
+    worker.postMessage({
+      type: 'convert',
+      operationId: state.operationId,
+      model: state.model,
+      filename: sourceFilename ?? state.selectedFilename ?? 'document.docx',
+      format: state.preferences.outputFormat,
+      conversionDate: state.conversionDate,
+    } satisfies WorkerRequest);
+  };
+  const refreshEpubPreview = (): void => {
+    if (state.preferences.outputFormat !== 'epub') return;
+    if (state.stage !== 2) return;
+    if (epubMetadataIssues(state)) {
+      delete state.output;
+      state.status = 'ready';
+      return;
+    }
+    requestConvert();
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('popstate', (event: PopStateEvent) => {
+      const stage =
+        typeof event.state?.stage === 'number' ? event.state.stage : 1;
+      state.review =
+        event.state?.review === 'styles' || event.state?.review === 'metadata'
+          ? event.state.review
+          : undefined;
+      if (stage === 1) {
+        state.stage = 1;
+        delete state.output;
+      } else {
+        state.stage = 2;
+      }
+      m.redraw();
+    });
+  }
+
   worker.addEventListener('message', (event: MessageEvent<WorkerResponse>) => {
     applyResponse(state, event.data);
     m.redraw();
@@ -55,6 +97,7 @@ export function createBrowserController(): AppController {
       }
       delete state.error;
       delete state.output;
+      delete state.selectedEpubFile;
       delete state.model;
       state.selectedFilename = file.name;
       state.stage = 1;
@@ -81,17 +124,7 @@ export function createBrowserController(): AppController {
       } satisfies WorkerRequest);
     },
     convert() {
-      if (!state.model) return;
-      state.status = 'converting';
-      state.operationId = operationId('convert');
-      worker.postMessage({
-        type: 'convert',
-        operationId: state.operationId,
-        model: state.model,
-        filename: sourceFilename ?? state.selectedFilename ?? 'document.docx',
-        format: state.preferences.outputFormat,
-        conversionDate: state.conversionDate,
-      } satisfies WorkerRequest);
+      requestConvert();
     },
     download() {
       if (!state.output) return;
@@ -113,8 +146,11 @@ export function createBrowserController(): AppController {
       state.preferences.outputFormat = format;
       persistPreferences(localStorage, state.preferences);
       delete state.output;
-      state.stage = format === 'epub' ? 1 : 2;
-      if (format !== 'epub') this.convert();
+      delete state.selectedEpubFile;
+      state.stage = 2;
+      if (typeof history !== 'undefined')
+        history.pushState({ stage: 2, format }, '', window.location.href);
+      if (format !== 'epub' || !epubMetadataIssues(state)) requestConvert();
     },
     setStyleMapping(styleId: string, mapping: StyleMapping) {
       state.styleMappings = { ...state.styleMappings, [styleId]: mapping };
@@ -176,6 +212,7 @@ export function createBrowserController(): AppController {
         ...state.model,
         metadata: setMetadataField(state.model.metadata, field, value),
       };
+      refreshEpubPreview();
     },
     setSubjects(value: string) {
       if (!state.model) return;
@@ -183,6 +220,7 @@ export function createBrowserController(): AppController {
         ...state.model,
         metadata: setSubjects(state.model.metadata, value.split(',')),
       };
+      refreshEpubPreview();
     },
     addAuthor() {
       if (!state.model) return;
@@ -190,6 +228,7 @@ export function createBrowserController(): AppController {
         ...state.model,
         metadata: addAuthor(state.model.metadata),
       };
+      refreshEpubPreview();
     },
     updateAuthor(index: number, person: Person) {
       if (!state.model) return;
@@ -197,6 +236,7 @@ export function createBrowserController(): AppController {
         ...state.model,
         metadata: updateAuthor(state.model.metadata, index, person),
       };
+      refreshEpubPreview();
     },
     removeAuthor(index: number) {
       if (!state.model) return;
@@ -204,8 +244,22 @@ export function createBrowserController(): AppController {
         ...state.model,
         metadata: removeAuthor(state.model.metadata, index),
       };
+      refreshEpubPreview();
     },
   };
+}
+
+function epubMetadataIssues(state: AppState): boolean {
+  const metadata = state.model?.metadata;
+  const title = metadata?.title?.value.trim() ?? '';
+  const language = metadata?.language?.value.trim() ?? '';
+  const identifier = metadata?.identifier?.value.trim() ?? '';
+  return Boolean(
+    !title ||
+    !identifier ||
+    !language ||
+    !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(language),
+  );
 }
 
 function applyResponse(state: AppState, response: WorkerResponse): void {
@@ -219,6 +273,7 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
   }
   if (response.type === 'output') {
     state.output = response;
+    state.selectedEpubFile = response.files?.[0];
     state.stage = 2;
     state.status = 'complete';
     delete state.progress;

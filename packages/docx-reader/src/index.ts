@@ -582,7 +582,9 @@ function styleUsages(
   const nearbyContent = new Map<XmlNode, 'figure' | 'table'>();
   const body = first(document, 'body');
   const blocks = body ? elements(body) : [];
-  const blockKind = (node: XmlNode | undefined): 'figure' | 'table' | undefined => {
+  const blockKind = (
+    node: XmlNode | undefined,
+  ): 'figure' | 'table' | undefined => {
     if (!node) return undefined;
     if (localName(node) === 'tbl') return 'table';
     return descendants(node, 'drawing').length > 0 ||
@@ -684,7 +686,12 @@ function metadataCandidates(
       confidence: 'certain',
       method: 'extracted',
     });
-  add('language', value('language'), 'docProps/core.xml', 1);
+  add(
+    'language',
+    normaliseLanguageTag(value('language')),
+    'docProps/core.xml',
+    1,
+  );
   add('description', value('description'), 'docProps/core.xml', 1);
   for (const subject of [value('subject'), value('keywords')].filter(
     (item): item is string => Boolean(item),
@@ -748,8 +755,64 @@ function metadataCandidates(
       confidence: 'low',
       method: 'inferred',
     });
+  const generatedIdentifier = filenameIdentifier(filename);
+  if (generatedIdentifier)
+    candidates.push({
+      field: 'identifier',
+      value: generatedIdentifier,
+      source: 'filename',
+      priority: 7,
+      confidence: 'low',
+      method: 'inferred',
+    });
   return candidates;
 }
+
+function normaliseLanguageTag(value: string | undefined): string | undefined {
+  const input = value?.trim();
+  if (!input) return undefined;
+  if (/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(input)) return input;
+  if (/^\d{3,5}$/.test(input)) {
+    const mapped = LCID_TO_BCP47[input];
+    if (mapped) return mapped;
+  }
+  return input;
+}
+
+function filenameIdentifier(filename: string | undefined): string | undefined {
+  const base = filename
+    ?.split(/[\\/]/)
+    .at(-1)
+    ?.replace(/\.docx$/i, '')
+    .trim();
+  if (!base) return undefined;
+  const slug = base
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  return `urn:wordconvert:${slug || 'document'}`;
+}
+
+const LCID_TO_BCP47: Readonly<Record<string, string>> = {
+  '1033': 'en-US',
+  '1031': 'de-DE',
+  '1036': 'fr-FR',
+  '1040': 'it-IT',
+  '1043': 'nl-NL',
+  '1034': 'es-ES',
+  '1045': 'pl-PL',
+  '1046': 'pt-BR',
+  '1049': 'ru-RU',
+  '1029': 'cs-CZ',
+  '1030': 'da-DK',
+  '1035': 'fi-FI',
+  '1038': 'hu-HU',
+  '1044': 'nb-NO',
+  '1053': 'sv-SE',
+  '1055': 'tr-TR',
+  '2057': 'en-GB',
+  '3082': 'es-ES',
+};
 
 function normalisedPropertyName(
   name: string,
