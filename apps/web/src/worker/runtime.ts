@@ -86,12 +86,7 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
             {
               type: 'output',
               operationId: request.operationId,
-              filename:
-                request.format === 'html'
-                  ? 'document.html'
-                  : request.format === 'markdown'
-                    ? 'document.md'
-                    : 'document.epub',
+              filename: outputFilename(request.filename, request.format),
               mediaType:
                 request.format === 'html'
                   ? 'text/html;charset=utf-8'
@@ -117,6 +112,17 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
       }
     },
   };
+}
+
+function outputFilename(
+  sourceFilename: string,
+  format: 'html' | 'markdown' | 'epub',
+): string {
+  const extension =
+    format === 'html' ? '.html' : format === 'markdown' ? '.md' : '.epub';
+  const baseName = sourceFilename.split(/[\\/]/).at(-1)?.trim() ?? '';
+  const stem = baseName.replace(/\.[^./\\]+$/, '').trim();
+  return `${stem || 'document'}${extension}`;
 }
 
 function cancelledError(): ConversionError {

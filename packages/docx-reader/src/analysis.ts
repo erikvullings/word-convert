@@ -517,14 +517,16 @@ export function applyStyleMappings(
       'styleId' in block && block.styleId ? mappings[block.styleId] : undefined;
     if (mapping === 'ignore') return [];
     if (
-      mapping?.startsWith('heading') &&
+      (mapping === 'title' || mapping?.startsWith('heading')) &&
       (block.type === 'paragraph' || block.type === 'heading')
     ) {
+      const level =
+        mapping === 'title' ? 1 : Math.min(Number(mapping.slice(7)) + 1, 6);
       return [
         {
           ...block,
           type: 'heading',
-          level: Number(mapping.slice(7)) as 1 | 2 | 3 | 4 | 5 | 6,
+          level: level as 1 | 2 | 3 | 4 | 5 | 6,
         },
       ];
     }

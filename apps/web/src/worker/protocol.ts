@@ -18,6 +18,7 @@ export type WorkerRequest =
       type: 'convert';
       operationId: string;
       model: DocumentModel;
+      filename: string;
       format: 'html' | 'markdown' | 'epub';
       conversionDate: string;
     }

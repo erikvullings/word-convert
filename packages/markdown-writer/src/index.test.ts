@@ -34,6 +34,39 @@ function model(blocks: DocumentModel['blocks']): DocumentModel {
 }
 
 describe('writeMarkdown', () => {
+  it('writes metadata title as the document title without duplicating a mapped title', () => {
+    const input = model([
+      {
+        type: 'heading',
+        level: 2,
+        children: [{ type: 'text', text: 'Introduction' }],
+      },
+    ]);
+    input.metadata.title = {
+      value: 'Annual # report',
+      provenance: {
+        source: 'test',
+        method: 'inferred',
+        confidence: 'high',
+      },
+    };
+
+    expect(writeMarkdown(input, { conversionDate: '2026-07-15' })).toBe(
+      '# Annual \\# report\n\n## Introduction\n',
+    );
+
+    input.blocks.unshift({
+      type: 'heading',
+      level: 1,
+      children: [{ type: 'text', text: 'Annual # report' }],
+    });
+    expect(
+      writeMarkdown(input, { conversionDate: '2026-07-15' }).match(
+        /Annual \\# report/g,
+      ),
+    ).toHaveLength(1);
+  });
+
   it('writes headings, escaped paragraphs, formatting, and safe links', () => {
     const markdown = writeMarkdown(
       model([

@@ -86,10 +86,10 @@ describe('writeEpub', () => {
     expect(strFromU8(output.slice(30, 30 + firstNameLength))).toBe('mimetype');
   });
 
-  it('splits only at top-level H1 boundaries and builds heading navigation', async () => {
+  it('splits only at top-level document-section boundaries and builds heading navigation', async () => {
     const input = model([
-      { type: 'paragraph', children: [{ type: 'text', text: 'Preface' }] },
-      { type: 'heading', level: 1, children: [{ type: 'text', text: 'One' }] },
+      { type: 'heading', level: 1, children: [{ type: 'text', text: 'Book' }] },
+      { type: 'heading', level: 2, children: [{ type: 'text', text: 'One' }] },
       {
         type: 'list',
         ordered: false,
@@ -98,17 +98,17 @@ describe('writeEpub', () => {
             blocks: [
               {
                 type: 'heading',
-                level: 1,
+                level: 2,
                 children: [{ type: 'text', text: 'Nested' }],
               },
             ],
           },
         ],
       },
-      { type: 'heading', level: 1, children: [{ type: 'text', text: 'Two' }] },
+      { type: 'heading', level: 2, children: [{ type: 'text', text: 'Two' }] },
       {
         type: 'heading',
-        level: 2,
+        level: 3,
         children: [{ type: 'text', text: 'Detail' }],
       },
     ]);
@@ -131,7 +131,7 @@ describe('writeEpub', () => {
     ]);
     expect(
       strFromU8(files['EPUB/chapter-002.xhtml'] ?? new Uint8Array()),
-    ).toContain('<ul><li><h1 id="nested">Nested</h1></li></ul>');
+    ).toContain('<ul><li><h2 id="nested">Nested</h2></li></ul>');
     const nav = strFromU8(files['EPUB/nav.xhtml'] ?? new Uint8Array());
     expect(nav).toContain('chapter-002.xhtml#one');
     expect(nav).toContain('chapter-002.xhtml#nested');

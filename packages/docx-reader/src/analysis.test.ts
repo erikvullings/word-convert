@@ -347,22 +347,50 @@ describe('metadata analysis and final construction', () => {
     });
   });
 
-  it('constructs final headings only after mappings are applied', () => {
+  it('reserves level one for the title and shifts document headings down', () => {
     const model = {
       blocks: [
+        {
+          type: 'paragraph' as const,
+          styleId: 'Title',
+          children: [{ type: 'text' as const, text: 'Document' }],
+        },
         {
           type: 'paragraph' as const,
           styleId: 'Section',
           children: [{ type: 'text' as const, text: 'Section' }],
         },
+        {
+          type: 'paragraph' as const,
+          styleId: 'Deep',
+          children: [{ type: 'text' as const, text: 'Deep section' }],
+        },
       ],
     };
-    expect(applyStyleMappings(model.blocks, { Section: 'heading2' })).toEqual([
+    expect(
+      applyStyleMappings(model.blocks, {
+        Title: 'title',
+        Section: 'heading2',
+        Deep: 'heading6',
+      }),
+    ).toEqual([
       {
         type: 'heading',
-        level: 2,
+        level: 1,
+        styleId: 'Title',
+        children: [{ type: 'text', text: 'Document' }],
+      },
+      {
+        type: 'heading',
+        level: 3,
         styleId: 'Section',
         children: [{ type: 'text', text: 'Section' }],
+      },
+      {
+        type: 'heading',
+        level: 6,
+        styleId: 'Deep',
+        children: [{ type: 'text', text: 'Deep section' }],
       },
     ]);
   });

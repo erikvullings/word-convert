@@ -71,6 +71,11 @@ describe('secure DOCX reader', () => {
       CaptionLabel: 'caption',
       TableNote: 'caption',
     });
+    expect(model.blocks[0]).toMatchObject({
+      type: 'heading',
+      level: 1,
+      styleId: 'RapportTitel',
+    });
   });
 
   it('converts the comprehensive OOXML fixture into the neutral model', async () => {
@@ -83,6 +88,11 @@ describe('secure DOCX reader', () => {
     expect(model.metadata.authors[0]?.value.name).toBe('Ada Example');
     expect(model.metadata.language?.value).toBe('en-GB');
     expect(model.blocks.some((block) => block.type === 'heading')).toBe(true);
+    expect(
+      model.blocks.find(
+        (block) => block.type === 'heading' && block.styleId === 'Heading1',
+      ),
+    ).toMatchObject({ type: 'heading', level: 2 });
     expect(model.blocks.some((block) => block.type === 'list')).toBe(true);
     const list = model.blocks.find((block) => block.type === 'list');
     expect(

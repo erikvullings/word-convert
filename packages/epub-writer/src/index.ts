@@ -130,7 +130,7 @@ function splitChapters(blocks: BlockNode[]): Chapter[] {
   const groups: BlockNode[][] = [];
   let current: BlockNode[] = [];
   for (const block of blocks) {
-    if (block.type === 'heading' && block.level === 1 && current.length > 0) {
+    if (block.type === 'heading' && block.level === 2 && current.length > 0) {
       groups.push(current);
       current = [];
     }

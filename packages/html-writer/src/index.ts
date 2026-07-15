@@ -26,7 +26,7 @@ interface RenderContext {
   assetUrl: (asset: DocumentAsset) => string | undefined;
 }
 
-const STYLES = `:root{color-scheme:light dark;--background:#fff;--foreground:#202124;--muted:#5f6368;--link:#0759b6}*{box-sizing:border-box}body{max-width:48rem;margin:0 auto;padding:2rem;font:18px/1.6 system-ui,sans-serif;background:var(--background);color:var(--foreground)}img{max-width:100%;height:auto}table{border-collapse:collapse;width:100%}th,td{border:1px solid var(--muted);padding:.4rem;text-align:left}a{color:var(--link)}pre{overflow:auto}.page-break{break-after:page}nav ol{padding-left:1.5rem}@media (prefers-color-scheme: dark){:root{--background:#181a1b;--foreground:#eee;--muted:#aaa;--link:#8ab4f8}}@media print{body{max-width:none;padding:0;font-size:12pt}nav{break-after:page}a{color:inherit;text-decoration:none}}`;
+const STYLES = `:root{color-scheme:light dark;--background:#fff;--foreground:#202124;--muted:#5f6368;--link:#0759b6}*{box-sizing:border-box}body{max-width:48rem;margin:0 auto;padding:2rem;font:18px/1.6 system-ui,sans-serif;background:var(--background);color:var(--foreground)}h1,h2,h3,h4,h5,h6{clear:both;line-height:1.2;margin-block:1.6em .6em}p,ul,ol,blockquote,figure,table,pre{margin-block:0 1.25em}img{max-width:100%;height:auto}p>img{display:block;clear:both;margin-block:1.25em}figure{clear:both;margin-inline:0}figure>img{display:block}figcaption{margin-top:.5em;color:var(--muted)}table{clear:both;border-collapse:collapse;width:100%}th,td{border:1px solid var(--muted);padding:.4rem;text-align:left;vertical-align:top}a{color:var(--link)}pre{clear:both;overflow:auto}.page-break{clear:both;break-after:page}nav{clear:both}nav ol{padding-left:1.5rem}@media (prefers-color-scheme: dark){:root{--background:#181a1b;--foreground:#eee;--muted:#aaa;--link:#8ab4f8}}@media print{body{max-width:none;padding:0;font-size:12pt}nav{break-after:page}a{color:inherit;text-decoration:none}}`;
 const SAFE_EMBEDDED_MEDIA = new Set([
   'image/avif',
   'image/gif',
@@ -139,7 +139,27 @@ function writeFragment(
   };
   const content = renderBlocks(model.blocks, context);
   const notes = renderNotes(context);
-  return `${renderToc(headings)}<main>${content}${notes}</main>`;
+  return `${renderToc(headings)}<main>${renderDocumentTitle(model)}${content}${notes}</main>`;
+}
+
+function renderDocumentTitle(model: DocumentModel): string {
+  const title = model.metadata.title?.value.trim();
+  if (!title || hasMatchingTitleHeading(model.blocks, title)) return '';
+  return `<h1 class="document-title">${escapeHtml(title)}</h1>`;
+}
+
+function hasMatchingTitleHeading(blocks: BlockNode[], title: string): boolean {
+  const expected = normaliseText(title);
+  return blocks.some(
+    (block) =>
+      block.type === 'heading' &&
+      block.level === 1 &&
+      normaliseText(plainText(block.children)) === expected,
+  );
+}
+
+function normaliseText(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 }
 
 function collectHeadings(blocks: BlockNode[]): HeadingEntry[] {

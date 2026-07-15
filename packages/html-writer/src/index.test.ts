@@ -65,14 +65,35 @@ describe('writeHtml', () => {
     expect(first).toBe(second);
     expect(first).toContain('<!doctype html>');
     expect(first).toContain('<title>A &lt;safe&gt; title</title>');
+    expect(first).toContain(
+      '<main><h1 class="document-title">A &lt;safe&gt; title</h1>',
+    );
     expect(first).toContain('<nav aria-label="Table of contents">');
     expect(first).toContain('<a href="#one">One</a>');
     expect(first).toContain('<a href="#one-2">One</a>');
     expect(first).toContain('<h1 id="one">One</h1>');
     expect(first).toContain('<h2 id="one-2">One</h2>');
     expect(first).toContain('@media (prefers-color-scheme: dark)');
+    expect(first).toContain('figure{clear:both');
+    expect(first).toContain('p>img{display:block');
     expect(first).toContain('@media print');
     expect(first).toContain('data:font/woff2;base64,d09GMg==');
+  });
+
+  it('does not duplicate a title already represented by a level-one heading', () => {
+    const html = writeHtml(
+      model([
+        {
+          type: 'heading',
+          level: 1,
+          children: [{ type: 'text', text: 'A <safe> title' }],
+        },
+      ]),
+      { conversionDate: '2026-07-15', mode: 'fragment' },
+    );
+
+    expect(html).toContain('<h1 id="a-safe-title">A &lt;safe&gt; title</h1>');
+    expect(html).not.toContain('class="document-title"');
   });
 
   it('serializes every supported block and inline node accessibly', () => {

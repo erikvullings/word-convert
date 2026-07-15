@@ -4,7 +4,12 @@ import type {
   Person,
   StyleMapping,
 } from '@wordconvert/document-model';
-import { Button, LinearProgress, Select } from 'mithril-materialized';
+import {
+  Button,
+  LinearProgress,
+  RadioButtons,
+  Select,
+} from 'mithril-materialized';
 import DOMPurify from 'dompurify';
 import { render as renderMarkdown } from 'slimdown-js';
 
@@ -12,6 +17,7 @@ import {
   DOCX_MEDIA_TYPE,
   WORKFLOW_STAGES,
   type AppState,
+  type PreviewMode,
   type ThemePreference,
 } from './state.ts';
 import { STYLE_MAPPINGS, type EditableMetadataField } from './editors.ts';
@@ -20,6 +26,10 @@ const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
   id: mapping,
   label: mappingLabel(mapping),
 }));
+const previewModeOptions = [
+  { id: 'rendered' as const, label: 'Rendered' },
+  { id: 'source' as const, label: 'Markdown' },
+];
 
 export interface AppController {
   state: AppState;
@@ -77,29 +87,12 @@ export function renderApp(
       'p.privacy-note',
       'All processing stays on this device. Your document is never uploaded or stored.',
     ),
-    m(
-      'nav.workflow[aria-label="Conversion workflow"]',
-      m(
-        'ol',
-        WORKFLOW_STAGES.map((stage, index) =>
-          m(
-            'li',
-            {
-              class:
-                index === controller.state.stage
-                  ? 'active'
-                  : index < controller.state.stage
-                    ? 'done'
-                    : '',
-            },
-            [m('span.stage-number', String(index + 1)), m('span', stage)],
-          ),
-        ),
-      ),
-    ),
     m('main.workspace', [
       m('section.panel', [
         m('h2', WORKFLOW_STAGES[controller.state.stage] ?? WORKFLOW_STAGES[0]),
+        controller.state.selectedFilename
+          ? m('p.document-context', documentLabel(controller.state))
+          : null,
         controller.state.stage === 0
           ? filePicker(select, drop)
           : stageContent(controller),
@@ -108,15 +101,14 @@ export function renderApp(
           : null,
         controller.state.progress ? progress(controller) : null,
       ]),
-      controller.state.selectedFilename
-        ? m('aside.summary', [
-            m('h2', 'Current document'),
-            m('p', controller.state.selectedFilename),
-            m('small', 'Processed locally; only preferences are stored.'),
-          ])
-        : null,
     ]),
   ]);
+}
+
+function documentLabel(state: AppState): string {
+  return (
+    state.model?.metadata.title?.value.trim() || state.selectedFilename || ''
+  );
 }
 
 function filePicker(
@@ -293,40 +285,41 @@ function preview(controller: AppController): m.Vnode {
   const source = new TextDecoder().decode(state.output.data);
   const isMarkdown = state.preferences.outputFormat === 'markdown';
   const rendered = isMarkdown ? renderMarkdown(source) : source;
+  const previewMarkup = isMarkdown ? rendered : extractHtmlBody(rendered);
   return m('div.preview-panel', [
     isMarkdown
-      ? m('div.preview-tabs[role="tablist"]', [
-          m(
-            'button',
-            {
-              type: 'button',
-              role: 'tab',
-              'aria-selected': state.previewMode === 'rendered',
-              onclick: () => {
-                state.previewMode = 'rendered';
-              },
+      ? m(
+          'div.preview-mode',
+          m(RadioButtons<PreviewMode>, {
+            // label: 'Preview mode',
+            id: 'markdown-preview-mode',
+            options: previewModeOptions,
+            checkedId: state.previewMode,
+            className: 'row',
+            checkboxClass: 'col s6',
+            onchange: (mode) => {
+              state.previewMode = mode;
             },
-            'Rendered',
-          ),
-          m(
-            'button',
-            {
-              type: 'button',
-              role: 'tab',
-              'aria-selected': state.previewMode === 'source',
-              onclick: () => {
-                state.previewMode = 'source';
-              },
-            },
-            'Markdown',
-          ),
-        ])
+          }),
+        )
       : null,
     isMarkdown && state.previewMode === 'source'
       ? m('pre.markdown-source', source)
-      : m('article.document-preview', m.trust(DOMPurify.sanitize(rendered))),
+      : m(
+          'article.document-preview',
+          m.trust(
+            DOMPurify.sanitize(previewMarkup, {
+              FORBID_TAGS: ['style', 'link', 'meta', 'title'],
+              FORBID_ATTR: ['style'],
+            }),
+          ),
+        ),
     previewActions(controller),
   ]);
+}
+
+export function extractHtmlBody(source: string): string {
+  return /<body(?:\s[^>]*)?>([\s\S]*?)<\/body\s*>/i.exec(source)?.[1] ?? source;
 }
 
 function previewActions(controller: AppController): m.Vnode {

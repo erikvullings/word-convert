@@ -88,6 +88,7 @@ export function createBrowserController(): AppController {
         type: 'convert',
         operationId: state.operationId,
         model: state.model,
+        filename: sourceFilename ?? state.selectedFilename ?? 'document.docx',
         format: state.preferences.outputFormat,
         conversionDate: state.conversionDate,
       } satisfies WorkerRequest);

@@ -1,5 +1,5 @@
 import m from 'mithril';
-import 'mithril-materialized/index.css';
+import 'mithril-materialized/index.min.css';
 
 import { App } from './app.ts';
 import { createBrowserController } from './controller.ts';

@@ -5,11 +5,19 @@ import {
   type DocumentModel,
 } from '@wordconvert/document-model';
 
-import { renderApp, type AppController } from './app.ts';
-import { createInitialState, WORKFLOW_STAGES } from './state.ts';
+import { extractHtmlBody, renderApp, type AppController } from './app.ts';
+import { createInitialState } from './state.ts';
 
 describe('App', () => {
-  it('renders the complete local workflow with accessible file selection', () => {
+  it('isolates standalone HTML body content from document-level theme styles', () => {
+    expect(
+      extractHtmlBody(
+        '<!doctype html><html><head><style>body{color:black}</style></head><body><h1>Report</h1><p>Body</p></body></html>',
+      ),
+    ).toBe('<h1>Report</h1><p>Body</p>');
+  });
+
+  it('renders a focused local workflow with accessible file selection', () => {
     const controller: AppController = {
       state: createInitialState('2026-07-15'),
       selectFiles: () => undefined,
@@ -35,18 +43,46 @@ describe('App', () => {
 
     const rendered = JSON.stringify(renderApp(controller));
 
-    expect(WORKFLOW_STAGES).toEqual([
-      'Document',
-      'Format',
-      'Preview',
-      'Download',
-    ]);
-    for (const stage of WORKFLOW_STAGES) expect(rendered).toContain(stage);
+    expect(rendered).not.toContain('Conversion workflow');
+    expect(rendered).not.toContain('Current document');
     expect(rendered).toContain('All processing stays on this device');
     expect(rendered).toContain('Choose a DOCX document');
     expect(rendered).toContain(
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     );
+  });
+
+  it('shows the document title quietly and uses radio buttons for Markdown preview mode', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.selectedFilename = 'report.docx';
+    state.preferences.outputFormat = 'markdown';
+    state.previewMode = 'source';
+    state.model = editorModel();
+    state.model.metadata.title = {
+      value: 'Annual report',
+      provenance: {
+        source: 'document content',
+        method: 'inferred',
+        confidence: 'high',
+      },
+    };
+    state.output = {
+      filename: 'report.md',
+      mediaType: 'text/markdown',
+      data: new TextEncoder().encode('# Annual report').buffer,
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('document-context');
+    expect(rendered).toContain('Annual report');
+    expect(rendered).toContain('Rendered');
+    expect(rendered).toContain('Markdown');
+    expect(rendered).toContain('checkedId');
+    expect(rendered).not.toContain('preview-tabs');
+    expect(rendered).not.toContain('Current document');
   });
 
   it('renders complete accessible style and metadata editors', () => {

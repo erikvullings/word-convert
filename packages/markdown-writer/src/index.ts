@@ -72,8 +72,41 @@ function writeWithAssets(
     warn: (warning) => options.onWarning?.(warning),
   };
   const body = renderBlocks(model.blocks, context);
+  const title = renderDocumentTitle(model);
   const notes = renderNotes(context);
-  return `${body}${notes ? `\n\n${notes}` : ''}\n`;
+  return `${title}${title && body ? '\n\n' : ''}${body}${notes ? `\n\n${notes}` : ''}\n`;
+}
+
+function renderDocumentTitle(model: DocumentModel): string {
+  const title = model.metadata.title?.value.trim();
+  if (!title || hasMatchingTitleHeading(model.blocks, title)) return '';
+  return `# ${escapeText(title)}`;
+}
+
+function hasMatchingTitleHeading(blocks: BlockNode[], title: string): boolean {
+  const expected = normaliseText(title);
+  return blocks.some(
+    (block) =>
+      block.type === 'heading' &&
+      block.level === 1 &&
+      normaliseText(inlinePlainText(block.children)) === expected,
+  );
+}
+
+function inlinePlainText(nodes: InlineNode[]): string {
+  return nodes
+    .map((node) =>
+      node.type === 'text'
+        ? node.text
+        : node.type === 'link'
+          ? inlinePlainText(node.children)
+          : '',
+    )
+    .join('');
+}
+
+function normaliseText(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 }
 
 function renderBlocks(blocks: BlockNode[], context: RenderContext): string {

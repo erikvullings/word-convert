@@ -77,8 +77,8 @@ describe('worker runtime', () => {
   });
 
   it.each([
-    ['html', 'document.html', '<!doctype html>'],
-    ['markdown', 'document.md', '#'],
+    ['html', 'fixture.html', '<!doctype html>'],
+    ['markdown', 'fixture.md', '#'],
   ] as const)(
     'converts an analysed fixture to downloadable %s',
     async (format, filename, contentStart) => {
@@ -99,6 +99,7 @@ describe('worker runtime', () => {
         type: 'convert',
         operationId: `convert-${format}`,
         model: analysed.model,
+        filename: 'fixture.docx',
         format,
         conversionDate: '2026-07-15',
       });
@@ -139,13 +140,14 @@ describe('worker runtime', () => {
       type: 'convert',
       operationId: 'convert-epub',
       model: analysed.model,
+      filename: 'fixture.docx',
       format: 'epub',
       conversionDate: '2026-07-15',
     });
 
     expect(sent.at(-1)).toMatchObject({
       type: 'output',
-      filename: 'document.epub',
+      filename: 'fixture.epub',
       mediaType: 'application/epub+zip',
       files: expect.arrayContaining([
         'mimetype',
