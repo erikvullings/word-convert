@@ -137,6 +137,99 @@ describe('style analysis', () => {
     );
   });
 
+  it('recognises compound Dutch and English caption styles from names and nearby content', () => {
+    const result = analyseStyles(
+      [
+        {
+          id: 'BijschriftFoto',
+          name: 'BijschriftFoto',
+          kind: 'paragraph',
+          formatting: { italic: true },
+        },
+        {
+          id: 'CaptionLabel',
+          name: 'CaptionLabel',
+          kind: 'character',
+          formatting: {},
+        },
+        {
+          id: 'CustomTableText',
+          name: 'Small text',
+          kind: 'paragraph',
+          formatting: {},
+        },
+      ],
+      [
+        {
+          styleId: 'CustomTableText',
+          kind: 'paragraph',
+          text: 'Table 2. Results',
+          position: 8,
+          nearbyContent: 'table',
+        },
+        {
+          styleId: 'CaptionLabel',
+          kind: 'character',
+          text: 'Fig.',
+          position: 3,
+        },
+        {
+          styleId: 'BijschriftFoto',
+          kind: 'paragraph',
+          text: 'Afbeelding 1. Locatie',
+          position: 2,
+          nearbyContent: 'figure',
+        },
+      ],
+    );
+
+    expect(
+      result.map(({ id, proposedMapping }) => [id, proposedMapping]),
+    ).toEqual([
+      ['BijschriftFoto', 'caption'],
+      ['CaptionLabel', 'caption'],
+      ['CustomTableText', 'caption'],
+    ]);
+  });
+
+  it('recognises a unique largest display style near the document start as the title', () => {
+    const result = analyseStyles(
+      [
+        {
+          id: 'RapportTitel',
+          name: '**RapportTitel',
+          kind: 'paragraph',
+          formatting: { fontSizePt: 44 },
+        },
+        {
+          id: 'Body',
+          name: 'Normal',
+          kind: 'paragraph',
+          formatting: { fontSizePt: 11 },
+        },
+      ],
+      [
+        {
+          styleId: 'Body',
+          kind: 'paragraph',
+          text: 'Body text',
+          position: 9,
+        },
+        {
+          styleId: 'RapportTitel',
+          kind: 'paragraph',
+          text: 'Annual security report',
+          position: 0,
+        },
+      ],
+    );
+
+    expect(result.find(({ id }) => id === 'RapportTitel')).toMatchObject({
+      proposedMapping: 'title',
+      provenance: { confidence: 'high' },
+    });
+  });
+
   it('applies presets deterministically and explicit mappings override preset entries', () => {
     const raw: RawStyle[] = [
       { id: 'Section', kind: 'paragraph', formatting: {} },

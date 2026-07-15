@@ -7,18 +7,15 @@ import type {
 import { STYLE_MAPPINGS } from './editors.ts';
 
 export const WORKFLOW_STAGES = [
-  'Select document',
-  'Analyze document',
-  'Review styles',
-  'Review metadata',
-  'Configure output',
-  'Configure EPUB cover',
+  'Document',
+  'Format',
   'Preview',
-  'Convert and download',
+  'Download',
 ] as const;
 
 export type ThemePreference = 'system' | 'light' | 'dark';
-export type OutputFormat = 'html' | 'markdown';
+export type OutputFormat = 'html' | 'markdown' | 'epub';
+export type PreviewMode = 'rendered' | 'source';
 
 export interface Preferences {
   theme: ThemePreference;
@@ -30,6 +27,7 @@ export interface DownloadOutput {
   filename: string;
   mediaType: string;
   data: ArrayBuffer;
+  files?: string[];
 }
 
 export interface AppState {
@@ -45,6 +43,8 @@ export interface AppState {
   styleMappings: Record<string, StyleMapping>;
   presetText: string;
   editorNotice?: string;
+  review?: 'styles' | 'metadata';
+  previewMode: PreviewMode;
   preferences: Preferences;
 }
 
@@ -77,6 +77,7 @@ export function createInitialState(
     conversionDate,
     styleMappings: {},
     presetText: '',
+    previewMode: 'rendered',
     preferences,
   };
 }
@@ -103,7 +104,7 @@ export function loadPreferences(storage: PreferenceStorage): Preferences {
     const value = JSON.parse(stored) as Partial<Preferences>;
     if (
       !['system', 'light', 'dark'].includes(value.theme ?? '') ||
-      !['html', 'markdown'].includes(value.outputFormat ?? '') ||
+      !['html', 'markdown', 'epub'].includes(value.outputFormat ?? '') ||
       !isMappingPresets(value.mappingPresets)
     )
       return DEFAULT_PREFERENCES;

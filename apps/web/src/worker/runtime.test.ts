@@ -111,6 +111,51 @@ describe('worker runtime', () => {
     },
   );
 
+  it('creates an EPUB and reports its internal file layout', async () => {
+    const sent: WorkerResponse[] = [];
+    const runtime = createWorkerRuntime((message) => sent.push(message));
+    await runtime.handle({
+      type: 'analyse',
+      operationId: 'analyse-epub',
+      input: await fixtureBuffer(),
+      filename: 'fixture.docx',
+      conversionDate: '2026-07-15',
+    });
+    const analysed = sent.find((message) => message.type === 'analysed');
+    if (!analysed || analysed.type !== 'analysed') throw new Error('No model');
+    const provenance = {
+      source: 'test',
+      method: 'user' as const,
+      confidence: 'certain' as const,
+    };
+    analysed.model.metadata.title ??= { value: 'Fixture', provenance };
+    analysed.model.metadata.language ??= { value: 'en', provenance };
+    analysed.model.metadata.identifier ??= {
+      value: 'urn:wordconvert:fixture',
+      provenance,
+    };
+
+    await runtime.handle({
+      type: 'convert',
+      operationId: 'convert-epub',
+      model: analysed.model,
+      format: 'epub',
+      conversionDate: '2026-07-15',
+    });
+
+    expect(sent.at(-1)).toMatchObject({
+      type: 'output',
+      filename: 'document.epub',
+      mediaType: 'application/epub+zip',
+      files: expect.arrayContaining([
+        'mimetype',
+        'META-INF/container.xml',
+        'EPUB/package.opf',
+        'EPUB/nav.xhtml',
+      ]),
+    });
+  });
+
   it('returns private structured errors and supports cancellation', async () => {
     const sent: WorkerResponse[] = [];
     const runtime = createWorkerRuntime((message) => sent.push(message));

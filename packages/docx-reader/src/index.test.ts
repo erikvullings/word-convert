@@ -42,7 +42,37 @@ const macroEnabledDocx = () =>
     { name: 'word/vbaProject.bin', data: 'not executed' },
   ]);
 
+const styledLayoutDocx = () =>
+  createZip([
+    {
+      name: '[Content_Types].xml',
+      data: `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>`,
+    },
+    {
+      name: 'word/document.xml',
+      data: `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="RapportTitel"/></w:pPr><w:r><w:t>Annual report</w:t></w:r></w:p><w:p><w:r><w:drawing/></w:r></w:p><w:p><w:pPr><w:pStyle w:val="PhotoNote"/></w:pPr><w:r><w:rPr><w:rStyle w:val="CaptionLabel"/></w:rPr><w:t>Fig.</w:t></w:r><w:r><w:t> Overview of the site</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>42</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:pStyle w:val="TableNote"/></w:pPr><w:r><w:t>Results by region</w:t></w:r></w:p><w:p><w:r><w:t>Body</w:t></w:r></w:p></w:body></w:document>`,
+    },
+    {
+      name: 'word/styles.xml',
+      data: `<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:sz w:val="22"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="RapportTitel"><w:name w:val="**RapportTitel"/><w:rPr><w:sz w:val="88"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="PhotoNote"><w:name w:val="Small note"/></w:style><w:style w:type="character" w:styleId="CaptionLabel"><w:name w:val="CaptionLabel"/></w:style><w:style w:type="paragraph" w:styleId="TableNote"><w:name w:val="Data note"/></w:style></w:styles>`,
+    },
+  ]);
+
 describe('secure DOCX reader', () => {
+  it('uses top-level figure and table adjacency when analysing styles', async () => {
+    const model = await secureDocxReader.read(styledLayoutDocx(), options);
+    const mappings = Object.fromEntries(
+      model.styles.map(({ id, proposedMapping }) => [id, proposedMapping]),
+    );
+
+    expect(mappings).toMatchObject({
+      RapportTitel: 'title',
+      PhotoNote: 'caption',
+      CaptionLabel: 'caption',
+      TableNote: 'caption',
+    });
+  });
+
   it('converts the comprehensive OOXML fixture into the neutral model', async () => {
     const model = await secureDocxReader.read(
       await fixture('standard-comprehensive.docx'),

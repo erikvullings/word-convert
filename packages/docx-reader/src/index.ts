@@ -579,6 +579,23 @@ function styleUsages(
   styles: readonly RawStyle[],
 ): StyleUsage[] {
   const usages: StyleUsage[] = [];
+  const nearbyContent = new Map<XmlNode, 'figure' | 'table'>();
+  const body = first(document, 'body');
+  const blocks = body ? elements(body) : [];
+  const blockKind = (node: XmlNode | undefined): 'figure' | 'table' | undefined => {
+    if (!node) return undefined;
+    if (localName(node) === 'tbl') return 'table';
+    return descendants(node, 'drawing').length > 0 ||
+      descendants(node, 'pict').length > 0 ||
+      descendants(node, 'object').length > 0
+      ? 'figure'
+      : undefined;
+  };
+  blocks.forEach((block, index) => {
+    if (localName(block) !== 'p') return;
+    const kind = blockKind(blocks[index - 1]) ?? blockKind(blocks[index + 1]);
+    if (kind) nearbyContent.set(block, kind);
+  });
   const defaultParagraph = styles.find(
     ({ kind, default: isDefault }) => kind === 'paragraph' && isDefault,
   )?.id;
@@ -598,6 +615,9 @@ function styleUsages(
         position: position++,
         formatting: rawFormatting(paragraph),
         numbered: Boolean(properties && first(properties, 'numPr')),
+        ...(nearbyContent.has(paragraph)
+          ? { nearbyContent: nearbyContent.get(paragraph)! }
+          : {}),
       });
     for (const run of descendants(paragraph, 'r')) {
       const runProperties = first(run, 'rPr');

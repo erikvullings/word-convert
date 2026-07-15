@@ -27,6 +27,7 @@ export interface StyleUsage {
   position: number;
   formatting?: EffectiveFormatting;
   numbered?: boolean;
+  nearbyContent?: 'figure' | 'table';
 }
 
 export interface StyleAnalysisOptions {
@@ -172,6 +173,7 @@ function proposal(
   formatting: EffectiveFormatting,
   usage: readonly StyleUsage[],
   options: StyleAnalysisOptions,
+  largestParagraphFontSizePt?: number,
 ): { mapping: StyleMapping; provenance: Provenance } {
   const explicit = options.mappings?.[style.id];
   if (explicit)
@@ -247,6 +249,61 @@ function proposal(
         reason: 'Localized style-name alias used as fallback evidence.',
       },
     };
+  const short =
+    usage.length > 0 && usage.every(({ text }) => text.trim().length <= 100);
+  const fontSizes = usage
+    .map(({ formatting: direct }) => direct?.fontSizePt ?? formatting.fontSizePt)
+    .filter((size): size is number => size !== undefined);
+  const fontSizePt = fontSizes.length > 0 ? Math.max(...fontSizes) : undefined;
+  if (
+    style.kind === 'paragraph' &&
+    usage.length === 1 &&
+    usage[0]!.position <= 2 &&
+    short &&
+    fontSizePt !== undefined &&
+    fontSizePt >= 32 &&
+    fontSizePt === largestParagraphFontSizePt
+  )
+    return {
+      mapping: 'title',
+      provenance: {
+        source: 'typographic-structural-analysis',
+        method: 'inferred',
+        confidence: 'high',
+        reason:
+          'A unique, short paragraph near the document start uses the document’s largest display-size text.',
+      },
+    };
+  const compactName = name.replaceAll(' ', '');
+  const captionName = aliases.caption.some((alias) =>
+    compactName.includes(normalise(alias).replaceAll(' ', '')),
+  );
+  const captionText = usage.some(({ text }) =>
+    /^(?:figure|fig|photo|image|table|figuur|afbeelding|foto|tabel)\b/.test(
+      normalise(text),
+    ),
+  );
+  const captionNeighbour = usage.some(
+    ({ nearbyContent }) => nearbyContent !== undefined,
+  );
+  if (
+    captionName ||
+    captionText ||
+    (style.kind === 'paragraph' && captionNeighbour)
+  )
+    return {
+      mapping: 'caption',
+      provenance: {
+        source: 'caption-context-analysis',
+        method: 'inferred',
+        confidence: captionNeighbour || captionName ? 'high' : 'medium',
+        reason: captionName
+          ? 'The style name contains a localized caption alias.'
+          : captionNeighbour
+            ? 'The paragraph is adjacent to a figure or table.'
+            : 'The paragraph text begins with a figure or table label.',
+      },
+    };
   for (const [mapping, names] of Object.entries(aliases) as Array<
     [keyof typeof aliases, readonly string[]]
   >) {
@@ -274,8 +331,6 @@ function proposal(
         },
       };
   }
-  const short =
-    usage.length > 0 && usage.every(({ text }) => text.trim().length <= 100);
   const bold =
     formatting.bold === true ||
     (usage.length > 0 &&
@@ -317,6 +372,16 @@ export function analyseStyles(
 ): AnalysedStyle[] {
   const byId = new Map(rawStyles.map((style) => [style.id, style]));
   const usedIds = new Set(usages.map(({ styleId }) => styleId));
+  const paragraphFontSizes = usages.flatMap((usage) => {
+    if (usage.kind !== 'paragraph') return [];
+    const style = byId.get(usage.styleId);
+    const size =
+      usage.formatting?.fontSizePt ??
+      (style ? effectiveFormatting(style, byId).fontSizePt : undefined);
+    return size === undefined ? [] : [size];
+  });
+  const largestParagraphFontSizePt =
+    paragraphFontSizes.length > 0 ? Math.max(...paragraphFontSizes) : undefined;
   return rawStyles
     .filter(({ id }) => usedIds.has(id))
     .sort((left, right) => left.id.localeCompare(right.id))
@@ -327,7 +392,13 @@ export function analyseStyles(
         )
         .sort((left, right) => left.position - right.position);
       const formatting = effectiveFormatting(style, byId);
-      const proposed = proposal(style, formatting, styleUsages, options);
+      const proposed = proposal(
+        style,
+        formatting,
+        styleUsages,
+        options,
+        largestParagraphFontSizePt,
+      );
       return {
         id: style.id,
         ...(style.name ? { name: style.name } : {}),

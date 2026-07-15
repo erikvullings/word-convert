@@ -18,7 +18,7 @@ export type WorkerRequest =
       type: 'convert';
       operationId: string;
       model: DocumentModel;
-      format: 'html' | 'markdown';
+      format: 'html' | 'markdown' | 'epub';
       conversionDate: string;
     }
   | { type: 'cancel'; operationId: string };
@@ -32,6 +32,7 @@ export type WorkerResponse =
       filename: string;
       mediaType: string;
       data: ArrayBuffer;
+      files?: string[];
     }
   | { type: 'error'; operationId: string; error: ConversionError };
 

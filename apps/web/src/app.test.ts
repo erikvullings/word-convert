@@ -35,6 +35,12 @@ describe('App', () => {
 
     const rendered = JSON.stringify(renderApp(controller));
 
+    expect(WORKFLOW_STAGES).toEqual([
+      'Document',
+      'Format',
+      'Preview',
+      'Download',
+    ]);
     for (const stage of WORKFLOW_STAGES) expect(rendered).toContain(stage);
     expect(rendered).toContain('All processing stays on this device');
     expect(rendered).toContain('Choose a DOCX document');
@@ -69,7 +75,8 @@ describe('App', () => {
       removeAuthor: () => undefined,
     };
 
-    state.stage = 2;
+    state.stage = 1;
+    state.review = 'styles';
     const styles = JSON.stringify(renderApp(controller));
     expect(styles).toContain('Style mapping table');
     expect(styles).toContain('Accept high-confidence proposals');
@@ -77,8 +84,14 @@ describe('App', () => {
     expect(styles).toContain('JSON presets');
     expect(styles).toContain('Heading 6');
     expect(styles).toContain('No explicit formatting');
+    expect(styles).toContain('style-review-list');
+    expect(styles).toContain('style-review-card');
+    expect(styles).toContain('Mapping for Plain');
+    expect(styles).toContain('"options":[{"id":"title"');
+    expect(styles).not.toContain('table-scroll');
+    expect(styles).not.toContain('style-table');
 
-    state.stage = 3;
+    state.review = 'metadata';
     const metadata = JSON.stringify(renderApp(controller));
     for (const label of [
       'Title',
@@ -101,7 +114,54 @@ describe('App', () => {
       expect(metadata).toContain(label);
     expect(metadata).toContain('default · certain · conversion settings');
   });
+
+  it('offers output formats before optional review and only shows EPUB configuration for EPUB', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 1;
+    state.status = 'ready';
+    state.model = editorModel();
+    const controller = controllerFor(state);
+
+    const formats = JSON.stringify(renderApp(controller));
+    expect(formats).toContain('HTML');
+    expect(formats).toContain('Markdown');
+    expect(formats).toContain('EPUB 3');
+    expect(formats).toContain('Review style mapping');
+    expect(formats).not.toContain('Cover image');
+
+    state.preferences.outputFormat = 'epub';
+    const epub = JSON.stringify(renderApp(controller));
+    expect(epub).toContain('Cover image');
+    expect(epub).toContain('EPUB configuration');
+  });
 });
+
+function controllerFor(
+  state: ReturnType<typeof createInitialState>,
+): AppController {
+  return {
+    state,
+    selectFiles: () => undefined,
+    cancel: () => undefined,
+    convert: () => undefined,
+    download: () => undefined,
+    setTheme: () => undefined,
+    setOutputFormat: () => undefined,
+    setStyleMapping: () => undefined,
+    acceptHighConfidence: () => undefined,
+    rerunAnalysis: () => undefined,
+    setPresetText: () => undefined,
+    importPreset: () => undefined,
+    exportPreset: () => undefined,
+    savePreset: () => undefined,
+    loadPreset: () => undefined,
+    setMetadata: () => undefined,
+    setSubjects: () => undefined,
+    addAuthor: () => undefined,
+    updateAuthor: () => undefined,
+    removeAuthor: () => undefined,
+  };
+}
 
 function editorModel(): DocumentModel {
   return {

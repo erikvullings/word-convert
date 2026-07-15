@@ -38,6 +38,9 @@ importers:
       '@wordconvert/docx-reader':
         specifier: workspace:*
         version: link:../../packages/docx-reader
+      '@wordconvert/epub-writer':
+        specifier: workspace:*
+        version: link:../../packages/epub-writer
       '@wordconvert/html-writer':
         specifier: workspace:*
         version: link:../../packages/html-writer
@@ -47,12 +50,18 @@ importers:
       dompurify:
         specifier: ^3.4.12
         version: 3.4.12
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       mithril:
         specifier: ^2.3.8
         version: 2.3.8
       mithril-materialized:
         specifier: ^3.16.0
         version: 3.16.0
+      slimdown-js:
+        specifier: ^1.4.0
+        version: 1.4.0
     devDependencies:
       '@types/mithril':
         specifier: ^2.2.8
@@ -769,6 +778,10 @@ packages:
   siginfo@2.0.0:
     resolution: {integrity: sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==}
 
+  slimdown-js@1.4.0:
+    resolution: {integrity: sha512-TKKF510vFlpAGblN5wwNnBLqQfLDQmC2Jy1/TZVka5zXO95b68xnBnk+S0BoisTrsuzfnfz9eTC4BOZiQfmEqw==}
+    engines: {node: '>=16'}
+
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
     engines: {node: '>=0.10.0'}
@@ -1384,6 +1397,8 @@ snapshots:
   semver@7.8.5: {}
 
   siginfo@2.0.0: {}
+
+  slimdown-js@1.4.0: {}
 
   source-map-js@1.2.1: {}
 

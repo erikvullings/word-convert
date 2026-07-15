@@ -6,6 +6,8 @@ import {
 import { DocxReadError, secureDocxReader } from '@wordconvert/docx-reader';
 import { writeHtml } from '@wordconvert/html-writer';
 import { writeMarkdown } from '@wordconvert/markdown-writer';
+import { writeEpub } from '@wordconvert/epub-writer';
+import { unzipSync } from 'fflate';
 
 import type { WorkerRequest, WorkerSend } from './protocol.ts';
 
@@ -61,31 +63,45 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
             operationId: request.operationId,
             progress: { phase: 'write', completed: 0, total: 1 },
           });
-          const text =
-            request.format === 'html'
-              ? writeHtml(request.model, {
+          const written =
+            request.format === 'epub'
+              ? await writeEpub(request.model, {
                   conversionDate: request.conversionDate,
                 })
-              : writeMarkdown(request.model, {
-                  conversionDate: request.conversionDate,
-                });
+              : new TextEncoder().encode(
+                  request.format === 'html'
+                    ? writeHtml(request.model, {
+                        conversionDate: request.conversionDate,
+                      })
+                    : writeMarkdown(request.model, {
+                        conversionDate: request.conversionDate,
+                      }),
+                );
           if (signal.cancelled) throw cancelledError();
-          const bytes = new TextEncoder().encode(text);
-          const data = bytes.buffer.slice(
-            bytes.byteOffset,
-            bytes.byteOffset + bytes.byteLength,
+          const data = written.buffer.slice(
+            written.byteOffset,
+            written.byteOffset + written.byteLength,
           );
           send(
             {
               type: 'output',
               operationId: request.operationId,
               filename:
-                request.format === 'html' ? 'document.html' : 'document.md',
+                request.format === 'html'
+                  ? 'document.html'
+                  : request.format === 'markdown'
+                    ? 'document.md'
+                    : 'document.epub',
               mediaType:
                 request.format === 'html'
                   ? 'text/html;charset=utf-8'
-                  : 'text/markdown;charset=utf-8',
+                  : request.format === 'markdown'
+                    ? 'text/markdown;charset=utf-8'
+                    : 'application/epub+zip',
               data,
+              ...(request.format === 'epub'
+                ? { files: Object.keys(unzipSync(written)).sort() }
+                : {}),
             },
             [data],
           );

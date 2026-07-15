@@ -111,6 +111,9 @@ export function createBrowserController(): AppController {
     setOutputFormat(format) {
       state.preferences.outputFormat = format;
       persistPreferences(localStorage, state.preferences);
+      delete state.output;
+      state.stage = format === 'epub' ? 1 : 2;
+      if (format !== 'epub') this.convert();
     },
     setStyleMapping(styleId: string, mapping: StyleMapping) {
       state.styleMappings = { ...state.styleMappings, [styleId]: mapping };
@@ -209,13 +212,13 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
   if (response.type === 'progress') state.progress = response.progress;
   if (response.type === 'analysed') {
     state.model = response.model;
-    state.stage = 2;
+    state.stage = 1;
     state.status = 'ready';
     delete state.progress;
   }
   if (response.type === 'output') {
     state.output = response;
-    state.stage = 7;
+    state.stage = 2;
     state.status = 'complete';
     delete state.progress;
   }

@@ -20,23 +20,14 @@ class MemoryStorage implements PreferenceStorage {
 }
 
 describe('SPA state', () => {
-  it('defines all eight workflow stages in order as serializable state', () => {
+  it('defines the compact output-first workflow as serializable state', () => {
     const state = createInitialState('2026-07-15');
 
     expect({
       stages: WORKFLOW_STAGES,
       state: JSON.parse(JSON.stringify(state)),
     }).toMatchObject({
-      stages: [
-        'Select document',
-        'Analyze document',
-        'Review styles',
-        'Review metadata',
-        'Configure output',
-        'Configure EPUB cover',
-        'Preview',
-        'Convert and download',
-      ],
+      stages: ['Document', 'Format', 'Preview', 'Download'],
       state: { stage: 0, status: 'idle', conversionDate: '2026-07-15' },
     });
   });

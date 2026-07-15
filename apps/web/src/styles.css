@@ -85,13 +85,11 @@ h1 {
 .workflow {
   width: min(100%, 76rem);
   margin: 2rem auto;
-  overflow-x: auto;
 }
 .workflow ol {
   display: grid;
-  grid-template-columns: repeat(8, minmax(8.5rem, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.5rem;
-  min-width: 72rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -144,6 +142,7 @@ h1 {
 }
 .summary {
   padding: 1.25rem;
+  align-self: start;
 }
 .summary dt {
   margin-top: 1rem;
@@ -192,6 +191,101 @@ h1 {
   border: 0;
   padding: 0;
 }
+.theme-toggle {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 1.35rem;
+}
+.format-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin: 1.5rem 0;
+}
+.format-card {
+  display: grid;
+  gap: 0.45rem;
+  min-height: 8rem;
+  padding: 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+.format-card:hover,
+.format-card:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.format-card strong {
+  color: var(--accent);
+  font-size: 1.1rem;
+}
+.format-card span,
+.secondary-actions,
+.epub-config small {
+  color: var(--muted);
+}
+.link-button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.epub-config {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+}
+.epub-config label {
+  display: grid;
+  gap: 0.4rem;
+}
+.preview-tabs,
+.preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+.preview-tabs button[aria-selected='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+.document-preview,
+.markdown-source,
+.file-layout {
+  max-height: min(65vh, 50rem);
+  overflow: auto;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--page);
+}
+.document-preview :is(img, svg, table) {
+  max-width: 100%;
+}
+.file-layout {
+  list-style: none;
+}
+.file-layout li {
+  padding: 0.25rem 0;
+}
 .output-options label {
   display: flex;
   gap: 0.6rem;
@@ -215,34 +309,80 @@ h1 {
   flex-wrap: wrap;
   gap: 0.75rem;
 }
-.table-scroll {
-  max-width: 100%;
-  overflow-x: auto;
-}
-.table-scroll:focus-visible,
 .editor :is(input, select, textarea, button):focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 2px;
 }
-.style-table {
-  width: 100%;
-  min-width: 62rem;
-  border-collapse: collapse;
-  font-size: 0.88rem;
+.style-review-list {
+  display: grid;
+  gap: 0.85rem;
+  min-width: 0;
 }
-.style-table th,
-.style-table td {
-  padding: 0.75rem;
-  border-bottom: 1px solid var(--line);
-  text-align: left;
-  vertical-align: top;
+.style-review-card {
+  display: grid;
+  grid-template-columns: minmax(10rem, 0.8fr) minmax(12rem, 1.2fr) minmax(
+      13rem,
+      1fr
+    );
+  grid-template-areas:
+    'identity evidence mapping'
+    'proposal evidence formatting';
+  gap: 1rem 1.25rem;
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-left: 0.3rem solid var(--accent);
+  border-radius: 0.65rem;
 }
-.style-table th small,
+.style-review-card > * {
+  min-width: 0;
+}
+.style-card-identity {
+  grid-area: identity;
+}
+.style-card-identity h3 {
+  margin: 0 0 0.25rem;
+  overflow-wrap: anywhere;
+  font:
+    700 1.05rem/1.25 Georgia,
+    serif;
+}
+.style-card-identity code,
+.usage-count,
 .sample,
 .provenance {
   display: block;
   margin-top: 0.35rem;
   color: var(--muted);
+}
+.style-card-proposal {
+  grid-area: proposal;
+}
+.style-card-evidence {
+  grid-area: evidence;
+}
+.style-card-evidence ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+}
+.style-card-formatting {
+  grid-area: formatting;
+}
+.style-card-mapping {
+  grid-area: mapping;
+}
+.style-card-mapping .col {
+  width: 100%;
+  padding: 0;
+}
+.card-label {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 .preset-editor,
 .authors {
@@ -299,10 +439,50 @@ h1 {
     grid-template-columns: 1fr;
   }
   .summary {
-    order: -1;
+    display: none;
+  }
+  .workflow {
+    margin-block: 1rem;
+  }
+  .workflow ol {
+    gap: 0.2rem;
+  }
+  .workflow li {
+    display: grid;
+    justify-items: center;
+    padding: 0.45rem 0.15rem;
+    text-align: center;
+  }
+  .stage-number {
+    display: none;
+  }
+  .format-cards {
+    grid-template-columns: 1fr;
+  }
+  .format-card {
+    min-height: auto;
   }
   .metadata-editor,
   .author-card {
     grid-template-columns: 1fr;
+  }
+  .style-review-card {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'identity'
+      'proposal'
+      'evidence'
+      'formatting'
+      'mapping';
+  }
+}
+
+@media (min-width: 721px) and (max-width: 1100px) {
+  .style-review-card {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      'identity proposal'
+      'evidence evidence'
+      'formatting mapping';
   }
 }

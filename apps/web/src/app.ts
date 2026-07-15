@@ -4,12 +4,9 @@ import type {
   Person,
   StyleMapping,
 } from '@wordconvert/document-model';
-import {
-  Button,
-  LinearProgress,
-  ThemeSwitcher,
-  type Theme,
-} from 'mithril-materialized';
+import { Button, LinearProgress, Select } from 'mithril-materialized';
+import DOMPurify from 'dompurify';
+import { render as renderMarkdown } from 'slimdown-js';
 
 import {
   DOCX_MEDIA_TYPE,
@@ -19,6 +16,11 @@ import {
 } from './state.ts';
 import { STYLE_MAPPINGS, type EditableMetadataField } from './editors.ts';
 
+const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
+  id: mapping,
+  label: mappingLabel(mapping),
+}));
+
 export interface AppController {
   state: AppState;
   selectFiles(files: FileList | File[]): void;
@@ -26,7 +28,7 @@ export interface AppController {
   convert(): void;
   download(): void;
   setTheme(theme: ThemePreference): void;
-  setOutputFormat(format: 'html' | 'markdown'): void;
+  setOutputFormat(format: 'html' | 'markdown' | 'epub'): void;
   setStyleMapping(styleId: string, mapping: StyleMapping): void;
   acceptHighConfidence(): void;
   rerunAnalysis(): void;
@@ -69,12 +71,7 @@ export function renderApp(
         m('p.eyebrow', 'Private document conversion'),
         m('h1', 'WordConvert'),
       ]),
-      m(ThemeSwitcher, {
-        theme: toMaterialTheme(controller.state.preferences.theme),
-        showLabels: true,
-        onThemeChange: (theme: Theme) =>
-          controller.setTheme(fromMaterialTheme(theme)),
-      }),
+      themeToggle(controller),
     ]),
     m(
       'p.privacy-note',
@@ -111,17 +108,13 @@ export function renderApp(
           : null,
         controller.state.progress ? progress(controller) : null,
       ]),
-      m('aside.summary', [
-        m('h2', 'Session'),
-        m('dl', [
-          m('dt', 'Document'),
-          m('dd', controller.state.selectedFilename ?? 'None selected'),
-          m('dt', 'Output'),
-          m('dd', controller.state.preferences.outputFormat.toUpperCase()),
-          m('dt', 'Storage'),
-          m('dd', 'Preferences only'),
-        ]),
-      ]),
+      controller.state.selectedFilename
+        ? m('aside.summary', [
+            m('h2', 'Current document'),
+            m('p', controller.state.selectedFilename),
+            m('small', 'Processed locally; only preferences are stored.'),
+          ])
+        : null,
     ]),
   ]);
 }
@@ -150,68 +143,255 @@ function filePicker(
 
 function stageContent(controller: AppController): m.Children {
   const state = controller.state;
-  if (state.stage === 1)
-    return m(
-      'p',
-      state.status === 'analysing'
-        ? 'Inspecting the document package…'
-        : 'Analysis complete.',
-    );
-  if (state.stage === 2) return styleEditor(controller);
-  if (state.stage === 3) return metadataEditor(controller);
-  if (state.stage === 4)
-    return m('div', [
-      m('fieldset.output-options', [
-        m('legend', 'Download format'),
-        ...(['html', 'markdown'] as const).map((format) =>
-          m('label', [
-            m('input', {
-              type: 'radio',
-              name: 'format',
-              value: format,
-              checked: state.preferences.outputFormat === format,
-              onchange: () => controller.setOutputFormat(format),
-            }),
-            format === 'html'
-              ? 'Standalone HTML'
-              : 'Markdown with embedded images',
-          ]),
+  if (state.review === 'styles') return styleEditor(controller);
+  if (state.review === 'metadata') return metadataEditor(controller);
+  if (state.stage === 1) return outputChooser(controller);
+  if (state.stage === 2) return preview(controller);
+  return downloadPanel(controller);
+}
+
+function outputChooser(controller: AppController): m.Vnode {
+  const state = controller.state;
+  if (state.status === 'analysing')
+    return m('p', 'Inspecting the document in the background…');
+  return m('div.output-chooser', [
+    m('p', 'Analysis is complete. Choose how you want to use the document.'),
+    m(
+      'div.format-cards',
+      (['html', 'markdown', 'epub'] as const).map((format) =>
+        m(
+          'button.format-card',
+          {
+            type: 'button',
+            onclick: () => controller.setOutputFormat(format),
+          },
+          [
+            m(
+              'strong',
+              format === 'html'
+                ? 'HTML'
+                : format === 'markdown'
+                  ? 'Markdown'
+                  : 'EPUB 3',
+            ),
+            m(
+              'span',
+              format === 'html'
+                ? 'Preview directly in the browser'
+                : format === 'markdown'
+                  ? 'Rendered preview and Markdown source'
+                  : 'Configure and inspect the publication package',
+            ),
+          ],
         ),
-      ]),
-      m(Button, {
-        label: 'Continue',
-        onclick: () => {
-          state.stage += 1;
+      ),
+    ),
+    m('p.secondary-actions', [
+      'Something looks wrong? ',
+      m(
+        'button.link-button',
+        {
+          type: 'button',
+          onclick: () => {
+            state.review = 'styles';
+          },
         },
-      }),
-    ]);
-  if (state.stage === 5)
-    return continuePanel(
-      'EPUB cover configuration becomes available when EPUB output is enabled.',
-      state,
-    );
-  if (state.stage === 6)
-    return m('div', [
-      m('p', 'The analysed document is ready to convert.'),
-      m(Button, {
-        label: 'Continue to conversion',
-        onclick: () => {
-          state.stage = 7;
+        'Review style mapping',
+      ),
+      ' or ',
+      m(
+        'button.link-button',
+        {
+          type: 'button',
+          onclick: () => {
+            state.review = 'metadata';
+          },
         },
-      }),
-    ]);
-  return m('div.actions', [
-    state.output
-      ? m(Button, {
-          label: `Download ${state.output.filename}`,
-          onclick: () => controller.download(),
-        })
-      : m(Button, {
-          label: 'Convert document',
-          onclick: () => controller.convert(),
-          disabled: state.status === 'converting',
-        }),
+        'review metadata',
+      ),
+      '.',
+    ]),
+    state.preferences.outputFormat === 'epub'
+      ? epubConfiguration(controller)
+      : null,
   ]);
+}
+
+function epubConfiguration(controller: AppController): m.Vnode {
+  const metadata = controller.state.model?.metadata;
+  const missing = [
+    !metadata?.title?.value.trim() && 'title',
+    !metadata?.language?.value.trim() && 'language',
+    !metadata?.identifier?.value.trim() && 'identifier',
+  ].filter((value): value is string => Boolean(value));
+  return m('section.epub-config', [
+    m('h3', 'EPUB configuration'),
+    m(
+      'p',
+      'The title, language, identifier, and authors come from the analysed document metadata.',
+    ),
+    m('label', [
+      m('span', 'Cover image (optional)'),
+      m('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp' }),
+      m(
+        'small',
+        'Cover embedding is not yet enabled; the selected file stays on this device.',
+      ),
+    ]),
+    missing.length
+      ? m('p.error[role="alert"]', [
+          `Add the required ${missing.join(', ')} metadata before creating the EPUB. `,
+          m(
+            'button.link-button',
+            {
+              type: 'button',
+              onclick: () => {
+                controller.state.review = 'metadata';
+              },
+            },
+            'Review metadata',
+          ),
+        ])
+      : null,
+    m(Button, {
+      disabled: missing.length > 0,
+      label: 'Create EPUB preview',
+      onclick: () => {
+        controller.state.stage = 2;
+        controller.convert();
+      },
+    }),
+  ]);
+}
+
+function preview(controller: AppController): m.Vnode {
+  const state = controller.state;
+  if (!state.output)
+    return m('div', [
+      m(
+        'p',
+        state.status === 'converting'
+          ? 'Creating preview…'
+          : 'No preview is available.',
+      ),
+      m(Button, {
+        label: 'Back to formats',
+        onclick: () => {
+          state.stage = 1;
+        },
+      }),
+    ]);
+  if (state.preferences.outputFormat === 'epub')
+    return m('div.preview-panel', [
+      m('h3', 'EPUB file layout'),
+      m(
+        'ul.file-layout',
+        (state.output.files ?? []).map((file) => m('li', m('code', file))),
+      ),
+      previewActions(controller),
+    ]);
+  const source = new TextDecoder().decode(state.output.data);
+  const isMarkdown = state.preferences.outputFormat === 'markdown';
+  const rendered = isMarkdown ? renderMarkdown(source) : source;
+  return m('div.preview-panel', [
+    isMarkdown
+      ? m('div.preview-tabs[role="tablist"]', [
+          m(
+            'button',
+            {
+              type: 'button',
+              role: 'tab',
+              'aria-selected': state.previewMode === 'rendered',
+              onclick: () => {
+                state.previewMode = 'rendered';
+              },
+            },
+            'Rendered',
+          ),
+          m(
+            'button',
+            {
+              type: 'button',
+              role: 'tab',
+              'aria-selected': state.previewMode === 'source',
+              onclick: () => {
+                state.previewMode = 'source';
+              },
+            },
+            'Markdown',
+          ),
+        ])
+      : null,
+    isMarkdown && state.previewMode === 'source'
+      ? m('pre.markdown-source', source)
+      : m('article.document-preview', m.trust(DOMPurify.sanitize(rendered))),
+    previewActions(controller),
+  ]);
+}
+
+function previewActions(controller: AppController): m.Vnode {
+  const state = controller.state;
+  return m('div.preview-actions', [
+    m(Button, {
+      label: `Download ${state.output?.filename ?? 'output'}`,
+      onclick: () => controller.download(),
+    }),
+    m(
+      'button.link-button',
+      {
+        type: 'button',
+        onclick: () => {
+          state.review = 'styles';
+        },
+      },
+      'Review style mapping',
+    ),
+    m(
+      'button.link-button',
+      {
+        type: 'button',
+        onclick: () => {
+          state.review = 'metadata';
+        },
+      },
+      'Review metadata',
+    ),
+    m(
+      'button.link-button',
+      {
+        type: 'button',
+        onclick: () => {
+          state.stage = 1;
+          delete state.output;
+        },
+      },
+      'Choose another format',
+    ),
+  ]);
+}
+
+function downloadPanel(controller: AppController): m.Vnode {
+  return m('div', [
+    m('p', 'Your converted document is ready.'),
+    m(Button, {
+      label: `Download ${controller.state.output?.filename ?? 'document'}`,
+      onclick: () => controller.download(),
+    }),
+  ]);
+}
+
+function themeToggle(controller: AppController): m.Vnode {
+  const dark = controller.state.preferences.theme === 'dark';
+  return m(
+    'button.theme-toggle',
+    {
+      type: 'button',
+      title: dark ? 'Use light theme' : 'Use dark theme',
+      'aria-label': dark ? 'Use light theme' : 'Use dark theme',
+      onclick: () => controller.setTheme(dark ? 'light' : 'dark'),
+    },
+    dark ? '☀' : '☾',
+  );
 }
 
 function styleEditor(controller: AppController): m.Vnode {
@@ -230,66 +410,45 @@ function styleEditor(controller: AppController): m.Vnode {
       }),
     ]),
     m(
-      'div.table-scroll[tabindex="0"][aria-label="Style mapping table"]',
-      m('table.style-table', [
-        m(
-          'thead',
-          m('tr', [
-            m('th[scope="col"]', 'Style'),
-            m('th[scope="col"]', 'Proposal'),
-            m('th[scope="col"]', 'Confidence and reasons'),
-            m('th[scope="col"]', 'Samples'),
-            m('th[scope="col"]', 'Formatting'),
-            m('th[scope="col"]', 'Mapping'),
+      'div.style-review-list[aria-label="Style mapping table"]',
+      (state.model?.styles ?? []).map((style) => {
+        const name = style.name ?? style.id;
+        return m('article.style-review-card', { key: style.id }, [
+          m('header.style-card-identity', [m('h3', name), m('code', style.id)]),
+          m('section.style-card-proposal', [
+            m('span.card-label', 'Proposal'),
+            m('strong', mappingLabel(style.proposedMapping)),
           ]),
-        ),
-        m(
-          'tbody',
-          (state.model?.styles ?? []).map((style) =>
-            m('tr', { key: style.id }, [
-              m('th[scope="row"]', [
-                style.name ?? style.id,
-                m('small', style.id),
-              ]),
-              m('td', mappingLabel(style.proposedMapping)),
-              m('td', [
-                m('strong', style.provenance.confidence),
-                m(
-                  'ul',
-                  style.reasons.map((reason) => m('li', reason)),
-                ),
-              ]),
-              m('td', [
-                m('span', `${style.usageCount} uses`),
-                ...style.examples.map((sample) => m('q.sample', sample)),
-              ]),
-              m('td', formattingSummary(style.formatting)),
-              m(
-                'td',
-                m('label.sr-label', [
-                  m('span.sr-only', `Mapping for ${style.name ?? style.id}`),
-                  m(
-                    'select',
-                    {
-                      value:
-                        state.styleMappings[style.id] ?? style.proposedMapping,
-                      onchange: (event: Event) =>
-                        controller.setStyleMapping(
-                          style.id,
-                          (event.currentTarget as HTMLSelectElement)
-                            .value as StyleMapping,
-                        ),
-                    },
-                    STYLE_MAPPINGS.map((mapping) =>
-                      m('option', { value: mapping }, mappingLabel(mapping)),
-                    ),
-                  ),
-                ]),
-              ),
-            ]),
+          m('section.style-card-evidence', [
+            m('span.card-label', 'Evidence'),
+            m('strong', `${style.provenance.confidence} confidence`),
+            m(
+              'ul',
+              style.reasons.map((reason) => m('li', reason)),
+            ),
+            m('span.usage-count', `${style.usageCount} uses`),
+            ...style.examples.map((sample) => m('q.sample', sample)),
+          ]),
+          m('section.style-card-formatting', [
+            m('span.card-label', 'Formatting'),
+            formattingSummary(style.formatting),
+          ]),
+          m(
+            'section.style-card-mapping',
+            m(StyleMappingControl, {
+              key: style.id,
+              id: `style-mapping-${style.id}`,
+              label: `Mapping for ${name}`,
+              options: styleMappingOptions,
+              checkedId: state.styleMappings[style.id] ?? style.proposedMapping,
+              onchange: (checkedIds: StyleMapping[]) => {
+                const mapping = checkedIds[0];
+                if (mapping) controller.setStyleMapping(style.id, mapping);
+              },
+            }),
           ),
-        ),
-      ]),
+        ]);
+      }),
     ),
     m('fieldset.preset-editor', [
       m('legend', 'JSON presets'),
@@ -346,9 +505,10 @@ function styleEditor(controller: AppController): m.Vnode {
       state.editorNotice ? m('p[role="status"]', state.editorNotice) : null,
     ]),
     m(Button, {
-      label: 'Continue to metadata',
+      label: 'Return to preview',
       onclick: () => {
-        state.stage = 3;
+        delete state.review;
+        if (state.output) controller.convert();
       },
     }),
   ]);
@@ -399,9 +559,10 @@ function metadataEditor(controller: AppController): m.Vnode {
       m(Button, { label: 'Add author', onclick: () => controller.addAuthor() }),
     ]),
     m(Button, {
-      label: 'Continue to output',
+      label: 'Return to preview',
       onclick: () => {
-        controller.state.stage = 4;
+        delete controller.state.review;
+        if (controller.state.output) controller.convert();
       },
     }),
   ]);
@@ -492,18 +653,6 @@ function formattingSummary(formatting: EffectiveFormatting): string {
   return values.length ? values.join(', ') : 'No explicit formatting';
 }
 
-function continuePanel(message: string, state: AppState): m.Vnode {
-  return m('div', [
-    m('p', message),
-    m(Button, {
-      label: 'Continue',
-      onclick: () => {
-        state.stage += 1;
-      },
-    }),
-  ]);
-}
-
 function progress(controller: AppController): m.Vnode {
   const state = controller.state;
   const total = state.progress?.total;
@@ -523,10 +672,18 @@ function progress(controller: AppController): m.Vnode {
   ]);
 }
 
-function toMaterialTheme(theme: ThemePreference): Theme {
-  return theme === 'system' ? 'auto' : theme;
+interface StyleMappingControlAttrs {
+  key?: string;
+  id: string;
+  label: string;
+  options: typeof styleMappingOptions;
+  checkedId: StyleMapping;
+  onchange(checkedIds: StyleMapping[]): void;
 }
 
-function fromMaterialTheme(theme: Theme): ThemePreference {
-  return theme === 'auto' ? 'system' : theme;
-}
+const StyleMappingControl: m.FactoryComponent<
+  StyleMappingControlAttrs
+> = () => {
+  const RowSelect = Select<StyleMapping>();
+  return { view: ({ attrs }) => m(RowSelect, attrs) };
+};
