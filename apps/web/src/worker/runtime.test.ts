@@ -94,4 +94,34 @@ describe('worker runtime', () => {
     expect(JSON.stringify(error)).not.toContain('private words');
     expect(runtime.activeOperationCount()).toBe(0);
   });
+
+  it('preserves and sanitizes an actual DOCX reader failure', async () => {
+    const sent: WorkerResponse[] = [];
+    const runtime = createWorkerRuntime((message) => sent.push(message));
+
+    await runtime.handle({
+      type: 'analyse',
+      operationId: 'unsupported-1',
+      input: Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0]).buffer,
+      filename: 'private-name.docx',
+      conversionDate: '2026-07-15',
+    });
+
+    const response = sent.at(-1);
+    expect(response).toEqual({
+      type: 'error',
+      operationId: 'unsupported-1',
+      error: {
+        code: 'unsupported-format',
+        message: 'Input is not a DOCX ZIP package.',
+        recoverable: false,
+        phase: 'read',
+      },
+    });
+    expect(
+      Object.getPrototypeOf(response?.type === 'error' ? response.error : {}),
+    ).toBe(Object.prototype);
+    expect(JSON.stringify(response)).not.toContain('private-name');
+    expect(runtime.activeOperationCount()).toBe(0);
+  });
 });

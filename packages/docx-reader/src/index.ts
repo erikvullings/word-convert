@@ -13,6 +13,7 @@ import {
   type TableCell,
   type TextMark,
 } from '@wordconvert/document-model';
+import { strFromU8 } from 'fflate';
 
 import {
   analyseStyles,
@@ -62,10 +63,19 @@ const DEFAULT_LIMITS: ReaderLimits = {
   maxCompressionRatio: 100,
 };
 const safeExternalProtocols = new Set(['http:', 'https:', 'mailto:']);
-const activeMedia = new Set([
-  'image/svg+xml',
-  'text/html',
-  'application/xhtml+xml',
+const activeMedia = new Set(['text/html', 'application/xhtml+xml']);
+const activeSvgElements = new Set([
+  'animate',
+  'animatemotion',
+  'animatetransform',
+  'audio',
+  'embed',
+  'foreignobject',
+  'iframe',
+  'object',
+  'script',
+  'set',
+  'video',
 ]);
 
 interface Relationship {
@@ -126,7 +136,10 @@ function validatePackage(pkg: DocxPackage): void {
     (node) => attribute(node, 'PartName') === '/word/document.xml',
   );
   const contentType = documentType && attribute(documentType, 'ContentType');
-  if (!contentType?.endsWith('wordprocessingml.document.main+xml'))
+  if (
+    !contentType?.endsWith('wordprocessingml.document.main+xml') &&
+    !contentType?.endsWith('ms-word.document.macroEnabled.main+xml')
+  )
     fail('unsupported-format', 'Package is not an unencrypted DOCX document.');
   const defaults = new Map(
     elements(types, 'Default').map((node) => [
@@ -142,15 +155,59 @@ function validatePackage(pkg: DocxPackage): void {
     const mediaType = declared
       ? attribute(declared, 'ContentType')
       : defaults.get(extension);
-    if (mediaType && activeMedia.has(mediaType))
-      fail('unsupported-format', 'DOCX contains an active media resource.', {
-        mediaType,
-      });
-    if (extension === 'svg' || extension === 'html' || extension === 'xhtml')
-      fail('unsupported-format', 'DOCX contains an active media resource.', {
-        extension: extension ?? '',
-      });
+    if (mediaType === 'image/svg+xml' || extension === 'svg') {
+      if (!isPassiveSvg(pkg.entries[name]!, name)) {
+        delete pkg.entries[name];
+        pkg.activeContentDisabled = true;
+      }
+      continue;
+    }
+    if (
+      (mediaType && activeMedia.has(mediaType)) ||
+      extension === 'html' ||
+      extension === 'xhtml'
+    ) {
+      delete pkg.entries[name];
+      pkg.activeContentDisabled = true;
+    }
   }
+}
+
+function isPassiveSvg(bytes: Uint8Array, part: string): boolean {
+  const root = parseXml(bytes, part);
+  const source = strFromU8(bytes);
+  if (/<\?(?!xml(?:\s|\?>))/i.test(source)) return false;
+  if (localName(root).toLowerCase() !== 'svg') return false;
+
+  const inspect = (node: XmlNode): boolean => {
+    const elementName = localName(node).toLowerCase();
+    if (activeSvgElements.has(elementName)) return false;
+    if (
+      elementName === 'style' &&
+      (/[@]import|expression\s*\(|-moz-binding/i.test(textContent(node)) ||
+        /url\(\s*['"]?(?!#)/i.test(textContent(node)))
+    )
+      return false;
+    for (const [qualifiedName, value] of Object.entries(node.attributes)) {
+      const name = qualifiedName.split(':').at(-1)?.toLowerCase() ?? '';
+      const normalizedValue = value.trim().toLowerCase();
+      if (name.startsWith('on')) return false;
+      if (/url\(\s*['"]?(?!#)/i.test(value)) return false;
+      if (
+        (name === 'href' || name === 'src') &&
+        !normalizedValue.startsWith('#')
+      )
+        return false;
+      if (
+        name === 'style' &&
+        (/[@]import|expression\s*\(|-moz-binding/i.test(value) ||
+          /url\(\s*['"]?(?!#)/i.test(value))
+      )
+        return false;
+    }
+    return elements(node).every(inspect);
+  };
+  return inspect(root);
 }
 
 function parseNumbering(pkg: DocxPackage): Map<string, boolean> {
@@ -253,6 +310,7 @@ function assetForRelationship(
     jpeg: 'image/jpeg',
     jpg: 'image/jpeg',
     png: 'image/png',
+    svg: 'image/svg+xml',
     webp: 'image/webp',
   };
   const mediaType = mediaTypes[extension];
@@ -719,6 +777,13 @@ export const secureDocxReader: DocxReader = {
     checkCancellation(options);
     options.onProgress?.({ phase: 'read', completed: 0, total: 1 });
     const warnings: ConversionWarning[] = [];
+    if (pkg.activeContentDisabled) {
+      warnings.push({
+        code: 'active-content-disabled',
+        severity: 'warning',
+        message: 'Active document content was disabled.',
+      });
+    }
     const context: ParseContext = {
       pkg,
       relationships,

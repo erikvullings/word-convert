@@ -3,7 +3,7 @@ import {
   type CancellationSignal,
   type ConversionError,
 } from '@wordconvert/document-model';
-import { secureDocxReader } from '@wordconvert/docx-reader';
+import { DocxReadError, secureDocxReader } from '@wordconvert/docx-reader';
 import { writeHtml } from '@wordconvert/html-writer';
 import { writeMarkdown } from '@wordconvert/markdown-writer';
 
@@ -109,7 +109,7 @@ function cancelledError(): ConversionError {
 }
 
 function normaliseError(cause: unknown): ConversionError {
-  if (isConversionError(cause)) {
+  if (cause instanceof DocxReadError || isConversionError(cause)) {
     return {
       code: cause.code,
       message: cause.message,

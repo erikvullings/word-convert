@@ -11,8 +11,14 @@ export interface ReaderLimits {
 
 export interface DocxPackage {
   entries: Record<string, Uint8Array>;
+  activeContentDisabled: boolean;
   xml(name: string): Uint8Array | undefined;
 }
+
+const isActiveAutomationPart = (name: string): boolean =>
+  /^word\/(?:_rels\/)?vba(?:project|data)/i.test(name) ||
+  /^word\/activex\//i.test(name) ||
+  /^customui\//i.test(name);
 
 const view16 = (bytes: Uint8Array, offset: number) =>
   bytes[offset]! | (bytes[offset + 1]! << 8);
@@ -99,12 +105,17 @@ export function openDocxPackage(
   } catch {
     return fail('invalid-input', 'DOCX ZIP package is malformed.');
   }
-  if (entries['word/vbaProject.bin'])
-    fail(
-      'unsupported-format',
-      'Macro-enabled Word documents are not supported.',
-    );
   if (entries['EncryptedPackage'] || entries['EncryptionInfo'])
     fail('encrypted-document', 'Encrypted Word documents are not supported.');
-  return { entries, xml: (name) => entries[name] };
+  let activeContentDisabled = false;
+  for (const name of Object.keys(entries)) {
+    if (!isActiveAutomationPart(name)) continue;
+    delete entries[name];
+    activeContentDisabled = true;
+  }
+  return {
+    entries,
+    activeContentDisabled,
+    xml: (name) => entries[name],
+  };
 }
