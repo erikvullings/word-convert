@@ -60,8 +60,8 @@ importers:
         specifier: ^3.16.0
         version: 3.16.0
       slimdown-js:
-        specifier: ^1.4.0
-        version: 1.4.0
+        specifier: ^1.4.1
+        version: 1.4.1
     devDependencies:
       '@types/mithril':
         specifier: ^2.2.8
@@ -778,8 +778,8 @@ packages:
   siginfo@2.0.0:
     resolution: {integrity: sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==}
 
-  slimdown-js@1.4.0:
-    resolution: {integrity: sha512-TKKF510vFlpAGblN5wwNnBLqQfLDQmC2Jy1/TZVka5zXO95b68xnBnk+S0BoisTrsuzfnfz9eTC4BOZiQfmEqw==}
+  slimdown-js@1.4.1:
+    resolution: {integrity: sha512-qdGdU2tBILnvMMo2PM/kc0l3+yhRh/3Oogb8+ZZociZhQbq+gEXsCrTYGMOiZfUV6Zb5z427S0p7gmgB3nR5Sg==}
     engines: {node: '>=16'}
 
   source-map-js@1.2.1:
@@ -1398,7 +1398,7 @@ snapshots:
 
   siginfo@2.0.0: {}
 
-  slimdown-js@1.4.0: {}
+  slimdown-js@1.4.1: {}
 
   source-map-js@1.2.1: {}
 
