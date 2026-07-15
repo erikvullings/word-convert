@@ -300,6 +300,8 @@ h1 {
   padding: 0.25rem 0;
 }
 .epub-layout-grid {
+  flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(14rem, 0.45fr) minmax(0, 1fr);
   gap: 1rem;
@@ -307,6 +309,14 @@ h1 {
 .epub-file-list {
   margin: 0;
   padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.35rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-height: 0;
+  max-height: 50rem;
 }
 .epub-file-button {
   width: 100%;
@@ -317,6 +327,7 @@ h1 {
   color: var(--ink);
   text-align: left;
   cursor: pointer;
+  flex-shrink: 0;
 }
 .epub-file-button-selected {
   border-color: var(--accent);
@@ -324,6 +335,19 @@ h1 {
 }
 .epub-file-viewer {
   min-width: 0;
+  min-height: 0;
+  max-height: 50rem;
+  border: 1px solid var(--line);
+  border-radius: 0.35rem;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.image-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .output-options label {
   display: flex;
@@ -485,10 +509,12 @@ h1 {
   .document-preview,
   .markdown-source,
   .file-layout {
-    max-height: none;
+    max-height: 100%;
     padding: 0.75rem;
   }
   .epub-layout-grid {
+    flex: 1;
+    min-height: 0;
     grid-template-columns: 1fr;
   }
   .format-cards {
@@ -520,4 +546,27 @@ h1 {
       'evidence evidence'
       'formatting mapping';
   }
+}
+
+.epub-layout {
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  padding: 1rem;
+  margin-top: 1.5rem;
+  min-height: 20rem;
+  display: flex;
+  flex-direction: column;
+}
+.epub-layout h3 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.epub-file-viewer .document-preview {
+  max-height: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  align-self: flex-start;
 }

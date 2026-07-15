@@ -324,6 +324,26 @@ function preview(controller: AppController): m.Vnode {
   ]);
 }
 
+const epubFileOrder = (a: string, b: string): number => {
+  // Sort priority: title, nav, chapters, images, mimetype, META-INF, styles, package
+  const getPriority = (file: string): number => {
+    const lower = file.toLowerCase();
+    if (lower.includes('title')) return 0;
+    if (lower.includes('nav')) return 1;
+    if (lower.includes('chapter')) return 2;
+    if (lower.includes('image')) return 3;
+    if (lower === 'mimetype') return 4;
+    if (lower.includes('meta-inf')) return 5;
+    if (lower.includes('styles') || lower.endsWith('.css')) return 6;
+    if (lower.includes('package') || lower.endsWith('.opf')) return 7;
+    return 8; // Other files
+  };
+  const aPri = getPriority(a);
+  const bPri = getPriority(b);
+  if (aPri !== bPri) return aPri - bPri;
+  return a.localeCompare(b); // Alphabetical as tiebreaker
+};
+
 function epubLayoutPreview(controller: AppController): m.Vnode {
   const state = controller.state;
   if (!state.output)
@@ -335,9 +355,10 @@ function epubLayoutPreview(controller: AppController): m.Vnode {
     );
 
   const archive = unzipSync(new Uint8Array(state.output.data));
-  const files =
+  const files = (
     state.output.files?.filter((file) => archive[file] !== undefined) ??
-    Object.keys(archive).sort();
+    Object.keys(archive)
+  ).sort(epubFileOrder);
   const selected =
     state.selectedEpubFile && files.includes(state.selectedEpubFile)
       ? state.selectedEpubFile
@@ -382,17 +403,43 @@ function renderEpubFilePreview(
   const data = archive[filename];
   if (!data) return m('p', 'The selected file is not available.');
   const lower = filename.toLowerCase();
-  if (lower.endsWith('.xhtml') || lower.endsWith('.html') || lower.endsWith('.htm')) {
+  if (
+    lower.endsWith('.xhtml') ||
+    lower.endsWith('.html') ||
+    lower.endsWith('.htm')
+  ) {
     const source = strFromU8(data);
+    let html = extractHtmlBody(source);
+    // Replace <nav> tags with <div> to avoid CSS constraints
+    html = html.replace(/<nav\b/gi, '<div').replace(/<\/nav\s*>/gi, '</div>');
     return m(
       'article.document-preview',
       m.trust(
-        DOMPurify.sanitize(extractHtmlBody(source), {
+        DOMPurify.sanitize(html, {
           FORBID_TAGS: ['style', 'link', 'meta', 'title'],
           FORBID_ATTR: ['style'],
         }),
       ),
     );
+  }
+  if (
+    lower.endsWith('.png') ||
+    lower.endsWith('.jpg') ||
+    lower.endsWith('.jpeg') ||
+    lower.endsWith('.webp') ||
+    lower.endsWith('.gif')
+  ) {
+    let binary = '';
+    for (let i = 0; i < data.length; i++) {
+      binary += String.fromCharCode(data[i] as number);
+    }
+    return m('div.image-preview', [
+      m('img', {
+        src: `data:${mimeTypeForImage(filename)};base64,${btoa(binary)}`,
+        alt: filename,
+        style: 'max-width: 100%; height: auto;',
+      }),
+    ]);
   }
   if (
     lower.endsWith('.opf') ||
@@ -407,6 +454,15 @@ function renderEpubFilePreview(
     'p',
     `Binary asset preview is not rendered for ${filename} (${data.byteLength} bytes).`,
   );
+}
+
+function mimeTypeForImage(filename: string): string {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  return 'image/png';
 }
 
 export function extractHtmlBody(source: string): string {

@@ -334,7 +334,7 @@ function parseRun(run: XmlNode, context: ParseContext): InlineNode[] {
   const result: InlineNode[] = [];
   for (const child of elements(run)) {
     const name = localName(child);
-    if (name === 't' || name === 'delText' || name === 'instrText') {
+    if (name === 't' || name === 'delText') {
       const text = textContent(child);
       if (text)
         result.push({ type: 'text', text, ...(marks ? { marks } : {}) });
@@ -364,10 +364,40 @@ function parseRun(run: XmlNode, context: ParseContext): InlineNode[] {
 
 function parseInlines(parent: XmlNode, context: ParseContext): InlineNode[] {
   const result: InlineNode[] = [];
+  let fieldDepth = 0;
+  let currentFieldIsPageRef = false;
+  let skipFieldResult = false;
   for (const child of elements(parent)) {
     const name = localName(child);
-    if (name === 'r') result.push(...parseRun(child, context));
-    else if (name === 'hyperlink') {
+    if (name === 'r') {
+      // Scan run children to track complex field state
+      for (const el of elements(child)) {
+        const elName = localName(el);
+        if (elName === 'fldChar') {
+          const type = attribute(el, 'fldCharType');
+          if (type === 'begin') {
+            fieldDepth++;
+            if (fieldDepth === 1) {
+              currentFieldIsPageRef = false;
+              skipFieldResult = false;
+            }
+          } else if (type === 'separate') {
+            if (fieldDepth === 1 && currentFieldIsPageRef)
+              skipFieldResult = true;
+          } else if (type === 'end') {
+            if (fieldDepth === 1) {
+              skipFieldResult = false;
+              currentFieldIsPageRef = false;
+            }
+            if (fieldDepth > 0) fieldDepth--;
+          }
+        } else if (elName === 'instrText' && fieldDepth === 1) {
+          if (/\bPAGEREF\b/i.test(textContent(el) ?? ''))
+            currentFieldIsPageRef = true;
+        }
+      }
+      if (!skipFieldResult) result.push(...parseRun(child, context));
+    } else if (name === 'hyperlink') {
       const children = parseInlines(child, context);
       const relationship = context.relationships.get(
         attribute(child, 'id') ?? '',
