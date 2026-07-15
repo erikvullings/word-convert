@@ -70,7 +70,14 @@ importers:
         specifier: ^0.8.3
         version: 0.8.3
 
-  packages/markdown-writer: {}
+  packages/markdown-writer:
+    dependencies:
+      '@wordconvert/document-model':
+        specifier: workspace:*
+        version: link:../document-model
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
 
   packages/math-converter: {}
 

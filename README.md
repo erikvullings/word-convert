@@ -13,3 +13,9 @@ Callers can pass `stylePreset` and `styleMappings` to `DocxReaderOptions`. Expli
 `@wordconvert/html-writer` exposes `writeHtml` for deterministic standalone HTML or a preview fragment, and `writeHtmlZip` for an editable package containing `document.html`, `styles.css`, and generated `images/` and `fonts/` paths. The serializer covers every document-model node, builds a heading table of contents, embeds standalone assets, and emits script-free offline output with print and reader light/dark styles.
 
 The writer escapes document content and metadata, accepts only safe link schemes and passive image/font media, and never trusts source asset filenames. Browser callers must still apply DOMPurify before inserting preview fragments into the DOM.
+
+## Markdown output
+
+`@wordconvert/markdown-writer` exposes `writeMarkdown` for a single Markdown file with embedded data-URI images and `writeMarkdownZip` for an editable package containing `document.md` and generated `images/` paths. The semantic serializer supports headings, formatting, safe links, nested lists, blockquotes, fenced code, GFM tables, footnotes, passive images and captions, and inline or block math.
+
+Both modes are deterministic. ZIP asset names are generated rather than copied from source filenames, and callers can use the typed `onWarning` callback to surface omitted unsafe links, unsupported media or styles, missing references, and table-span degradation.
