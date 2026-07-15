@@ -1,0 +1,97 @@
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+
+import { describe, expect, it } from 'vitest';
+
+import { createWorkerRuntime } from './runtime.ts';
+import type { WorkerResponse } from './protocol.ts';
+
+const fixturePath = fileURLToPath(
+  new URL(
+    '../../../../tests/fixtures/docx/standard-comprehensive.docx',
+    import.meta.url,
+  ),
+);
+
+async function fixtureBuffer(): Promise<ArrayBuffer> {
+  const bytes = await readFile(fixturePath);
+  return Uint8Array.from(bytes).buffer;
+}
+
+describe('worker runtime', () => {
+  it('analyses a transferred DOCX buffer, reports progress, and cleans up', async () => {
+    const sent: WorkerResponse[] = [];
+    const runtime = createWorkerRuntime((message) => sent.push(message));
+
+    await runtime.handle({
+      type: 'analyse',
+      operationId: 'analyse-1',
+      input: await fixtureBuffer(),
+      filename: 'fixture.docx',
+      conversionDate: '2026-07-15',
+    });
+
+    expect(sent.some((message) => message.type === 'progress')).toBe(true);
+    expect(sent.at(-1)).toMatchObject({
+      type: 'analysed',
+      operationId: 'analyse-1',
+    });
+    expect(runtime.activeOperationCount()).toBe(0);
+  });
+
+  it.each([
+    ['html', 'document.html', '<!doctype html>'],
+    ['markdown', 'document.md', '#'],
+  ] as const)(
+    'converts an analysed fixture to downloadable %s',
+    async (format, filename, contentStart) => {
+      const sent: WorkerResponse[] = [];
+      const runtime = createWorkerRuntime((message) => sent.push(message));
+      await runtime.handle({
+        type: 'analyse',
+        operationId: 'analyse-2',
+        input: await fixtureBuffer(),
+        filename: 'fixture.docx',
+        conversionDate: '2026-07-15',
+      });
+      const analysed = sent.find((message) => message.type === 'analysed');
+      if (!analysed || analysed.type !== 'analysed')
+        throw new Error('No model');
+
+      await runtime.handle({
+        type: 'convert',
+        operationId: `convert-${format}`,
+        model: analysed.model,
+        format,
+        conversionDate: '2026-07-15',
+      });
+
+      const output = sent.at(-1);
+      expect(output).toMatchObject({ type: 'output', filename });
+      if (!output || output.type !== 'output') throw new Error('No output');
+      expect(new TextDecoder().decode(output.data)).toContain(contentStart);
+      expect(runtime.activeOperationCount()).toBe(0);
+    },
+  );
+
+  it('returns private structured errors and supports cancellation', async () => {
+    const sent: WorkerResponse[] = [];
+    const runtime = createWorkerRuntime((message) => sent.push(message));
+    await runtime.handle({ type: 'cancel', operationId: 'cancelled-1' });
+    await runtime.handle({
+      type: 'analyse',
+      operationId: 'cancelled-1',
+      input: new ArrayBuffer(0),
+      filename: 'private words.docx',
+      conversionDate: '2026-07-15',
+    });
+
+    const error = sent.at(-1);
+    expect(error).toMatchObject({
+      type: 'error',
+      error: { code: 'cancelled', recoverable: true },
+    });
+    expect(JSON.stringify(error)).not.toContain('private words');
+    expect(runtime.activeOperationCount()).toBe(0);
+  });
+});

@@ -32,6 +32,18 @@ importers:
 
   apps/web:
     dependencies:
+      '@wordconvert/document-model':
+        specifier: workspace:*
+        version: link:../../packages/document-model
+      '@wordconvert/docx-reader':
+        specifier: workspace:*
+        version: link:../../packages/docx-reader
+      '@wordconvert/html-writer':
+        specifier: workspace:*
+        version: link:../../packages/html-writer
+      '@wordconvert/markdown-writer':
+        specifier: workspace:*
+        version: link:../../packages/markdown-writer
       dompurify:
         specifier: ^3.4.12
         version: 3.4.12

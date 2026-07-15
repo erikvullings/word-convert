@@ -10,6 +10,10 @@
     "typecheck": "tsc --project tsconfig.json && tsc --project tsconfig.worker.json"
   },
   "dependencies": {
+    "@wordconvert/document-model": "workspace:*",
+    "@wordconvert/docx-reader": "workspace:*",
+    "@wordconvert/html-writer": "workspace:*",
+    "@wordconvert/markdown-writer": "workspace:*",
     "dompurify": "^3.4.12",
     "mithril": "^2.3.8",
     "mithril-materialized": "^3.16.0"

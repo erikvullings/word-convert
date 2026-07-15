@@ -1,5 +1,8 @@
 import m from 'mithril';
+import 'mithril-materialized/index.css';
 
+import { App } from './app.ts';
+import { createBrowserController } from './controller.ts';
 import './styles.css';
 
 const root = document.querySelector<HTMLElement>('#app');
@@ -8,13 +11,4 @@ if (root === null) {
   throw new Error('WordConvert application root was not found.');
 }
 
-m.mount(root, {
-  view: () =>
-    m('main.app-shell', [
-      m('h1', 'WordConvert'),
-      m(
-        'p',
-        'Convert Word documents to Markdown, standalone HTML, or EPUB—all processing stays on this device.',
-      ),
-    ]),
-});
+m.mount(root, App(createBrowserController()));
