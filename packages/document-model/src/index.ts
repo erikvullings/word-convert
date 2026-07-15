@@ -221,6 +221,12 @@ export interface EffectiveFormatting {
   bold?: boolean;
   italic?: boolean;
   outlineLevel?: number;
+  spacingBeforePt?: number;
+  spacingAfterPt?: number;
+  indentationLeftPt?: number;
+  indentationRightPt?: number;
+  indentationFirstLinePt?: number;
+  numbering?: string;
 }
 
 export interface AnalysedStyle {
@@ -232,6 +238,7 @@ export interface AnalysedStyle {
   usageCount: number;
   examples: string[];
   proposedMapping: StyleMapping;
+  reasons: string[];
   provenance: Provenance;
 }
 
@@ -285,10 +292,13 @@ export interface ConversionOptions {
 
 export interface DocxReaderOptions extends ConversionOptions {
   filename?: string;
+  stylePreset?: Readonly<Record<string, StyleMapping>>;
+  styleMappings?: Readonly<Record<string, StyleMapping>>;
   limits?: {
     maxCompressedBytes?: number;
     maxUncompressedBytes?: number;
     maxEntries?: number;
+    maxCompressionRatio?: number;
   };
 }
 

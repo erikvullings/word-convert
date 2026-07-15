@@ -1,9 +1,9 @@
 # 0006 Analyze styles headings and metadata
 
-Status: open
+Status: done
 Priority: high
-Owner: unassigned
-Agent: unassigned
+Owner: erikvullings
+Agent: codex
 Area: analysis
 Depends on: 0005
 
@@ -27,3 +27,4 @@ Analyze styles and metadata candidates before final model conversion, with trans
 ## Agent Notes
 
 - Next step: formalize scoring features and confidence calibration using the fixture corpus.
+- 2026-07-15 codex: Added typed raw style/usage and metadata-candidate analysis in `@wordconvert/docx-reader`, including inherited effective formatting, usage examples, exact heading-evidence precedence, European localized alias fallback, confidence/reasons, structured author and distinct-date resolution, deterministic presets/explicit overrides, and delayed final block construction. Integrated analysis into the secure reader and documented the public rerun surface. Added 10 task-specific tests (7 analyzer tests and 3 reader integration/negative tests); verified the focused files, full 32-test workspace suite, all workspace typechecks, zero-warning lint, formatting, production build, and `git diff --check`. Known limitation: confidence calibration remains heuristic and should be tuned against a larger real-world corpus.
