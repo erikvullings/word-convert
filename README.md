@@ -29,3 +29,9 @@ The writer escapes document content and metadata, accepts only safe link schemes
 `@wordconvert/markdown-writer` exposes `writeMarkdown` for a single Markdown file with embedded data-URI images and `writeMarkdownZip` for an editable package containing `document.md` and generated `images/` paths. The semantic serializer supports headings, formatting, safe links, nested lists, blockquotes, fenced code, GFM tables, footnotes, passive images and captions, and inline or block math.
 
 Both modes are deterministic. ZIP asset names are generated rather than copied from source filenames, and callers can use the typed `onWarning` callback to surface omitted unsafe links, unsupported media or styles, missing references, and table-span degradation.
+
+## EPUB output
+
+`@wordconvert/epub-writer` exposes `writeEpub` for deterministic, reflowable EPUB 3 output. It writes the stored `mimetype` entry first, then the container, package metadata, navigation document, title page, H1-based XHTML chapters, local stylesheet, and generated passive image/font assets with a complete manifest and spine.
+
+Required identifier, title, language, and EPUB modification time can come from the document model or typed writer overrides. ZIP entries use a fixed 1980 timestamp and stable order for byte-identical output; the independently injected `dcterms:modified` value records the publication modification time required by EPUB 3. The writer omits remote links, active media, SVG, scripts, event handlers, iframes, unsafe URLs, and unsupported resources. Install `epubcheck` to enable the focused local conformance test.

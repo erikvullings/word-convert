@@ -71,7 +71,14 @@ importers:
         specifier: ^0.8.3
         version: 0.8.3
 
-  packages/epub-writer: {}
+  packages/epub-writer:
+    dependencies:
+      '@wordconvert/document-model':
+        specifier: workspace:*
+        version: link:../document-model
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
 
   packages/html-writer:
     dependencies:
