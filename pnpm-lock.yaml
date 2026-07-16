@@ -62,6 +62,9 @@ importers:
       mithril:
         specifier: ^2.3.8
         version: 2.3.8
+      mithril-markdown-wysiwyg:
+        specifier: ^0.2.3
+        version: 0.2.3(mithril@2.3.8)
       mithril-materialized:
         specifier: ^3.16.0
         version: 3.16.0
@@ -754,6 +757,11 @@ packages:
     resolution: {integrity: sha512-hXdUTZYIVOt1Ex//jAQi+wTZZpUpwBj/0QsOzqegb3rGMMeJiSEu5xLHnYfBrRV4RH2+OCSOO95Is/7x1WJ4bw==}
     engines: {node: '>=10'}
 
+  mithril-markdown-wysiwyg@0.2.3:
+    resolution: {integrity: sha512-eOUc2uZ9Vf4uo0Qsw/8Y9HFZPNvtm7+zaF/YiRcmTZzIsAIQf/d/5DDzSvJ2qSVeU6sfhUOf7CfC8fUu7aXd8g==}
+    peerDependencies:
+      mithril: ^2.3.7
+
   mithril-materialized@3.16.0:
     resolution: {integrity: sha512-ytewXdGVzZ9bmZ96iO4uQa7xw075Vw8vT/F1O5IXpK9AEG8ODLMjjHNXzX5qnXkmokde5n08iZsm0ySKQn+zNQ==}
 
@@ -1368,6 +1376,10 @@ snapshots:
   make-dir@4.0.0:
     dependencies:
       semver: 7.8.5
+
+  mithril-markdown-wysiwyg@0.2.3(mithril@2.3.8):
+    dependencies:
+      mithril: 2.3.8
 
   mithril-materialized@3.16.0:
     dependencies:

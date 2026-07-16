@@ -20,6 +20,7 @@
     "dompurify": "^3.4.12",
     "fflate": "^0.8.3",
     "mithril": "^2.3.8",
+    "mithril-markdown-wysiwyg": "^0.2.3",
     "mithril-materialized": "^3.16.0",
     "slimdown-js": "^1.4.1"
   },
