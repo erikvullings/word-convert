@@ -67,6 +67,29 @@ textarea {
 .app-header > div {
   min-width: 0;
 }
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.brand-logo {
+  width: clamp(3rem, 8vw, 5rem);
+  height: clamp(3rem, 8vw, 5rem);
+  flex: 0 0 auto;
+  padding: 0.1rem;
+}
+.app[data-theme='dark'] .brand-logo {
+  border-radius: 1rem;
+  background: var(--accent);
+  padding: 0.55rem;
+}
+@media (prefers-color-scheme: dark) {
+  .app[data-theme='system'] .brand-logo {
+    border-radius: 1rem;
+    background: var(--accent);
+    padding: 0.55rem;
+  }
+}
 .eyebrow {
   margin: 0;
   color: var(--accent);
