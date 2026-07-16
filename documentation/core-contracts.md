@@ -28,6 +28,31 @@ This representation favors an unambiguous initial contract over compactness. A l
 
 Failures crossing a package or worker boundary use `ConversionError`, a plain structured object, not an `Error` instance. Error details must not contain document text, metadata, filenames, images, formula source, or other private input.
 
+## Privacy and security boundaries
+
+Core readers and writers are pure, browser-independent conversion modules. They
+receive document bytes and explicit options from their caller and do not perform
+network requests, use browser storage, access URLs, or log source data. The Web
+Worker owns transferred input and output buffers only for the duration of an
+operation and removes operation state after success, failure, or cancellation.
+The UI may persist preferences and validated style presets, but never document
+content, filenames, metadata, generated output, or diagnostics.
+
+The reader validates package type, paths, XML, aggregate size, entry count,
+compression ratio, and individual image size before exposing semantic content.
+Writers generate asset paths and escape or reject active content rather than
+trusting source filenames, relationships, HTML, SVG, formulas, or metadata.
+Browser preview sanitization is a final boundary in addition to writer escaping,
+not a replacement for it. Default limits and their regression coverage are kept
+in [hardening and browser verification](hardening.md).
+
 ## Future WASM boundary
 
 A future `WasmDocxReader` implements the same `DocxReader` interface. JavaScript passes an exact `Uint8Array` plus JSON-safe reader options to WASM. WASM returns the versioned model using the documented JSON binary envelope (or an equivalent structured decoder tested against it), plus structured progress and error messages. Writers and the UI remain TypeScript consumers of `DocumentModel`; no WASM-specific object may escape the adapter.
+
+The WASM adapter must preserve cancellation, progress, configurable security
+limits, structured private errors, deterministic output, and fixture parity with
+the TypeScript reader. Rust-owned memory must be copied into exact-length arrays
+or explicitly transferred and released. Only DOCX parsing is a candidate for this
+boundary; semantic writers remain TypeScript modules unless separate evidence
+justifies changing their stable contract.

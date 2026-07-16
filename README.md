@@ -2,6 +2,10 @@
 
 WordConvert is a privacy-preserving, browser-only DOCX conversion workspace. Document input remains local and is converted through a typed neutral document model.
 
+It accepts unencrypted `.docx` files and produces standalone HTML, an HTML ZIP,
+single-file Markdown, a Markdown ZIP, or a reflowable EPUB 3 publication. Legacy
+`.doc`, encrypted documents, and macro-enabled `.docm` files are rejected.
+
 ## Browser workflow
 
 The Mithril SPA presents the eight conversion stages from document selection through download in a responsive, keyboard-accessible light/dark shell. The file picker and drag-and-drop target accept `.docx` input, and the interface states clearly that source content is processed only in memory on the current device. Local storage is limited to theme/output preferences and style-mapping presets.
@@ -51,3 +55,118 @@ The EPUB editor can omit a cover, upload an image, choose a supported extracted 
 `@wordconvert/math-converter` converts a safe OMML subset into a normalized math tree and independent TeX and MathML serializations. The supported subset covers inline and display equations, fractions, roots, matrices, subscripts, superscripts, and Unicode mathematical symbols. Unsupported or malformed OMML retains bounded diagnostic text and produces a `formula-conversion-incomplete` warning.
 
 HTML, Markdown, EPUB, and browser previews support source fallback, accessible MathML, pre-rendered KaTeX, and disabled formula modes. KaTeX runs with strict errors and `trust: false`; its CSS and font are embedded locally without network requests. EPUB defaults to MathML for accessibility and compatibility. Formula conversion is intentionally incomplete for uncommon OMML constructs, which use the source fallback rather than being silently discarded.
+
+## Known conversion limitations
+
+WordConvert preserves semantic document structure rather than Word's paginated
+layout. Page breaks, exact line wrapping, floating shapes, text boxes, columns,
+watermarks, and desktop-font metrics may therefore differ or be omitted. Headers,
+footers, comments, and tracked deletions are inspected but omitted from the main
+content with a warning. Complex table spans, uncommon list definitions, active
+SVG, unsafe links, unsupported image formats, and uncommon OMML constructs may be
+degraded or replaced by a safe fallback. Always review the preview and warnings
+before publishing.
+
+Heading proposals combine OOXML outline levels, stable Word style IDs, document
+structure, localized aliases, inheritance, typography, and usage patterns; font
+size alone never creates a heading. The style-review stage shows confidence and
+evidence and lets the user override every mapping. Metadata is similarly inferred
+from document properties, semantic styles, first-page structure, and the filename.
+Its provenance and confidence remain visible, and publication, source, and
+conversion dates remain separate.
+
+Cover creation supports a safe uploaded or extracted image, deterministic
+typographic SVG, image/text overlays, or no cover. SVG is sanitized, remote fonts
+are forbidden, and every EPUB retains a semantic XHTML title page. Browser-side
+rasterization is adapter-driven and may vary slightly between rendering engines.
+
+## Privacy and security
+
+Conversion runs locally in a Web Worker. WordConvert has no analytics and does not
+send document bytes, text, metadata, filenames, images, or diagnostics over the
+network. Source data and generated output stay in memory; local storage contains
+only preferences and validated style presets. A static host can serve the app
+without a conversion service.
+
+The default reader limits are 50 MiB compressed input, 200 MiB expanded content,
+1,000 ZIP entries, a 100:1 per-entry compression ratio, and 25 MiB per image.
+Unsafe XML, paths, links, HTML, SVG, and remote resources are rejected or
+sanitized. Raising these typed limits increases memory exposure. See the
+[hardening checklist](documentation/hardening.md) for the complete threat matrix,
+browser support policy, performance budget, and known manual release gates.
+
+## Development and testing
+
+WordConvert requires Node.js 24 or newer and pnpm 11 or newer.
+
+```sh
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+The development server opens the Vite SPA at the printed local URL. Run the full
+repository quality gates before submitting a change:
+
+```sh
+pnpm format:check
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+Regenerate the synthetic DOCX corpus with `pnpm fixtures:generate`, then confirm
+that `git diff --exit-code -- tests/fixtures/docx` is empty. See
+[fixture documentation](tests/fixtures/docx/README.md) for its deterministic
+manifest and generated-in-memory security cases.
+
+Interactive browser verification uses the standard comprehensive fixture and the
+eight-stage checklist in [hardening and browser verification](documentation/hardening.md).
+The current and previous major Chrome, Edge, Firefox, and Safari releases are the
+support target; Chromium is automated/recorded, while direct Firefox and Safari
+runs remain a human release gate.
+
+Install the `epubcheck` executable and ensure it is on `PATH`, then run:
+
+```sh
+pnpm exec vitest run packages/epub-writer/src/index.test.ts
+```
+
+The focused suite detects EPUBCheck automatically and runs its conformance case;
+without the executable that case is explicitly skipped. A successful validation
+reports no EPUB errors or warnings.
+
+More contributor detail, including exact fixture, browser, EPUBCheck, and build
+commands, is in [tooling](documentation/tooling.md). The stable model,
+reader/writer contracts, privacy boundaries, security limits, and future
+Rust/WASM adapter path are documented in [core contracts](documentation/core-contracts.md).
+
+## GitHub Pages deployment
+
+Production builds default to the `/word-convert/` base path. For another repository
+name, include both slashes when overriding it:
+
+```sh
+WORDCONVERT_BASE_PATH=/my-repository/ pnpm build
+```
+
+The `Deploy SPA to GitHub Pages` workflow builds `apps/web/dist` on pushes to
+`main` and deploys it with GitHub's Pages actions. In repository settings, select
+**GitHub Actions** as the Pages source, then run the workflow or push to `main`.
+The deployment is static; it requires no secrets or conversion backend.
+
+## Future Rust/WASM reader
+
+The browser-independent `DocxReader` interface accepts exact `Uint8Array` input
+and explicit JSON-safe options and returns the versioned, serializable
+`DocumentModel`. A future `WasmDocxReader` can implement that boundary while the
+TypeScript writers, worker protocol, and UI remain unchanged. The current plan is
+to move parsing only when representative fixtures show a measurable benefit, not
+to rewrite output generation prematurely.
+
+## Licence and attribution
+
+WordConvert is released under the [MIT License](LICENSE). Reviewed runtime
+dependency licences and copyright notices are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Re-run the documented licence
+audit whenever `pnpm-lock.yaml` changes.

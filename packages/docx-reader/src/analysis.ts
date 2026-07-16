@@ -252,7 +252,9 @@ function proposal(
   const short =
     usage.length > 0 && usage.every(({ text }) => text.trim().length <= 100);
   const fontSizes = usage
-    .map(({ formatting: direct }) => direct?.fontSizePt ?? formatting.fontSizePt)
+    .map(
+      ({ formatting: direct }) => direct?.fontSizePt ?? formatting.fontSizePt,
+    )
     .filter((size): size is number => size !== undefined);
   const fontSizePt = fontSizes.length > 0 ? Math.max(...fontSizes) : undefined;
   if (
