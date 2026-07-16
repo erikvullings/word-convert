@@ -562,7 +562,10 @@ function editorModel(): DocumentModel {
   };
 }
 
-function styleFixture(name: string, id: string): DocumentModel['styles'][number] {
+function styleFixture(
+  name: string,
+  id: string,
+): DocumentModel['styles'][number] {
   return {
     id,
     name,

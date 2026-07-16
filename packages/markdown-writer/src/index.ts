@@ -359,7 +359,10 @@ function applyMarks(
   }, value);
 }
 
-function hasExplicitStyleMapping(model: DocumentModel, styleId: string): boolean {
+function hasExplicitStyleMapping(
+  model: DocumentModel,
+  styleId: string,
+): boolean {
   return model.styles.some(
     (style) =>
       style.id === styleId && style.provenance.source === 'user-mappings',

@@ -20,11 +20,19 @@
     "test:watch": "vitest",
     "typecheck": "pnpm -r --if-present typecheck"
   },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm lint-staged"
+  },
+  "lint-staged": {
+    "**/*.{js,ts,tsx,json,css,html,md,yaml,yml}": "prettier --write"
+  },
   "devDependencies": {
     "@types/node": "^26.1.1",
     "@vitest/coverage-v8": "^4.1.10",
+    "lint-staged": "^17.0.8",
     "oxlint": "^1.73.0",
     "prettier": "^3.9.5",
+    "simple-git-hooks": "^2.13.1",
     "typescript": "^7.0.2",
     "vite": "^8.1.4",
     "vitest": "^4.1.10"

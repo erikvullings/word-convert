@@ -46,6 +46,7 @@ export function createBrowserController(): AppController {
   let sourceFilename: string | undefined;
   const requestConvert = (): void => {
     if (!state.model) return;
+    delete state.markdownEdit;
     state.status = 'converting';
     state.operationId = operationId('convert');
     const metadata = state.model.metadata;
@@ -95,6 +96,7 @@ export function createBrowserController(): AppController {
       if (stage === 1) {
         state.stage = 1;
         delete state.output;
+        delete state.markdownEdit;
       } else {
         state.stage = 2;
       }
@@ -155,8 +157,18 @@ export function createBrowserController(): AppController {
     },
     download() {
       if (!state.output) return;
+      const output =
+        state.markdownEdit !== undefined &&
+        state.preferences.outputFormat === 'markdown' &&
+        state.preferences.markdownMode === 'single'
+          ? {
+              ...state.output,
+              data: new TextEncoder().encode(state.markdownEdit)
+                .buffer as ArrayBuffer,
+            }
+          : state.output;
       deliverDownload(
-        state.output,
+        output,
         {
           createObjectURL: (blob) => URL.createObjectURL(blob),
           revokeObjectURL: (url) => URL.revokeObjectURL(url),
@@ -164,6 +176,7 @@ export function createBrowserController(): AppController {
         },
         () => {
           delete state.output;
+          delete state.markdownEdit;
         },
       );
     },

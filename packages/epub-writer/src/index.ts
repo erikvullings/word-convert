@@ -56,7 +56,50 @@ interface RenderContext {
 }
 
 const ZIP_TIME = new Date('1980-01-01T00:00:00.000Z');
-const STYLES = `body{max-width:48rem;margin:0 auto;padding:1.5rem;font:1em/1.55 serif}img{max-width:100%;height:auto}table{border-collapse:collapse;width:100%}th,td{border:1px solid;padding:.35rem;text-align:left}pre{white-space:pre-wrap}.page-break{break-after:page}`;
+const STYLES = [
+  /* Base */
+  'body{font-family:Georgia,"Times New Roman",Times,serif;font-size:1em;line-height:1.6;color:#1a1a1a;margin:0 auto;max-width:36em;padding:1.5em 1em;-epub-hyphens:auto;hyphens:auto}',
+  /* Headings */
+  'h1,h2,h3,h4,h5,h6{font-family:inherit;font-weight:bold;line-height:1.25;margin-top:1.5em;margin-bottom:.5em;color:#111;-epub-hyphens:none;hyphens:none}',
+  'h1{font-size:1.875em;page-break-before:always}',
+  'h1:first-child{page-break-before:avoid}',
+  'h2{font-size:1.5em}h3{font-size:1.25em}h4{font-size:1.125em}h5,h6{font-size:1em}',
+  /* Paragraphs */
+  'p{margin:0 0 .75em}',
+  /* Links */
+  'a{color:#0645ad;text-decoration:underline}',
+  /* Images */
+  'img{max-width:100%;height:auto;display:block;margin:1em auto}',
+  'figure{margin:1.5em 0;text-align:center}',
+  'figcaption{font-size:.875em;color:#555;margin-top:.4em;font-style:italic}',
+  /* Tables */
+  'table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.9em}',
+  'th,td{border:1px solid #bbb;padding:.4em .6em;text-align:left;vertical-align:top}',
+  'th{background:#f0f0f0;font-weight:bold}',
+  'caption{caption-side:top;font-weight:bold;margin-bottom:.5em;text-align:center}',
+  /* Code */
+  'code,kbd,samp{font-family:"Courier New",Courier,monospace;font-size:.875em;background:#f5f5f5;padding:.1em .3em}',
+  'pre{background:#f5f5f5;border:1px solid #ddd;padding:.75em 1em;overflow-x:auto;white-space:pre-wrap;word-break:break-all;font-size:.875em;margin:1em 0}',
+  'pre code{background:none;padding:0;font-size:1em}',
+  /* Blockquotes */
+  'blockquote{margin:1em 0 1em 1em;padding:.5em 0 .5em 1em;border-left:4px solid #ccc;color:#555}',
+  /* Lists */
+  'ul,ol{margin:.75em 0;padding-left:2em}li{margin:.25em 0}',
+  /* HR */
+  'hr{border:none;border-top:1px solid #ccc;margin:2em 0}',
+  /* Equations — MathML display */
+  '.equation{margin:1em 0;text-align:center;overflow-x:auto}',
+  'math{display:inline}math[display="block"]{display:block;margin:1em auto;overflow-x:auto}',
+  /* Footnotes */
+  '.footnotes{font-size:.875em;border-top:1px solid #ccc;margin-top:2em;padding-top:1em}',
+  'a.footnote-ref{font-size:.75em;vertical-align:super;text-decoration:none}',
+  'a.footnote-backref{text-decoration:none}',
+  /* Page breaks */
+  '.page-break{break-after:page;page-break-after:always;height:0;display:block}',
+  /* Title page */
+  '.subtitle{font-size:1.25em;font-style:italic;color:#444;margin-top:.5em}',
+  '.author{font-size:1.125em;margin-top:.75em;color:#333}',
+].join('');
 const MEDIA_EXTENSIONS: Readonly<Record<string, string>> = {
   'font/otf': 'otf',
   'font/ttf': 'ttf',

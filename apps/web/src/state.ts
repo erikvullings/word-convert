@@ -23,7 +23,7 @@ export const WORKFLOW_STAGES = [
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type OutputFormat = 'html' | 'markdown' | 'epub';
-export type PreviewMode = 'rendered' | 'source';
+export type PreviewMode = 'rendered' | 'source' | 'edit';
 
 export interface Preferences {
   theme: ThemePreference;
@@ -54,6 +54,7 @@ export interface AppState {
   model?: DocumentModel;
   output?: DownloadOutput;
   selectedEpubFile?: string;
+  markdownEdit?: string;
   error?: ConversionError;
   styleMappings: Record<string, StyleMapping>;
   presetText: string;

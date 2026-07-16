@@ -13,6 +13,7 @@ import {
   RadioButtons,
   Select,
 } from 'mithril-materialized';
+import { MarkdownEditor } from 'mithril-markdown-wysiwyg';
 import DOMPurify from 'dompurify';
 import { strFromU8, unzipSync } from 'fflate';
 import { render as renderMarkdown } from 'slimdown-js';
@@ -43,6 +44,10 @@ const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
 const previewModeOptions = [
   { id: 'rendered' as const, label: 'Rendered' },
   { id: 'source' as const, label: 'Markdown' },
+];
+const previewModeOptionsWithEdit = [
+  ...previewModeOptions,
+  { id: 'edit' as const, label: 'Edit' },
 ];
 
 export interface AppController {
@@ -653,32 +658,49 @@ function preview(controller: AppController): m.Vnode {
     state.preferences.outputFormat,
   );
   const isMarkdown = state.preferences.outputFormat === 'markdown';
+  const canEdit = isMarkdown && state.preferences.markdownMode === 'single';
   const rendered = isMarkdown ? renderMarkdown(source) : source;
   const previewMarkup = isMarkdown ? rendered : extractHtmlBody(rendered);
+  const modeOptions = canEdit ? previewModeOptionsWithEdit : previewModeOptions;
+  const checkboxClass = canEdit ? 'col s4' : 'col s6';
   return m('div.preview-panel', [
     previewActions(controller),
     isMarkdown
       ? m(
           'div.preview-mode',
           m(RadioButtons<PreviewMode>, {
-            // label: 'Preview mode',
             id: 'markdown-preview-mode',
-            options: previewModeOptions,
+            options: modeOptions,
             checkedId: state.previewMode,
             className: 'row',
-            checkboxClass: 'col s6',
+            checkboxClass,
             onchange: (mode) => {
               state.previewMode = mode;
             },
           }),
         )
       : null,
-    isMarkdown && state.previewMode === 'source'
-      ? m('pre.markdown-source', source)
-      : m(
-          'article.document-preview',
-          m.trust(DOMPurify.sanitize(previewMarkup, previewSanitizeConfig())),
-        ),
+    isMarkdown && state.previewMode === 'edit'
+      ? (() => {
+          if (state.markdownEdit === undefined) state.markdownEdit = source;
+          return m(MarkdownEditor, {
+            content: state.markdownEdit,
+            onContentChange: (newContent: string) => {
+              state.markdownEdit = newContent;
+            },
+            markdownToHtml: renderMarkdown,
+            placeholder: 'Edit markdown…',
+            theme: state.preferences.theme === 'dark' ? 'dark' : 'light',
+            toolbar: true,
+            showTabs: true,
+          });
+        })()
+      : isMarkdown && state.previewMode === 'source'
+        ? m('pre.markdown-source', source)
+        : m(
+            'article.document-preview',
+            m.trust(DOMPurify.sanitize(previewMarkup, previewSanitizeConfig())),
+          ),
     warningPanel(controller),
     previewActions(controller),
   ]);
