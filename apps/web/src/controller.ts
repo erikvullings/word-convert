@@ -62,6 +62,7 @@ export function createBrowserController(): AppController {
       filename: sourceFilename ?? state.selectedFilename ?? 'document.docx',
       format: state.preferences.outputFormat,
       conversionDate: state.conversionDate,
+      formulaMode: state.preferences.formulaMode,
       ...(cover ? { cover } : {}),
     } satisfies WorkerRequest);
   };
@@ -170,6 +171,12 @@ export function createBrowserController(): AppController {
       if (typeof history !== 'undefined')
         history.pushState({ stage: 2, format }, '', window.location.href);
       if (format !== 'epub' || !epubMetadataIssues(state)) requestConvert();
+    },
+    setFormulaMode(mode) {
+      state.preferences.formulaMode = mode;
+      persistPreferences(localStorage, state.preferences);
+      delete state.output;
+      if (state.stage === 2) requestConvert();
     },
     setStyleMapping(styleId: string, mapping: StyleMapping) {
       state.styleMappings = { ...state.styleMappings, [styleId]: mapping };

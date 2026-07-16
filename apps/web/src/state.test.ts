@@ -38,6 +38,7 @@ describe('SPA state', () => {
       theme: 'dark' as const,
       outputFormat: 'markdown' as const,
       mappingPresets: { editorial: { Heading1: 'heading1' as const } },
+      formulaMode: 'katex' as const,
     };
 
     persistPreferences(storage, preferences);
@@ -52,6 +53,7 @@ describe('SPA state', () => {
       theme: 'dark',
       outputFormat: 'html',
       mappingPresets: { unsafe: { Heading1: 'heading1' } },
+      formulaMode: 'mathml',
     });
     const key = [...storage.values.keys()][0];
     if (!key) throw new Error('No preference key');

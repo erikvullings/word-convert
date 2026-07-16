@@ -59,6 +59,39 @@ const styledLayoutDocx = () =>
   ]);
 
 describe('secure DOCX reader', () => {
+  it('extracts inline and display OMML and warns for unsupported formulas', async () => {
+    const input = createZip([
+      {
+        name: '[Content_Types].xml',
+        data: `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`,
+      },
+      {
+        name: 'word/document.xml',
+        data: `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><w:body><w:p><w:r><w:t>Inline </w:t></w:r><m:oMath><m:f><m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></m:oMath></w:p><w:p><m:oMathPara><m:oMath><m:rad><m:e><m:r><m:t>x</m:t></m:r></m:e></m:rad></m:oMath></m:oMathPara></w:p><w:p><m:oMath><m:groupChr><m:e><m:r><m:t>bad</m:t></m:r></m:e></m:groupChr></m:oMath></w:p></w:body></w:document>`,
+      },
+    ]);
+
+    const model = await secureDocxReader.read(input, options);
+
+    expect(model.blocks[0]).toMatchObject({ type: 'paragraph' });
+    expect(model.blocks[1]).toEqual({
+      type: 'equationBlock',
+      equationId: 'equation-2',
+    });
+    expect(model.equations['equation-1']).toMatchObject({
+      tex: '\\frac{1}{2}',
+      conversionComplete: true,
+    });
+    expect(model.equations['equation-2']?.mathml).toContain('<msqrt>');
+    expect(model.equations['equation-3']?.source.value).toContain('groupChr');
+    expect(model.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'formula-conversion-incomplete',
+        location: 'equation-3',
+      }),
+    );
+  });
+
   it('uses top-level figure and table adjacency when analysing styles', async () => {
     const model = await secureDocxReader.read(styledLayoutDocx(), options);
     const mappings = Object.fromEntries(

@@ -5,6 +5,7 @@ import type {
   StyleMapping,
 } from '@wordconvert/document-model';
 import type { CoverComposition } from '@wordconvert/cover-generator';
+import type { MathOutputMode } from '@wordconvert/math-converter';
 
 export type WorkerRequest =
   | {
@@ -23,6 +24,7 @@ export type WorkerRequest =
       format: 'html' | 'markdown' | 'epub';
       conversionDate: string;
       cover?: CoverComposition;
+      formulaMode?: MathOutputMode;
     }
   | { type: 'cancel'; operationId: string };
 

@@ -40,6 +40,35 @@ function model(blocks: DocumentModel['blocks'] = []): DocumentModel {
 }
 
 describe('writeEpub', () => {
+  it('prefers accessible MathML and supports explicit formula fallbacks', async () => {
+    const input = model([{ type: 'equationBlock', equationId: 'eq' }]);
+    input.equations.eq = {
+      id: 'eq',
+      source: {
+        format: 'omml',
+        value: '<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>',
+      },
+      tex: 'x',
+      conversionComplete: true,
+    };
+    const options = {
+      conversionDate: '2026-07-16',
+      identifier: 'math',
+      title: 'Math',
+      language: 'en',
+    } as const;
+    const mathmlFiles = unzipSync(await writeEpub(input, options));
+    const katexFiles = unzipSync(
+      await writeEpub(input, { ...options, formulaMode: 'katex' }),
+    );
+    expect(
+      strFromU8(mathmlFiles['EPUB/chapter-001.xhtml'] ?? new Uint8Array()),
+    ).toContain('<math');
+    expect(
+      strFromU8(katexFiles['EPUB/chapter-001.xhtml'] ?? new Uint8Array()),
+    ).toContain('class="katex"');
+  });
+
   it('declares a generated cover image and cover page while retaining the semantic title page', async () => {
     const cover: CoverComposition = {
       width: 1600,

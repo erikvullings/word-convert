@@ -41,3 +41,9 @@ Required identifier, title, language, and EPUB modification time can come from t
 `@wordconvert/cover-generator` creates deterministic, browser-independent SVG compositions for image-only, overlay, title-panel, separate-title-page, and generated typographic covers. It accepts bounded JPEG, PNG, WebP, and sanitized SVG inputs, uses only system-safe font families, and exposes rasterization through an injected adapter for browser-only compatibility paths.
 
 The EPUB editor can omit a cover, upload an image, choose a supported extracted document image, or generate a typographic cover. Its live preview exposes crop, alignment, title and author positions and sizes, text colour, contrast panel and opacity, image opacity, safe margins, and aspect ratio. A conservative filename heuristic explains when an image may already contain title text. Generated EPUBs declare the cover image and cover page while always retaining a separate semantic XHTML title page.
+
+## Formula output
+
+`@wordconvert/math-converter` converts a safe OMML subset into a normalized math tree and independent TeX and MathML serializations. The supported subset covers inline and display equations, fractions, roots, matrices, subscripts, superscripts, and Unicode mathematical symbols. Unsupported or malformed OMML retains bounded diagnostic text and produces a `formula-conversion-incomplete` warning.
+
+HTML, Markdown, EPUB, and browser previews support source fallback, accessible MathML, pre-rendered KaTeX, and disabled formula modes. KaTeX runs with strict errors and `trust: false`; its CSS and font are embedded locally without network requests. EPUB defaults to MathML for accessibility and compatibility. Formula conversion is intentionally incomplete for uncommon OMML constructs, which use the source fallback rather than being silently discarded.

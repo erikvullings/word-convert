@@ -1,9 +1,9 @@
 # 0013 Implement formula pipeline
 
-Status: open
+Status: done
 Priority: medium
-Owner: unassigned
-Agent: unassigned
+Owner: erikvullings
+Agent: codex
 Area: math
 Depends on: 0007, 0008, 0011
 
@@ -27,3 +27,4 @@ Convert extracted OMML into normalized math with source, MathML, KaTeX, and disa
 ## Agent Notes
 
 - Next step: define the normalized math subset and unsupported-node representation.
+- 2026-07-16 codex: Implemented a typed normalized OMML subset with separate TeX/MathML serializers, safe KaTeX rendering, retained unsupported diagnostics, and deterministic reader warnings; integrated source, MathML, KaTeX, and disabled modes across HTML, Markdown, EPUB, the worker, and preview preferences, with EPUB defaulting to MathML and local embedded KaTeX CSS/font data. Added eight focused tests across the converter, DOCX extraction, and three writers covering inline/display equations, fractions, roots, matrices, scripts, Unicode, unsupported and malicious input, all formula modes, and accessible fallbacks. Verified those eight task tests through their five focused files, the full 102-test workspace suite, recursive strict typecheck, zero-warning lint, production build, and `git diff --check`. Known limitation: uncommon OMML outside the documented normalized subset deliberately degrades to a warning and safe diagnostic fallback.

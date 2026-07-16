@@ -11,6 +11,11 @@ import {
   createCoverSvg,
   type CoverComposition,
 } from '@wordconvert/cover-generator';
+import {
+  KATEX_STYLES,
+  renderEquation as renderMathEquation,
+  type MathOutputMode,
+} from '@wordconvert/math-converter';
 
 export interface EpubWriterOptions extends WriterOptions {
   identifier?: string;
@@ -19,6 +24,7 @@ export interface EpubWriterOptions extends WriterOptions {
   /** EPUB 3 package modification time, in UTC second precision. */
   modified?: string;
   cover?: CoverComposition;
+  formulaMode?: MathOutputMode;
 }
 
 interface Chapter {
@@ -46,6 +52,7 @@ interface RenderContext {
   headings: HeadingEntry[];
   headingIndex: number;
   referencedNotes: string[];
+  formulaMode: MathOutputMode;
 }
 
 const ZIP_TIME = new Date('1980-01-01T00:00:00.000Z');
@@ -80,7 +87,9 @@ export async function writeEpub(
     packageXml(metadata, model, chapters, assets, options.cover !== undefined),
   );
   files['EPUB/nav.xhtml'] = strToU8(navXhtml(metadata, headings));
-  files['EPUB/styles.css'] = strToU8(STYLES);
+  files['EPUB/styles.css'] = strToU8(
+    `${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}`,
+  );
   if (options.cover) {
     files['EPUB/cover.svg'] = strToU8(createCoverSvg(options.cover));
     files['EPUB/cover.xhtml'] = strToU8(coverXhtml(metadata));
@@ -88,7 +97,14 @@ export async function writeEpub(
   files['EPUB/title.xhtml'] = strToU8(titleXhtml(metadata, model));
   for (const chapter of chapters) {
     files[`EPUB/${chapter.path}`] = strToU8(
-      chapterXhtml(chapter, metadata, model, assetPaths, headings),
+      chapterXhtml(
+        chapter,
+        metadata,
+        model,
+        assetPaths,
+        headings,
+        options.formulaMode ?? 'mathml',
+      ),
     );
   }
   for (const entry of assets) files[entry.path] = entry.asset.data;
@@ -296,6 +312,7 @@ function chapterXhtml(
   model: DocumentModel,
   assetPaths: ReadonlyMap<string, string>,
   headings: HeadingEntry[],
+  formulaMode: MathOutputMode,
 ): string {
   const firstHeading = headings.find(({ path }) => path === chapter.path);
   const context: RenderContext = {
@@ -304,6 +321,7 @@ function chapterXhtml(
     headings,
     headingIndex: headings.findIndex(({ path }) => path === chapter.path),
     referencedNotes: [],
+    formulaMode,
   };
   if (context.headingIndex < 0) context.headingIndex = headings.length;
   const body = renderBlocks(chapter.blocks, context);
@@ -369,7 +387,7 @@ function renderBlock(block: BlockNode, context: RenderContext): string {
     case 'codeBlock':
       return `<pre><code>${escapeXml(block.text)}</code></pre>`;
     case 'equationBlock':
-      return `<div class="equation" role="math">${renderEquation(block.equationId, context)}</div>`;
+      return `<div class="equation" role="math">${renderEquation(block.equationId, true, context)}</div>`;
     case 'imageBlock': {
       const image = renderImage(block.assetId, block.alt, undefined, context);
       if (!image) return '';
@@ -400,7 +418,7 @@ function renderInline(node: InlineNode, context: RenderContext): string {
     case 'image':
       return renderImage(node.assetId, node.alt, node.title, context);
     case 'equation':
-      return `<span class="equation" role="math">${renderEquation(node.equationId, context)}</span>`;
+      return `<span class="equation" role="math">${renderEquation(node.equationId, false, context)}</span>`;
     case 'noteReference': {
       if (!context.referencedNotes.includes(node.noteId))
         context.referencedNotes.push(node.noteId);
@@ -441,13 +459,15 @@ function renderImage(
   return `<img src="${escapeAttribute(path)}" alt="${escapeAttribute(alt ?? '')}"${title ? ` title="${escapeAttribute(title)}"` : ''}/>`;
 }
 
-function renderEquation(id: string, context: RenderContext): string {
-  const equation = context.model.equations[id];
-  return escapeXml(
-    equation
-      ? (equation.tex ?? equation.source.value)
-      : '[Equation unavailable]',
-  );
+function renderEquation(
+  id: string,
+  display: boolean,
+  context: RenderContext,
+): string {
+  return renderMathEquation(context.model.equations[id], {
+    mode: context.formulaMode,
+    display,
+  });
 }
 
 function renderNotes(context: RenderContext): string {

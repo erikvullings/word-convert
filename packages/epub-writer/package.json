@@ -10,6 +10,7 @@
   "dependencies": {
     "@wordconvert/cover-generator": "workspace:*",
     "@wordconvert/document-model": "workspace:*",
+    "@wordconvert/math-converter": "workspace:*",
     "fflate": "^0.8.3"
   }
 }

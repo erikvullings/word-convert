@@ -6,5 +6,9 @@
   "exports": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --project tsconfig.json"
+  },
+  "dependencies": {
+    "@wordconvert/document-model": "workspace:*",
+    "katex": "^0.16.22"
   }
 }

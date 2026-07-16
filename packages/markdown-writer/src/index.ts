@@ -7,9 +7,14 @@ import type {
   WriterOptions,
 } from '@wordconvert/document-model';
 import { strToU8, zipSync, type Zippable } from 'fflate';
+import {
+  renderEquation as renderMathEquation,
+  type MathOutputMode,
+} from '@wordconvert/math-converter';
 
 export interface MarkdownWriterOptions extends WriterOptions {
   onWarning?: (warning: ConversionWarning) => void;
+  formulaMode?: MathOutputMode;
 }
 
 interface RenderContext {
@@ -17,6 +22,7 @@ interface RenderContext {
   referencedNotes: string[];
   assetUrl: (assetId: string) => string | undefined;
   warn: (warning: ConversionWarning) => void;
+  formulaMode: MathOutputMode;
 }
 
 export function writeMarkdown(
@@ -70,6 +76,7 @@ function writeWithAssets(
     referencedNotes: [],
     assetUrl,
     warn: (warning) => options.onWarning?.(warning),
+    formulaMode: options.formulaMode ?? 'source',
   };
   const body = renderBlocks(model.blocks, context);
   const title = renderDocumentTitle(model);
@@ -298,7 +305,13 @@ function renderEquation(
     return '[Equation unavailable]';
   }
   const value = equation.tex ?? equation.mathml ?? equation.source.value;
-  return block ? `$$\n${value}\n$$` : `$${value}$`;
+  if (context.formulaMode === 'disabled') return '';
+  if (context.formulaMode === 'source')
+    return block ? `$$\n${value}\n$$` : `$${value}$`;
+  return renderMathEquation(equation, {
+    mode: context.formulaMode,
+    display: block,
+  });
 }
 
 function renderNotes(context: RenderContext): string {

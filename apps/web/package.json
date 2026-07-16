@@ -16,6 +16,7 @@
     "@wordconvert/epub-writer": "workspace:*",
     "@wordconvert/html-writer": "workspace:*",
     "@wordconvert/markdown-writer": "workspace:*",
+    "@wordconvert/math-converter": "workspace:*",
     "dompurify": "^3.4.12",
     "fflate": "^0.8.3",
     "mithril": "^2.3.8",

@@ -41,6 +41,41 @@ function model(blocks: DocumentModel['blocks']): DocumentModel {
 }
 
 describe('writeHtml', () => {
+  it('renders formula modes safely with inline and display semantics', () => {
+    const input = model([
+      { type: 'paragraph', children: [{ type: 'equation', equationId: 'eq' }] },
+      { type: 'equationBlock', equationId: 'eq' },
+    ]);
+    input.equations.eq = {
+      id: 'eq',
+      source: {
+        format: 'omml',
+        value: '<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>',
+      },
+      tex: 'x',
+      mathml: '<math><mi>x</mi></math>',
+      conversionComplete: true,
+    };
+
+    const mathml = writeHtml(input, {
+      conversionDate: '2026-07-16',
+      formulaMode: 'mathml',
+    });
+    const katex = writeHtml(input, {
+      conversionDate: '2026-07-16',
+      formulaMode: 'katex',
+    });
+    const disabled = writeHtml(input, {
+      conversionDate: '2026-07-16',
+      formulaMode: 'disabled',
+    });
+
+    expect(mathml).toContain('http://www.w3.org/1998/Math/MathML');
+    expect(katex).toContain('class="katex"');
+    expect(katex).toContain('class="katex-display"');
+    expect(disabled).not.toContain('<math');
+  });
+
   it('writes deterministic semantic standalone HTML with a heading TOC', () => {
     const input = model([
       { type: 'heading', level: 1, children: [{ type: 'text', text: 'One' }] },

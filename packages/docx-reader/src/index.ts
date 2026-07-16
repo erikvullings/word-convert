@@ -13,6 +13,7 @@ import {
   type TableCell,
   type TextMark,
 } from '@wordconvert/document-model';
+import { convertOmml } from '@wordconvert/math-converter';
 import { strFromU8 } from 'fflate';
 
 import {
@@ -264,11 +265,23 @@ function marksForRun(run: XmlNode): TextMark[] | undefined {
 
 function addEquation(node: XmlNode, context: ParseContext): InlineNode {
   const id = `equation-${++context.equationNumber}`;
+  const source = serializeXml(node);
+  const converted = convertOmml(source);
   context.equations[id] = {
     id,
-    source: { format: 'omml', value: serializeXml(node) },
-    conversionComplete: false,
+    source: { format: 'omml', value: source },
+    tex: converted.tex,
+    mathml: converted.mathml,
+    conversionComplete: converted.complete,
   };
+  if (!converted.complete)
+    context.warnings.push({
+      code: 'formula-conversion-incomplete',
+      severity: 'warning',
+      message: 'A formula contains unsupported OMML and uses a safe fallback.',
+      location: id,
+      details: { unsupported: converted.unsupported.join(', ') },
+    });
   return { type: 'equation', equationId: id };
 }
 
@@ -439,6 +452,11 @@ function parseParagraph(node: XmlNode, context: ParseContext): BlockNode {
   const styleId =
     properties && attribute(first(properties, 'pStyle') ?? properties, 'val');
   const children = parseInlines(node, context);
+  const display = elements(node).find(
+    (child) => localName(child) === 'oMathPara',
+  );
+  if (display && children.length === 1 && children[0]?.type === 'equation')
+    return { type: 'equationBlock', equationId: children[0].equationId };
   return { type: 'paragraph', children, ...(styleId ? { styleId } : {}) };
 }
 

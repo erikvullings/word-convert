@@ -29,6 +29,7 @@ import {
   type CoverSource,
 } from './cover.ts';
 import { createCoverSvg } from '@wordconvert/cover-generator';
+import type { MathOutputMode } from '@wordconvert/math-converter';
 
 const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
   id: mapping,
@@ -47,6 +48,7 @@ export interface AppController {
   download(): void;
   setTheme(theme: ThemePreference): void;
   setOutputFormat(format: 'html' | 'markdown' | 'epub'): void;
+  setFormulaMode?(mode: MathOutputMode): void;
   setStyleMapping(styleId: string, mapping: StyleMapping): void;
   acceptHighConfidence(): void;
   rerunAnalysis(): void;
@@ -160,6 +162,27 @@ function outputChooser(controller: AppController): m.Vnode {
     return m('p', 'Inspecting the document in the background…');
   return m('div.output-chooser', [
     m('p', 'Analysis is complete. Choose how you want to use the document.'),
+    m('fieldset.formula-options', [
+      m('legend', 'Formula output'),
+      ...(['mathml', 'katex', 'source', 'disabled'] as const).map((mode) =>
+        m('label', [
+          m('input', {
+            type: 'radio',
+            name: 'formula-mode',
+            value: mode,
+            checked: state.preferences.formulaMode === mode,
+            onchange: () => controller.setFormulaMode?.(mode),
+          }),
+          mode === 'mathml'
+            ? 'Accessible MathML'
+            : mode === 'katex'
+              ? 'Rendered KaTeX'
+              : mode === 'source'
+                ? 'Source fallback'
+                : 'Disabled',
+        ]),
+      ),
+    ]),
     m(
       'div.format-cards',
       (['markdown', 'html', 'epub'] as const).map((format) =>

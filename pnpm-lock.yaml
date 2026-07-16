@@ -50,6 +50,9 @@ importers:
       '@wordconvert/markdown-writer':
         specifier: workspace:*
         version: link:../../packages/markdown-writer
+      '@wordconvert/math-converter':
+        specifier: workspace:*
+        version: link:../../packages/math-converter
       dompurify:
         specifier: ^3.4.12
         version: 3.4.12
@@ -79,6 +82,9 @@ importers:
       '@wordconvert/document-model':
         specifier: workspace:*
         version: link:../document-model
+      '@wordconvert/math-converter':
+        specifier: workspace:*
+        version: link:../math-converter
       fflate:
         specifier: ^0.8.3
         version: 0.8.3
@@ -91,6 +97,9 @@ importers:
       '@wordconvert/document-model':
         specifier: workspace:*
         version: link:../document-model
+      '@wordconvert/math-converter':
+        specifier: workspace:*
+        version: link:../math-converter
       fflate:
         specifier: ^0.8.3
         version: 0.8.3
@@ -100,6 +109,9 @@ importers:
       '@wordconvert/document-model':
         specifier: workspace:*
         version: link:../document-model
+      '@wordconvert/math-converter':
+        specifier: workspace:*
+        version: link:../math-converter
       fflate:
         specifier: ^0.8.3
         version: 0.8.3
@@ -109,11 +121,21 @@ importers:
       '@wordconvert/document-model':
         specifier: workspace:*
         version: link:../document-model
+      '@wordconvert/math-converter':
+        specifier: workspace:*
+        version: link:../math-converter
       fflate:
         specifier: ^0.8.3
         version: 0.8.3
 
-  packages/math-converter: {}
+  packages/math-converter:
+    dependencies:
+      '@wordconvert/document-model':
+        specifier: workspace:*
+        version: link:../document-model
+      katex:
+        specifier: ^0.16.22
+        version: 0.16.47
 
   packages/shared: {}
 
@@ -581,6 +603,10 @@ packages:
     resolution: {integrity: sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg==}
     engines: {node: '>=18'}
 
+  commander@8.3.0:
+    resolution: {integrity: sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==}
+    engines: {node: '>= 12'}
+
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
 
@@ -639,6 +665,10 @@ packages:
 
   js-tokens@10.0.0:
     resolution: {integrity: sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q==}
+
+  katex@0.16.47:
+    resolution: {integrity: sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==}
+    hasBin: true
 
   lightningcss-android-arm64@1.32.0:
     resolution: {integrity: sha512-YK7/ClTt4kAK0vo6w3X+Pnm0D2cf2vPHbhOXdoNti1Ga0al1P4TBZhwjATvjNwLEBCnKvjJc2jQgHXH0NEwlAg==}
@@ -1226,6 +1256,8 @@ snapshots:
 
   chai@6.2.2: {}
 
+  commander@8.3.0: {}
+
   convert-source-map@2.0.0: {}
 
   detect-libc@2.1.2: {}
@@ -1269,6 +1301,10 @@ snapshots:
       istanbul-lib-report: 3.0.1
 
   js-tokens@10.0.0: {}
+
+  katex@0.16.47:
+    dependencies:
+      commander: 8.3.0
 
   lightningcss-android-arm64@1.32.0:
     optional: true

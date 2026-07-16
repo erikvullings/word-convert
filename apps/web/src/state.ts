@@ -6,6 +6,7 @@ import type {
 } from '@wordconvert/document-model';
 import { STYLE_MAPPINGS } from './editors.ts';
 import { createCoverSettings, type CoverSettings } from './cover.ts';
+import type { MathOutputMode } from '@wordconvert/math-converter';
 
 export const WORKFLOW_STAGES = [
   'Document',
@@ -22,6 +23,7 @@ export interface Preferences {
   theme: ThemePreference;
   outputFormat: OutputFormat;
   mappingPresets: Record<string, Record<string, StyleMapping>>;
+  formulaMode: MathOutputMode;
 }
 
 export interface DownloadOutput {
@@ -68,6 +70,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   theme: 'system',
   outputFormat: 'html',
   mappingPresets: {},
+  formulaMode: 'mathml',
 };
 
 export function createInitialState(
@@ -109,10 +112,15 @@ export function loadPreferences(storage: PreferenceStorage): Preferences {
     if (
       !['system', 'light', 'dark'].includes(value.theme ?? '') ||
       !['html', 'markdown', 'epub'].includes(value.outputFormat ?? '') ||
-      !isMappingPresets(value.mappingPresets)
+      !isMappingPresets(value.mappingPresets) ||
+      (value.formulaMode !== undefined &&
+        !['source', 'mathml', 'katex', 'disabled'].includes(value.formulaMode))
     )
       return DEFAULT_PREFERENCES;
-    return value as Preferences;
+    return {
+      ...value,
+      formulaMode: value.formulaMode ?? 'mathml',
+    } as Preferences;
   } catch {
     return DEFAULT_PREFERENCES;
   }

@@ -34,6 +34,43 @@ function model(blocks: DocumentModel['blocks']): DocumentModel {
 }
 
 describe('writeMarkdown', () => {
+  it('applies source, MathML, KaTeX, and disabled formula modes', () => {
+    const input = model([{ type: 'equationBlock', equationId: 'eq' }]);
+    input.equations.eq = {
+      id: 'eq',
+      source: {
+        format: 'omml',
+        value: '<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>',
+      },
+      tex: 'x',
+      conversionComplete: true,
+    };
+    expect(
+      writeMarkdown(input, {
+        conversionDate: '2026-07-16',
+        formulaMode: 'source',
+      }),
+    ).toContain('$$\nx\n$$');
+    expect(
+      writeMarkdown(input, {
+        conversionDate: '2026-07-16',
+        formulaMode: 'mathml',
+      }),
+    ).toContain('<math');
+    expect(
+      writeMarkdown(input, {
+        conversionDate: '2026-07-16',
+        formulaMode: 'katex',
+      }),
+    ).toContain('class="katex"');
+    expect(
+      writeMarkdown(input, {
+        conversionDate: '2026-07-16',
+        formulaMode: 'disabled',
+      }),
+    ).toBe('\n');
+  });
+
   it('writes metadata title as the document title without duplicating a mapped title', () => {
     const input = model([
       {

@@ -7,9 +7,15 @@ import type {
   WriterOptions,
 } from '@wordconvert/document-model';
 import { strToU8, zipSync, type Zippable } from 'fflate';
+import {
+  KATEX_STYLES,
+  renderEquation as renderMathEquation,
+  type MathOutputMode,
+} from '@wordconvert/math-converter';
 
 export interface HtmlWriterOptions extends WriterOptions {
   mode?: 'standalone' | 'fragment';
+  formulaMode?: MathOutputMode;
 }
 
 interface HeadingEntry {
@@ -24,6 +30,7 @@ interface RenderContext {
   headingIndex: number;
   referencedNotes: string[];
   assetUrl: (asset: DocumentAsset) => string | undefined;
+  formulaMode: MathOutputMode;
 }
 
 const STYLES = `:root{color-scheme:light dark;--background:#fff;--foreground:#202124;--muted:#5f6368;--link:#0759b6}*{box-sizing:border-box}body{max-width:48rem;margin:0 auto;padding:2rem;font:18px/1.6 system-ui,sans-serif;background:var(--background);color:var(--foreground)}h1,h2,h3,h4,h5,h6{clear:both;line-height:1.2;margin-block:1.6em .6em}p,ul,ol,blockquote,figure,table,pre{margin-block:0 1.25em}img{max-width:100%;height:auto}p>img{display:block;clear:both;margin-block:1.25em}figure{clear:both;margin-inline:0}figure>img{display:block}figcaption{margin-top:.5em;color:var(--muted)}table{clear:both;border-collapse:collapse;width:100%}th,td{border:1px solid var(--muted);padding:.4rem;text-align:left;vertical-align:top}a{color:var(--link)}pre{clear:both;overflow:auto}.page-break{clear:both;break-after:page}nav{clear:both}nav ol{padding-left:1.5rem}@media (prefers-color-scheme: dark){:root{--background:#181a1b;--foreground:#eee;--muted:#aaa;--link:#8ab4f8}}@media print{body{max-width:none;padding:0;font-size:12pt}nav{break-after:page}a{color:inherit;text-decoration:none}}`;
@@ -50,21 +57,27 @@ export function writeHtml(
   model: DocumentModel,
   options: HtmlWriterOptions,
 ): string {
-  const fragment = writeFragment(model, (asset) => dataUrl(asset));
+  const fragment = writeFragment(
+    model,
+    (asset) => dataUrl(asset),
+    options.formulaMode ?? 'source',
+  );
   if (options.mode === 'fragment') return fragment;
   const title = escapeHtml(model.metadata.title?.value ?? 'Untitled document');
   const language = sanitizeLanguage(model.metadata.language?.value ?? 'en');
   const metadata = renderMetadata(model);
-  return `<!doctype html><html lang="${language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="WordConvert">${metadata}<title>${title}</title><style>${embeddedFontCss(model)}${STYLES}</style></head><body>${fragment}</body></html>`;
+  return `<!doctype html><html lang="${language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="WordConvert">${metadata}<title>${title}</title><style>${embeddedFontCss(model)}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}</style></head><body>${fragment}</body></html>`;
 }
 
 export async function writeHtmlZip(
   model: DocumentModel,
-  _options: WriterOptions,
+  options: HtmlWriterOptions,
 ): Promise<Uint8Array> {
   const registry = createZipAssetRegistry(model);
-  const fragment = writeFragment(model, (asset) =>
-    registry.paths.get(asset.id),
+  const fragment = writeFragment(
+    model,
+    (asset) => registry.paths.get(asset.id),
+    options.formulaMode ?? 'source',
   );
   const title = escapeHtml(model.metadata.title?.value ?? 'Untitled document');
   const language = sanitizeLanguage(model.metadata.language?.value ?? 'en');
@@ -77,7 +90,9 @@ export async function writeHtmlZip(
     .join('');
   const files: Zippable = {
     'document.html': strToU8(html),
-    'styles.css': strToU8(`${fontCss}${STYLES}`),
+    'styles.css': strToU8(
+      `${fontCss}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}`,
+    ),
   };
   for (const { asset, path } of registry.entries) files[path] = asset.data;
   const deterministicFiles: Zippable = {};
@@ -128,6 +143,7 @@ function createZipAssetRegistry(model: DocumentModel): {
 function writeFragment(
   model: DocumentModel,
   assetUrl: RenderContext['assetUrl'],
+  formulaMode: MathOutputMode,
 ): string {
   const headings = collectHeadings(model.blocks);
   const context: RenderContext = {
@@ -136,6 +152,7 @@ function writeFragment(
     headingIndex: 0,
     referencedNotes: [],
     assetUrl,
+    formulaMode,
   };
   const content = renderBlocks(model.blocks, context);
   const notes = renderNotes(context);
@@ -243,7 +260,7 @@ function renderBlock(block: BlockNode, context: RenderContext): string {
       return `<pre><code${language}>${escapeHtml(block.text)}</code></pre>`;
     }
     case 'equationBlock':
-      return `<div class="equation" role="math">${renderEquation(block.equationId, context)}</div>`;
+      return `<div class="equation" role="math">${renderEquation(block.equationId, true, context)}</div>`;
     case 'imageBlock': {
       const image = renderImage(block.assetId, block.alt, undefined, context);
       if (!image) return '';
@@ -275,7 +292,7 @@ function renderInline(node: InlineNode, context: RenderContext): string {
     case 'image':
       return renderImage(node.assetId, node.alt, node.title, context);
     case 'equation':
-      return `<span class="equation" role="math">${renderEquation(node.equationId, context)}</span>`;
+      return `<span class="equation" role="math">${renderEquation(node.equationId, false, context)}</span>`;
     case 'noteReference': {
       if (!context.referencedNotes.includes(node.noteId))
         context.referencedNotes.push(node.noteId);
@@ -318,10 +335,15 @@ function renderImage(
   return `<img src="${escapeAttribute(source)}" alt="${escapeAttribute(alt ?? '')}"${titleAttribute}>`;
 }
 
-function renderEquation(id: string, context: RenderContext): string {
-  const equation = context.model.equations[id];
-  if (!equation) return '[Equation unavailable]';
-  return escapeHtml(equation.tex ?? equation.source.value);
+function renderEquation(
+  id: string,
+  display: boolean,
+  context: RenderContext,
+): string {
+  return renderMathEquation(context.model.equations[id], {
+    mode: context.formulaMode,
+    display,
+  });
 }
 
 function renderNotes(context: RenderContext): string {

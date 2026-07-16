@@ -67,15 +67,18 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
             request.format === 'epub'
               ? await writeEpub(request.model, {
                   conversionDate: request.conversionDate,
+                  formulaMode: request.formulaMode ?? 'mathml',
                   ...(request.cover ? { cover: request.cover } : {}),
                 })
               : new TextEncoder().encode(
                   request.format === 'html'
                     ? writeHtml(request.model, {
                         conversionDate: request.conversionDate,
+                        formulaMode: request.formulaMode ?? 'mathml',
                       })
                     : writeMarkdown(request.model, {
                         conversionDate: request.conversionDate,
+                        formulaMode: request.formulaMode ?? 'mathml',
                       }),
                 );
           if (signal.cancelled) throw cancelledError();
