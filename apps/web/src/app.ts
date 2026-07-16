@@ -1,5 +1,6 @@
 import m, { type Component } from 'mithril';
 import type {
+  ConversionWarning,
   DocumentMetadata,
   EffectiveFormatting,
   Person,
@@ -7,6 +8,7 @@ import type {
 } from '@wordconvert/document-model';
 import {
   Button,
+  Collapsible,
   LinearProgress,
   RadioButtons,
   Select,
@@ -164,79 +166,16 @@ function stageContent(controller: AppController): m.Children {
 
 function outputChooser(controller: AppController): m.Vnode {
   const state = controller.state;
+  const hasFormulas = Object.keys(state.model?.equations ?? {}).length > 0;
   if (state.status === 'analysing')
     return m('p', 'Inspecting the document in the background…');
   return m('div.output-chooser', [
     m('p', 'Analysis is complete. Choose how you want to use the document.'),
-    m('fieldset.formula-options#formula-output-settings', [
-      m('legend', 'Formula output'),
-      ...(['mathml', 'katex', 'source', 'disabled'] as const).map((mode) =>
-        m('label', [
-          m('input', {
-            type: 'radio',
-            name: 'formula-mode',
-            value: mode,
-            checked: state.preferences.formulaMode === mode,
-            onchange: () => controller.setFormulaMode?.(mode),
-          }),
-          mode === 'mathml'
-            ? 'Accessible MathML'
-            : mode === 'katex'
-              ? 'Rendered KaTeX'
-              : mode === 'source'
-                ? 'Source fallback'
-                : 'Disabled',
-        ]),
-      ),
-    ]),
-    m('fieldset.output-options#asset-output-settings', [
-      m('legend', 'Markdown and HTML assets'),
-      m('label', [
-        m('input', {
-          type: 'radio',
-          name: 'markdown-mode',
-          checked: state.preferences.markdownMode === 'single',
-          onchange: () => controller.setMarkdownMode?.('single'),
-        }),
-        'Single Markdown file with embedded images',
-      ]),
-      m('label', [
-        m('input', {
-          type: 'radio',
-          name: 'markdown-mode',
-          checked: state.preferences.markdownMode === 'zip',
-          onchange: () => controller.setMarkdownMode?.('zip'),
-        }),
-        'Markdown ZIP with generated images folder',
-      ]),
-      m('label', [
-        m('input', {
-          type: 'radio',
-          name: 'html-mode',
-          checked: state.preferences.htmlMode === 'standalone',
-          onchange: () => controller.setHtmlMode?.('standalone'),
-        }),
-        'Standalone HTML with embedded assets',
-      ]),
-      m('label', [
-        m('input', {
-          type: 'radio',
-          name: 'html-mode',
-          checked: state.preferences.htmlMode === 'zip',
-          onchange: () => controller.setHtmlMode?.('zip'),
-        }),
-        'HTML ZIP with generated image and font folders',
-      ]),
-    ]),
     m(
       'div.format-cards',
       (['markdown', 'html', 'epub'] as const).map((format) =>
         m(
-          'button.format-card',
-          {
-            type: 'button',
-            onclick: () => controller.setOutputFormat(format),
-          },
+          `article.format-card.format-card--${format}`,
           [
             m(
               'strong',
@@ -253,6 +192,46 @@ function outputChooser(controller: AppController): m.Vnode {
                 : format === 'markdown'
                   ? 'Rendered preview and Markdown source'
                   : 'Configure and inspect the publication package',
+            ),
+            format === 'markdown'
+              ? packagingOptions(
+                  'Markdown packaging',
+                  state.preferences.markdownMode,
+                  [
+                    ['single', 'Single file'],
+                    ['zip', 'ZIP with images folder'],
+                  ],
+                  (value) =>
+                    controller.setMarkdownMode?.(
+                      value as MarkdownOutputMode,
+                    ),
+                )
+              : format === 'html'
+                ? packagingOptions(
+                    'HTML packaging',
+                    state.preferences.htmlMode,
+                    [
+                      ['standalone', 'Standalone file'],
+                      ['zip', 'ZIP with asset folders'],
+                    ],
+                    (value) =>
+                      controller.setHtmlMode?.(value as HtmlOutputMode),
+                  )
+              : epubPackaging(),
+            format === 'epub' ? epubCoverSource(controller) : null,
+            hasFormulas
+              ? formulaOptions(
+                  controller,
+                  format === 'markdown' ? 'formula-output-settings' : undefined,
+                )
+              : null,
+            m(
+              'button.format-card-action',
+              {
+                type: 'button',
+                onclick: () => controller.setOutputFormat(format),
+              },
+              `Convert to ${format === 'epub' ? 'EPUB 3' : format === 'html' ? 'HTML' : 'Markdown'}`,
             ),
           ],
         ),
@@ -279,6 +258,62 @@ function outputChooser(controller: AppController): m.Vnode {
       ),
       '.',
     ]),
+  ]);
+}
+
+function packagingOptions(
+  legend: string,
+  selected: string,
+  options: readonly (readonly [string, string])[],
+  onchange: (value: string) => void,
+): m.Vnode<any, any> {
+  return m(RadioButtons<string>, {
+    className: 'format-card-options',
+    checkboxClass: 'format-card-radio-option',
+    label: legend,
+    options: options.map(([id, label]) => ({ id, label })),
+    checkedId: selected,
+    onchange,
+  });
+}
+
+function formulaOptions(
+  controller: AppController,
+  id?: string,
+): m.Vnode<any, any> {
+  return m(RadioButtons<MathOutputMode>, {
+    ...(id ? { id } : {}),
+    className: 'format-card-options formula-options',
+    checkboxClass: 'format-card-radio-option',
+    label: 'Formula output',
+    options: [
+      { id: 'mathml', label: 'Accessible MathML' },
+      { id: 'katex', label: 'KaTeX-rendered HTML' },
+      { id: 'source', label: 'TeX source' },
+      { id: 'disabled', label: 'Omit formulas' },
+    ],
+    checkedId: controller.state.preferences.formulaMode,
+    onchange: (mode) => controller.setFormulaMode?.(mode),
+  });
+}
+
+function epubPackaging(): m.Vnode {
+  return m('div.format-card-options.format-card-options--static', [
+    m('h5.form-group-label', 'EPUB packaging'),
+    m('p', 'Single EPUB file with embedded assets'),
+  ]);
+}
+
+function epubCoverSource(controller: AppController): m.Vnode {
+  const images = Object.values(controller.state.model?.assets ?? {}).filter(
+    (asset) =>
+      ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'].includes(
+        asset.mediaType,
+      ),
+  );
+  return m('label.format-card-options', [
+    m('span.form-group-label', 'Cover source'),
+    coverSourceSelect(controller, images.length > 0),
   ]);
 }
 
@@ -344,29 +379,7 @@ function coverEditor(controller: AppController): m.Vnode {
   ): void => controller.updateCover({ [key]: value } as Pick<CoverSettings, K>);
   return m('section.cover-editor', [
     m('h4', 'Front cover'),
-    m('label', [
-      'Source',
-      m(
-        'select',
-        {
-          value: settings.source,
-          onchange: (event: Event) =>
-            controller.setCoverSource(
-              (event.currentTarget as HTMLSelectElement).value as CoverSource,
-            ),
-        },
-        [
-          m('option', { value: 'none' }, 'No cover'),
-          m('option', { value: 'upload' }, 'Upload image'),
-          m(
-            'option',
-            { value: 'extracted', disabled: images.length === 0 },
-            'Extracted document image',
-          ),
-          m('option', { value: 'generated' }, 'Generated typographic cover'),
-        ],
-      ),
-    ]),
+    m('label', ['Source', coverSourceSelect(controller, images.length > 0)]),
     settings.source === 'upload'
       ? m('label', [
           'Cover image (JPEG, PNG, WebP, or sanitized SVG; max 10 MiB)',
@@ -497,6 +510,32 @@ function coverEditor(controller: AppController): m.Vnode {
   ]);
 }
 
+function coverSourceSelect(
+  controller: AppController,
+  hasExtractedImages: boolean,
+): m.Vnode {
+  return m(
+    'select',
+    {
+      value: controller.state.cover.source,
+      onchange: (event: Event) =>
+        controller.setCoverSource(
+          (event.currentTarget as HTMLSelectElement).value as CoverSource,
+        ),
+    },
+    [
+      m('option', { value: 'none' }, 'No cover'),
+      m('option', { value: 'upload' }, 'Upload image'),
+      m(
+        'option',
+        { value: 'extracted', disabled: !hasExtractedImages },
+        'Extracted document image',
+      ),
+      m('option', { value: 'generated' }, 'Generated typographic cover'),
+    ],
+  );
+}
+
 function choice(
   label: string,
   value: string,
@@ -557,9 +596,9 @@ function preview(controller: AppController): m.Vnode {
   if (state.preferences.outputFormat === 'epub')
     return m('div.preview-panel', [
       previewActions(controller),
-      warningPanel(controller),
       epubConfiguration(controller),
       epubLayoutPreview(controller),
+      warningPanel(controller),
       previewActions(controller),
     ]);
 
@@ -587,7 +626,6 @@ function preview(controller: AppController): m.Vnode {
   const previewMarkup = isMarkdown ? rendered : extractHtmlBody(rendered);
   return m('div.preview-panel', [
     previewActions(controller),
-    warningPanel(controller),
     isMarkdown
       ? m(
           'div.preview-mode',
@@ -610,6 +648,7 @@ function preview(controller: AppController): m.Vnode {
           'article.document-preview',
           m.trust(DOMPurify.sanitize(previewMarkup, previewSanitizeConfig())),
         ),
+    warningPanel(controller),
     previewActions(controller),
   ]);
 }
@@ -807,52 +846,125 @@ function previewActions(controller: AppController): m.Vnode {
 }
 
 function warningPanel(controller: AppController): m.Vnode | null {
-  const warnings =
-    controller.state.output?.warnings ?? controller.state.model?.warnings ?? [];
+  const warnings = visibleWarnings(
+    controller.state.output?.warnings ?? controller.state.model?.warnings ?? [],
+  );
   if (warnings.length === 0) return null;
   return m('section.warning-panel[aria-label="Conversion warnings"]', [
-    m('h3', `Warnings (${warnings.length})`),
-    m(
-      'ul',
-      warnings.map((warning) =>
-        m('li', [
-          m('span', warning.message),
-          ' ',
-          m(
-            'button.link-button',
-            {
-              type: 'button',
-              onclick: () =>
-                navigateToWarning(
-                  controller.state,
-                  warningDestination(warning),
-                ),
-            },
-            'Review setting',
+    m(Collapsible, {
+      accordion: true,
+      items: [
+        {
+          header: m('span.warning-summary', [
+            m('span', `Warnings (${warnings.length})`),
+            m(
+              'svg.warning-disclosure[aria-hidden="true"]',
+              { viewBox: '0 0 24 24', width: '20', height: '20' },
+              m('path', {
+                d: 'm7 10 5 5 5-5',
+                fill: 'none',
+                stroke: 'currentColor',
+                'stroke-linecap': 'round',
+                'stroke-linejoin': 'round',
+                'stroke-width': '2',
+              }),
+            ),
+          ]),
+          body: m(
+            'ul',
+            warnings.map((warning) => {
+              const destination = warningDestination(warning);
+              return m('li', [
+                m('span', warning.message),
+                destination
+                  ? [
+                      ' ',
+                      m(
+                        'button.link-button',
+                        {
+                          type: 'button',
+                          onclick: () =>
+                            navigateToWarning(
+                              controller.state,
+                              destination,
+                              warningStyleId(warning),
+                            ),
+                        },
+                        warningReviewLabel(controller.state, warning, destination),
+                      ),
+                    ]
+                  : null,
+              ]);
+            }),
           ),
-        ]),
-      ),
-    ),
+        },
+      ],
+    }),
   ]);
+}
+
+function visibleWarnings(
+  warnings: readonly ConversionWarning[],
+): ConversionWarning[] {
+  const seen = new Set<string>();
+  return warnings.filter((warning) => {
+    const destination = warningDestination(warning);
+    const styleId = warningStyleId(warning);
+    const key =
+      destination === 'styles' && styleId
+        ? `style:${styleId}`
+        : destination
+          ? undefined
+          : `${warning.code}:${warning.message}`;
+    if (!key || !seen.has(key)) {
+      if (key) seen.add(key);
+      return true;
+    }
+    return false;
+  });
+}
+
+function warningStyleId(warning: ConversionWarning): string | undefined {
+  const styleId = warning.details?.styleId;
+  return typeof styleId === 'string' ? styleId : undefined;
+}
+
+function warningReviewLabel(
+  state: AppState,
+  warning: ConversionWarning,
+  destination: NonNullable<ReturnType<typeof warningDestination>>,
+): string {
+  if (destination === 'formula') return 'Review formula output';
+  if (destination === 'styles') {
+    const styleId = warningStyleId(warning);
+    const style = state.model?.styles.find((candidate) => candidate.id === styleId);
+    return style ? `Review ${style.name ?? style.id} mapping` : 'Review style mapping';
+  }
+  return 'Review metadata';
 }
 
 function navigateToWarning(
   state: AppState,
-  destination: ReturnType<typeof warningDestination>,
+  destination: NonNullable<ReturnType<typeof warningDestination>>,
+  styleId?: string,
 ): void {
   if (destination === 'styles' || destination === 'metadata') {
     openReview(state, destination);
+    if (destination === 'styles' && styleId)
+      queueMicrotask(() =>
+        document
+          .getElementById(`style-mapping-${styleId}`)
+          ?.querySelector<HTMLInputElement>('input')
+          ?.focus(),
+      );
     return;
   }
   delete state.review;
   state.stage = 1;
   queueMicrotask(() =>
     document
-      .getElementById(
-        destination === 'formula'
-          ? 'formula-output-settings'
-          : 'asset-output-settings',
-      )
+      .getElementById('formula-output-settings')
+      ?.querySelector<HTMLInputElement>('input')
       ?.focus(),
   );
 }

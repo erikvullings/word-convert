@@ -203,6 +203,66 @@ describe('App', () => {
     expect(formats).not.toContain('Cover image');
     expect(formats.indexOf('Markdown')).toBeLessThan(formats.indexOf('HTML'));
     expect(formats.indexOf('HTML')).toBeLessThan(formats.indexOf('EPUB 3'));
+    expect(formats).not.toContain('Formula output');
+  });
+
+  it('shows formula output choices only when the analysis found formulas', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 1;
+    state.status = 'ready';
+    state.model = editorModel();
+    state.model.equations.formula = {
+      id: 'formula',
+      source: { format: 'tex', value: 'x' },
+      tex: 'x',
+      conversionComplete: true,
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('Formula output');
+    expect(rendered).toContain('Accessible MathML');
+  });
+
+  it('keeps format-specific settings inside their output cards', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 1;
+    state.status = 'ready';
+    state.model = editorModel();
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+    const markdown = rendered.slice(
+      rendered.indexOf('format-card--markdown'),
+      rendered.indexOf('format-card--html'),
+    );
+    const html = rendered.slice(
+      rendered.indexOf('format-card--html'),
+      rendered.indexOf('format-card--epub'),
+    );
+    const epub = rendered.slice(rendered.indexOf('format-card--epub'));
+
+    expect(markdown).toContain('Markdown packaging');
+    expect(markdown).toContain('Single file');
+    expect(markdown).toContain('ZIP with images folder');
+    expect(html).toContain('HTML packaging');
+    expect(html).toContain('Standalone file');
+    expect(html).toContain('ZIP with asset folders');
+    expect(epub).not.toContain('Markdown packaging');
+    expect(epub).not.toContain('HTML packaging');
+  });
+
+  it('exposes the EPUB cover source while choosing the output format', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 1;
+    state.status = 'ready';
+    state.model = editorModel();
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+    const epub = rendered.slice(rendered.indexOf('format-card--epub'));
+
+    expect(epub).toContain('Cover source');
+    expect(epub).toContain('Upload image');
+    expect(epub).toContain('Generated typographic cover');
   });
 
   it('shows EPUB configuration in preview stage and explains metadata issues', () => {
@@ -328,6 +388,85 @@ describe('App', () => {
     expect((rendered.match(/Review metadata/g) ?? []).length).toBe(2);
     expect((rendered.match(/Download report.md/g) ?? []).length).toBe(2);
   });
+
+  it('places a collapsed, actionable warning panel after the preview', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.preferences.outputFormat = 'markdown';
+    state.previewMode = 'source';
+    state.model = editorModel();
+    state.model.warnings = [
+      {
+        code: 'active-content-disabled',
+        severity: 'warning',
+        message: 'Potentially active content was excluded for safety.',
+      },
+      {
+        code: 'formula-conversion-failed',
+        severity: 'warning',
+        message: 'A formula could not be converted.',
+      },
+    ];
+    state.output = {
+      filename: 'report.md',
+      mediaType: 'text/markdown',
+      data: new TextEncoder().encode('# Report').buffer,
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered.indexOf('markdown-source')).toBeLessThan(
+      rendered.indexOf('warning-panel'),
+    );
+    expect(rendered).toContain('Warnings (2)');
+    expect(rendered).toContain('Review formula output');
+    expect(rendered).not.toContain('Review setting');
+    expect(rendered).not.toContain('"active":true');
+  });
+
+  it('condenses duplicate warnings while retaining distinct style mapping actions', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.preferences.outputFormat = 'markdown';
+    state.previewMode = 'source';
+    state.model = editorModel();
+    state.model.styles = [
+      styleFixture('Emphasis', 'Emphasis'),
+      styleFixture('Strong emphasis', 'StrongEmphasis'),
+    ];
+    state.model.warnings = [
+      ...Array.from({ length: 2 }, () => ({
+        code: 'markdown-table-span',
+        severity: 'warning' as const,
+        message: 'Markdown tables cannot preserve merged cell spans.',
+      })),
+      ...Array.from({ length: 2 }, () => ({
+        code: 'markdown-unsupported-style-mark',
+        severity: 'info' as const,
+        message: 'A custom character style has no Markdown representation.',
+        details: { styleId: 'Emphasis' },
+      })),
+      {
+        code: 'markdown-unsupported-style-mark',
+        severity: 'info' as const,
+        message: 'A custom character style has no Markdown representation.',
+        details: { styleId: 'StrongEmphasis' },
+      },
+    ];
+    state.output = {
+      filename: 'report.md',
+      mediaType: 'text/markdown',
+      data: new TextEncoder().encode('# Report').buffer,
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('Warnings (3)');
+    expect(rendered).toContain('Review Emphasis mapping');
+    expect(rendered).toContain('Review Strong emphasis mapping');
+  });
 });
 
 function controllerFor(
@@ -420,5 +559,23 @@ function editorModel(): DocumentModel {
         },
       },
     ],
+  };
+}
+
+function styleFixture(name: string, id: string): DocumentModel['styles'][number] {
+  return {
+    id,
+    name,
+    kind: 'character',
+    formatting: {},
+    usageCount: 1,
+    examples: [],
+    proposedMapping: 'body',
+    reasons: [],
+    provenance: {
+      source: 'test',
+      method: 'inferred',
+      confidence: 'medium',
+    },
   };
 }

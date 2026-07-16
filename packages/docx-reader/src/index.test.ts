@@ -203,7 +203,8 @@ describe('secure DOCX reader', () => {
     const warning = {
       code: 'active-content-disabled',
       severity: 'warning',
-      message: 'Active document content was disabled.',
+      message:
+        'Potentially active content (such as macros, embedded HTML, or unsafe SVG) was excluded for safety.',
     } as const;
     expect(model.warnings).toContainEqual(warning);
     expect(standardDocumentWithVba.warnings).toContainEqual(warning);
@@ -218,7 +219,8 @@ describe('secure DOCX reader', () => {
     expect(model.warnings).toContainEqual({
       code: 'active-content-disabled',
       severity: 'warning',
-      message: 'Active document content was disabled.',
+      message:
+        'Potentially active content (such as macros, embedded HTML, or unsafe SVG) was excluded for safety.',
     });
     expect(Object.values(model.assets)).toHaveLength(0);
   });

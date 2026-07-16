@@ -101,9 +101,9 @@ describe('writeHtml', () => {
     expect(first).toContain('<!doctype html>');
     expect(first).toContain('<title>A &lt;safe&gt; title</title>');
     expect(first).toContain(
-      '<main><h1 class="document-title">A &lt;safe&gt; title</h1>',
+      '<main><h1 class="document-title">A &lt;safe&gt; title</h1><div class="table-of-contents"><h2>Contents</h2>',
     );
-    expect(first).toContain('<nav aria-label="Table of contents">');
+    expect(first).not.toContain('<nav');
     expect(first).toContain('<a href="#one">One</a>');
     expect(first).toContain('<a href="#one-2">One</a>');
     expect(first).toContain('<h1 id="one">One</h1>');

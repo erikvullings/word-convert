@@ -26,7 +26,7 @@ describe('preview safety and warning navigation', () => {
 
   it.each([
     ['formula-conversion-incomplete', 'formula'],
-    ['markdown-unsafe-asset', 'assets'],
+    ['markdown-unsafe-asset', undefined],
     ['missing-required-metadata', 'metadata'],
     ['style-ambiguous', 'styles'],
   ] as const)('routes %s warnings to %s', (code, destination) => {

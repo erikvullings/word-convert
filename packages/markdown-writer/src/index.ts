@@ -347,15 +347,23 @@ function applyMarks(
     if (mark.type === 'superscript') return `<sup>${content}</sup>`;
     if (mark.type === 'code') return content;
     if (mark.type === 'style') {
-      context.warn({
-        code: 'markdown-unsupported-style-mark',
-        severity: 'info',
-        message: 'A custom character style has no Markdown representation.',
-        details: { styleId: mark.styleId },
-      });
+      if (!hasExplicitStyleMapping(context.model, mark.styleId))
+        context.warn({
+          code: 'markdown-unsupported-style-mark',
+          severity: 'info',
+          message: 'A custom character style has no Markdown representation.',
+          details: { styleId: mark.styleId },
+        });
     }
     return content;
   }, value);
+}
+
+function hasExplicitStyleMapping(model: DocumentModel, styleId: string): boolean {
+  return model.styles.some(
+    (style) =>
+      style.id === styleId && style.provenance.source === 'user-mappings',
+  );
 }
 
 function renderText(

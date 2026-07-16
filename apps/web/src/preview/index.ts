@@ -1,8 +1,7 @@
 import type { ConversionWarning } from '@wordconvert/document-model';
 import type { Config } from 'dompurify';
 
-export type WarningDestination =
-  'styles' | 'metadata' | 'formula' | 'assets' | 'output';
+export type WarningDestination = 'styles' | 'metadata' | 'formula';
 
 export function previewSanitizeConfig(): Config {
   return {
@@ -32,16 +31,10 @@ export function previewSanitizeConfig(): Config {
 
 export function warningDestination(
   warning: ConversionWarning,
-): WarningDestination {
+): WarningDestination | undefined {
   const code = warning.code.toLowerCase();
   if (code.includes('formula') || code.includes('math')) return 'formula';
   if (code.includes('metadata')) return 'metadata';
   if (code.includes('style') || code.includes('heading')) return 'styles';
-  if (
-    code.includes('asset') ||
-    code.includes('image') ||
-    code.includes('media')
-  )
-    return 'assets';
-  return 'output';
+  return undefined;
 }

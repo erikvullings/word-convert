@@ -474,6 +474,48 @@ describe('writeMarkdown', () => {
     expect(firstWarnings[5]?.details).toEqual({ colSpan: 2, rowSpan: 3 });
   });
 
+  it('does not warn about a character style with an explicit mapping', () => {
+    const input = model([
+      {
+        type: 'paragraph',
+        children: [
+          {
+            type: 'text',
+            text: 'Mapped text',
+            marks: [{ type: 'style', styleId: 'Emphasis' }],
+          },
+        ],
+      },
+    ]);
+    input.styles = [
+      {
+        id: 'Emphasis',
+        name: 'Emphasis',
+        kind: 'character',
+        formatting: {},
+        usageCount: 1,
+        examples: [],
+        proposedMapping: 'body',
+        reasons: [],
+        provenance: {
+          source: 'user-mappings',
+          method: 'user',
+          confidence: 'certain',
+        },
+      },
+    ];
+    const warnings: ConversionWarning[] = [];
+
+    writeMarkdown(input, {
+      conversionDate: '2026-07-15',
+      onWarning: (warning) => warnings.push(warning),
+    });
+
+    expect(warnings).not.toContainEqual(
+      expect.objectContaining({ code: 'markdown-unsupported-style-mark' }),
+    );
+  });
+
   it('chooses collision-free inline and block code fences', () => {
     const markdown = writeMarkdown(
       model([

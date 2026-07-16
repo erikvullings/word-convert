@@ -918,7 +918,8 @@ export const secureDocxReader: DocxReader = {
       warnings.push({
         code: 'active-content-disabled',
         severity: 'warning',
-        message: 'Active document content was disabled.',
+        message:
+          'Potentially active content (such as macros, embedded HTML, or unsafe SVG) was excluded for safety.',
       });
     }
     const context: ParseContext = {

@@ -168,18 +168,18 @@ h1 {
 }
 .format-card {
   display: grid;
+  height: 100%;
   gap: 0.45rem;
-  min-height: 8rem;
+  align-content: start;
   padding: 1.2rem;
   border: 1px solid var(--line);
   border-radius: 0.7rem;
   background: var(--panel);
   color: var(--ink);
-  cursor: pointer;
   text-align: left;
 }
 .format-card:hover,
-.format-card:focus-visible {
+.format-card:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent);
 }
@@ -192,6 +192,53 @@ h1 {
 .epub-config small {
   color: var(--muted);
 }
+.format-card-options {
+  display: grid;
+  gap: 0.45rem;
+  width: 100%;
+  min-width: 0;
+  margin: 0.8rem 0 0;
+  padding: 0.8rem 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.format-card-options .form-group-label {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.format-card-options form {
+  display: grid;
+  gap: 0.45rem;
+}
+.format-card-radio-option {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+.format-card-options--static p {
+  margin: 0;
+  color: var(--muted);
+}
+.format-card-options--static {
+  padding-bottom: 0.75rem;
+}
+.format-card-action {
+  width: 100%;
+  margin-top: auto;
+  padding: 0.7rem 0.9rem;
+  border: 0;
+  border-radius: 0.4rem;
+  background: var(--accent);
+  color: var(--panel);
+  cursor: pointer;
+  font-weight: 700;
+}
+.format-card-action:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
 .link-button {
   border: 0;
   padding: 0;
@@ -199,6 +246,20 @@ h1 {
   color: var(--accent);
   cursor: pointer;
   text-decoration: underline;
+}
+.warning-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.warning-disclosure {
+  flex: 0 0 auto;
+  margin-left: 1rem;
+  transition: transform 150ms ease;
+}
+.warning-panel li.active .warning-disclosure {
+  transform: rotate(180deg);
 }
 .epub-config {
   display: grid;
@@ -298,6 +359,10 @@ h1 {
   /* margin-block: 1.6em 0.6em; */
   color: inherit;
   line-height: 1.2;
+}
+.document-preview h1 {
+  margin: 0 0 0.7em;
+  font: 700 clamp(1.7rem, 4vw, 2.4rem) / 1.2 Georgia, serif;
 }
 .document-preview :is(p, ul, ol, blockquote, figure, table, pre) {
   margin-block: 0 1.25em;
