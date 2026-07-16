@@ -23,6 +23,12 @@ import {
   type ThemePreference,
 } from './state.ts';
 import { STYLE_MAPPINGS, type EditableMetadataField } from './editors.ts';
+import {
+  coverComposition,
+  type CoverSettings,
+  type CoverSource,
+} from './cover.ts';
+import { createCoverSvg } from '@wordconvert/cover-generator';
 
 const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
   id: mapping,
@@ -54,6 +60,10 @@ export interface AppController {
   addAuthor(): void;
   updateAuthor(index: number, person: Person): void;
   removeAuthor(index: number): void;
+  setCoverSource(source: CoverSource): void;
+  updateCover(patch: Partial<CoverSettings>): void;
+  selectCoverFile(file: File): void;
+  selectExtractedCover(assetId: string): void;
 }
 
 export function App(controller: AppController): Component {
@@ -213,21 +223,7 @@ function epubConfiguration(controller: AppController): m.Vnode {
       'p',
       'The title, language, identifier, and authors come from the analysed document metadata.',
     ),
-    m('label', [
-      m('span', 'Cover image (optional)'),
-      m('input', {
-        type: 'file',
-        accept: 'image/png,image/jpeg,image/webp',
-        onchange: (event: Event) => {
-          const files = (event.currentTarget as HTMLInputElement).files;
-          if (files?.[0] && issues.length === 0) controller.convert();
-        },
-      }),
-      m(
-        'small',
-        'Cover embedding is not yet enabled; the selected file stays on this device.',
-      ),
-    ]),
+    coverEditor(controller),
     issues.length
       ? m('p.error[role="alert"]', [
           `Update required EPUB metadata: ${issues.join('; ')}. `,
@@ -246,6 +242,221 @@ function epubConfiguration(controller: AppController): m.Vnode {
             ? 'Refreshing EPUB preview…'
             : 'EPUB preview updates automatically when metadata changes.',
         ),
+  ]);
+}
+
+function coverEditor(controller: AppController): m.Vnode {
+  const settings = controller.state.cover;
+  const metadata = controller.state.model?.metadata;
+  const composition = coverComposition(settings, {
+    title: metadata?.title?.value ?? 'Untitled',
+    ...(metadata?.subtitle?.value ? { subtitle: metadata.subtitle.value } : {}),
+    authors: metadata?.authors.map(({ value }) => value.name) ?? [],
+  });
+  const images = Object.entries(controller.state.model?.assets ?? {}).filter(
+    ([, asset]) =>
+      ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'].includes(
+        asset.mediaType,
+      ),
+  );
+  const select = <K extends keyof CoverSettings>(
+    key: K,
+    value: CoverSettings[K],
+  ): void => controller.updateCover({ [key]: value } as Pick<CoverSettings, K>);
+  return m('section.cover-editor', [
+    m('h4', 'Front cover'),
+    m('label', [
+      'Source',
+      m(
+        'select',
+        {
+          value: settings.source,
+          onchange: (event: Event) =>
+            controller.setCoverSource(
+              (event.currentTarget as HTMLSelectElement).value as CoverSource,
+            ),
+        },
+        [
+          m('option', { value: 'none' }, 'No cover'),
+          m('option', { value: 'upload' }, 'Upload image'),
+          m(
+            'option',
+            { value: 'extracted', disabled: images.length === 0 },
+            'Extracted document image',
+          ),
+          m('option', { value: 'generated' }, 'Generated typographic cover'),
+        ],
+      ),
+    ]),
+    settings.source === 'upload'
+      ? m('label', [
+          'Cover image (JPEG, PNG, WebP, or sanitized SVG; max 10 MiB)',
+          m('input', {
+            type: 'file',
+            accept: 'image/png,image/jpeg,image/webp,image/svg+xml',
+            onchange: (event: Event) => {
+              const file = (event.currentTarget as HTMLInputElement).files?.[0];
+              if (file) controller.selectCoverFile(file);
+            },
+          }),
+        ])
+      : null,
+    settings.source === 'extracted'
+      ? m('label', [
+          'Document image',
+          m(
+            'select',
+            {
+              value: settings.imageName ?? '',
+              onchange: (event: Event) =>
+                controller.selectExtractedCover(
+                  (event.currentTarget as HTMLSelectElement).value,
+                ),
+            },
+            [
+              m('option', { value: '' }, 'Choose an image'),
+              ...images.map(([id]) => m('option', { value: id }, id)),
+            ],
+          ),
+        ])
+      : null,
+    settings.source !== 'none' && settings.source !== 'generated'
+      ? m('label', [
+          'Layout',
+          m(
+            'select',
+            {
+              value: settings.layout,
+              onchange: (event: Event) =>
+                select(
+                  'layout',
+                  (event.currentTarget as HTMLSelectElement)
+                    .value as CoverSettings['layout'],
+                ),
+            },
+            ['image-only', 'overlay', 'title-panel', 'separate-title-page'].map(
+              (value) => m('option', { value }, value.replaceAll('-', ' ')),
+            ),
+          ),
+        ])
+      : null,
+    settings.source !== 'none'
+      ? m('div.cover-controls', [
+          choice(
+            'Text alignment',
+            settings.alignment,
+            ['left', 'center', 'right'],
+            (value) => select('alignment', value as CoverSettings['alignment']),
+          ),
+          choice(
+            'Text colour',
+            settings.textColor,
+            ['light', 'dark'],
+            (value) => select('textColor', value as CoverSettings['textColor']),
+          ),
+          choice(
+            'Contrast panel',
+            settings.contrastPanel,
+            ['none', 'light', 'dark'],
+            (value) =>
+              select('contrastPanel', value as CoverSettings['contrastPanel']),
+          ),
+          choice(
+            'Image crop',
+            settings.crop,
+            ['cover', 'contain', 'stretch'],
+            (value) => select('crop', value as CoverSettings['crop']),
+          ),
+          choice(
+            'Preview aspect ratio',
+            settings.aspectRatio,
+            ['book', 'square'],
+            (value) =>
+              select('aspectRatio', value as CoverSettings['aspectRatio']),
+          ),
+          range('Title position', settings.titlePosition, 8, 45, 1, (value) =>
+            select('titlePosition', value),
+          ),
+          range(
+            'Author position',
+            settings.authorPosition,
+            55,
+            94,
+            1,
+            (value) => select('authorPosition', value),
+          ),
+          range('Title size', settings.titleSize, 48, 180, 2, (value) =>
+            select('titleSize', value),
+          ),
+          range('Author size', settings.authorSize, 28, 96, 2, (value) =>
+            select('authorSize', value),
+          ),
+          range('Panel opacity', settings.panelOpacity, 0, 0.9, 0.05, (value) =>
+            select('panelOpacity', value),
+          ),
+          range('Image opacity', settings.imageOpacity, 0.2, 1, 0.05, (value) =>
+            select('imageOpacity', value),
+          ),
+          range('Safe margin', settings.margin, 4, 20, 1, (value) =>
+            select('margin', value),
+          ),
+        ])
+      : null,
+    settings.warning
+      ? m('p.cover-warning[role="status"]', settings.warning)
+      : null,
+    composition
+      ? m(
+          'div.cover-preview[aria-label="Live cover preview"]',
+          m.trust(createCoverSvg(composition)),
+        )
+      : null,
+    m(
+      'p.cover-title-page-note',
+      'A separate semantic XHTML title page is always included, even when the cover contains title text.',
+    ),
+  ]);
+}
+
+function choice(
+  label: string,
+  value: string,
+  values: readonly string[],
+  onchange: (value: string) => void,
+): m.Vnode {
+  return m('label', [
+    label,
+    m(
+      'select',
+      {
+        value,
+        onchange: (event: Event) =>
+          onchange((event.currentTarget as HTMLSelectElement).value),
+      },
+      values.map((option) => m('option', { value: option }, option)),
+    ),
+  ]);
+}
+
+function range(
+  label: string,
+  value: number,
+  min: number,
+  max: number,
+  step: number,
+  onchange: (value: number) => void,
+): m.Vnode {
+  return m('label', [
+    `${label}: ${value}`,
+    m('input', {
+      type: 'range',
+      value,
+      min,
+      max,
+      step,
+      oninput: (event: Event) =>
+        onchange(Number((event.currentTarget as HTMLInputElement).value)),
+    }),
   ]);
 }
 

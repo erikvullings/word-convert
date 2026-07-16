@@ -67,6 +67,7 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
             request.format === 'epub'
               ? await writeEpub(request.model, {
                   conversionDate: request.conversionDate,
+                  ...(request.cover ? { cover: request.cover } : {}),
                 })
               : new TextEncoder().encode(
                   request.format === 'html'
@@ -78,10 +79,7 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                       }),
                 );
           if (signal.cancelled) throw cancelledError();
-          const data = written.buffer.slice(
-            written.byteOffset,
-            written.byteOffset + written.byteLength,
-          );
+          const data = Uint8Array.from(written).buffer;
           send(
             {
               type: 'output',

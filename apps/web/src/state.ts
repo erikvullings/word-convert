@@ -5,6 +5,7 @@ import type {
   StyleMapping,
 } from '@wordconvert/document-model';
 import { STYLE_MAPPINGS } from './editors.ts';
+import { createCoverSettings, type CoverSettings } from './cover.ts';
 
 export const WORKFLOW_STAGES = [
   'Document',
@@ -46,6 +47,7 @@ export interface AppState {
   editorNotice?: string;
   review?: 'styles' | 'metadata';
   previewMode: PreviewMode;
+  cover: CoverSettings;
   preferences: Preferences;
 }
 
@@ -79,6 +81,7 @@ export function createInitialState(
     styleMappings: {},
     presetText: '',
     previewMode: 'rendered',
+    cover: createCoverSettings(),
     preferences,
   };
 }

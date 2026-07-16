@@ -1,6 +1,6 @@
 # 0012 Build cover generator and editor
 
-Status: open
+Status: done
 Priority: medium
 Owner: unassigned
 Agent: unassigned
@@ -27,3 +27,4 @@ Support uploaded, extracted, generated, and omitted EPUB covers with determinist
 ## Agent Notes
 
 - Next step: specify composition coordinates/options as serializable data before UI controls.
+- 2026-07-16 codex: Implemented a strictly typed, serializable cover model and deterministic browser-independent SVG generator for image-only, overlay, title-panel, separate-title-page, and typographic layouts; bounded raster input to 10 MiB/40 MP, sanitized SVG, added a browser-only PNG rasterizer adapter, and provided a conservative explainable title-text filename heuristic. Built the EPUB cover editor for omitted, uploaded, extracted, and generated covers with crop, alignment, positions, sizes, text colour, contrast panel/opacity, image opacity, safe margins, aspect ratio, and live preview. Integrated manifest-declared cover SVG/XHTML assets while retaining the semantic XHTML title page. Added 9 focused tests across generator, editor model/UI, and EPUB integration; verified those files, EPUBCheck, the full workspace suite, recursive typechecks, zero-warning lint, task-file formatting, production build, `git diff --check`, and local browser shell checks with no console warnings. The workspace-wide Prettier check remains blocked by pre-existing formatting in untouched `packages/docx-reader/src/analysis.ts`; every file changed for this task passes Prettier. Known limitation: the heuristic intentionally uses filenames only and warns only when at least two significant title words are available; rasterization is available for callers but EPUB output prefers the validated SVG cover path.

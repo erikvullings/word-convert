@@ -32,6 +32,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@wordconvert/cover-generator':
+        specifier: workspace:*
+        version: link:../../packages/cover-generator
       '@wordconvert/document-model':
         specifier: workspace:*
         version: link:../../packages/document-model
@@ -82,6 +85,9 @@ importers:
 
   packages/epub-writer:
     dependencies:
+      '@wordconvert/cover-generator':
+        specifier: workspace:*
+        version: link:../cover-generator
       '@wordconvert/document-model':
         specifier: workspace:*
         version: link:../document-model

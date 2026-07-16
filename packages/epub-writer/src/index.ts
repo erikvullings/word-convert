@@ -7,6 +7,10 @@ import type {
   WriterOptions,
 } from '@wordconvert/document-model';
 import { strToU8, zipSync, type Zippable } from 'fflate';
+import {
+  createCoverSvg,
+  type CoverComposition,
+} from '@wordconvert/cover-generator';
 
 export interface EpubWriterOptions extends WriterOptions {
   identifier?: string;
@@ -14,6 +18,7 @@ export interface EpubWriterOptions extends WriterOptions {
   language?: string;
   /** EPUB 3 package modification time, in UTC second precision. */
   modified?: string;
+  cover?: CoverComposition;
 }
 
 interface Chapter {
@@ -72,10 +77,14 @@ export async function writeEpub(
   files.mimetype = [strToU8('application/epub+zip'), { level: 0 }];
   files['META-INF/container.xml'] = strToU8(containerXml());
   files['EPUB/package.opf'] = strToU8(
-    packageXml(metadata, model, chapters, assets),
+    packageXml(metadata, model, chapters, assets, options.cover !== undefined),
   );
   files['EPUB/nav.xhtml'] = strToU8(navXhtml(metadata, headings));
   files['EPUB/styles.css'] = strToU8(STYLES);
+  if (options.cover) {
+    files['EPUB/cover.svg'] = strToU8(createCoverSvg(options.cover));
+    files['EPUB/cover.xhtml'] = strToU8(coverXhtml(metadata));
+  }
   files['EPUB/title.xhtml'] = strToU8(titleXhtml(metadata, model));
   for (const chapter of chapters) {
     files[`EPUB/${chapter.path}`] = strToU8(
@@ -211,6 +220,7 @@ function packageXml(
   model: DocumentModel,
   chapters: Chapter[],
   assets: AssetEntry[],
+  hasCover: boolean,
 ): string {
   const creators = model.metadata.authors
     .map(({ value }) => `<dc:creator>${escapeXml(value.name)}</dc:creator>`)
@@ -228,7 +238,20 @@ function packageXml(
     )
     .join('');
   const spine = chapters.map(({ id }) => `<itemref idref="${id}"/>`).join('');
-  return `<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${escapeAttribute(metadata.language)}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${escapeXml(metadata.identifier)}</dc:identifier><dc:title>${escapeXml(metadata.title)}</dc:title><dc:language>${escapeXml(metadata.language)}</dc:language>${creators}<meta property="dcterms:modified">${metadata.modified}</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="styles" href="styles.css" media-type="text/css"/><item id="title-page" href="title.xhtml" media-type="application/xhtml+xml"/>${chapterItems}${assetItems}</manifest><spine><itemref idref="title-page"/>${spine}</spine></package>`;
+  const coverItems = hasCover
+    ? '<item id="cover-image" href="cover.svg" media-type="image/svg+xml" properties="cover-image"/><item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>'
+    : '';
+  const coverSpine = hasCover ? '<itemref idref="cover-page"/>' : '';
+  return `<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${escapeAttribute(metadata.language)}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${escapeXml(metadata.identifier)}</dc:identifier><dc:title>${escapeXml(metadata.title)}</dc:title><dc:language>${escapeXml(metadata.language)}</dc:language>${creators}<meta property="dcterms:modified">${metadata.modified}</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="styles" href="styles.css" media-type="text/css"/>${coverItems}<item id="title-page" href="title.xhtml" media-type="application/xhtml+xml"/>${chapterItems}${assetItems}</manifest><spine>${coverSpine}<itemref idref="title-page"/>${spine}</spine></package>`;
+}
+
+function coverXhtml(metadata: PublicationMetadata): string {
+  return xhtmlDocument(
+    metadata,
+    `Cover for ${metadata.title}`,
+    `<section epub:type="cover"><img src="cover.svg" alt="Cover for ${escapeAttribute(metadata.title)}"/></section>`,
+    ' xmlns:epub="http://www.idpf.org/2007/ops"',
+  );
 }
 
 function navXhtml(

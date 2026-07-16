@@ -9,6 +9,7 @@ import {
   type DocumentModel,
 } from '@wordconvert/document-model';
 import { strFromU8, unzipSync } from 'fflate';
+import type { CoverComposition } from '@wordconvert/cover-generator';
 import { writeEpub } from './index.ts';
 
 const epubcheckAvailable = spawnSync('epubcheck', ['--version']).status === 0;
@@ -39,6 +40,45 @@ function model(blocks: DocumentModel['blocks'] = []): DocumentModel {
 }
 
 describe('writeEpub', () => {
+  it('declares a generated cover image and cover page while retaining the semantic title page', async () => {
+    const cover: CoverComposition = {
+      width: 1600,
+      height: 2560,
+      layout: 'typographic',
+      title: 'Covered book',
+      authors: ['Jane Smith'],
+      alignment: 'center',
+      titlePosition: 20,
+      authorPosition: 85,
+      titleSize: 112,
+      authorSize: 54,
+      textColor: 'light',
+      contrastPanel: 'none',
+      panelOpacity: 0.5,
+      imageOpacity: 1,
+      margin: 8,
+      crop: 'cover',
+    };
+    const files = unzipSync(
+      await writeEpub(model(), {
+        conversionDate: '2026-07-16',
+        identifier: 'urn:cover-test',
+        title: 'Covered book',
+        language: 'en',
+        cover,
+      }),
+    );
+    const opf = strFromU8(files['EPUB/package.opf'] ?? new Uint8Array());
+    expect(opf).toContain('properties="cover-image"');
+    expect(opf).toContain('<itemref idref="cover-page"/>');
+    expect(opf).toContain('<itemref idref="title-page"/>');
+    expect(strFromU8(files['EPUB/cover.xhtml'] ?? new Uint8Array())).toContain(
+      'alt="Cover for Covered book"',
+    );
+    expect(strFromU8(files['EPUB/cover.svg'] ?? new Uint8Array())).toContain(
+      '<svg',
+    );
+  });
   it('writes the smallest complete EPUB 3 publication with injectable metadata', async () => {
     const output = await writeEpub(model(), {
       conversionDate: '2026-07-15',

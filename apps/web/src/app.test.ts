@@ -40,6 +40,10 @@ describe('App', () => {
       addAuthor: () => undefined,
       updateAuthor: () => undefined,
       removeAuthor: () => undefined,
+      setCoverSource: () => undefined,
+      updateCover: () => undefined,
+      selectCoverFile: () => undefined,
+      selectExtractedCover: () => undefined,
     };
 
     const rendered = JSON.stringify(renderApp(controller));
@@ -110,6 +114,10 @@ describe('App', () => {
       addAuthor: () => undefined,
       updateAuthor: () => undefined,
       removeAuthor: () => undefined,
+      setCoverSource: () => undefined,
+      updateCover: () => undefined,
+      selectCoverFile: () => undefined,
+      selectExtractedCover: () => undefined,
     };
 
     state.stage = 1;
@@ -196,10 +204,36 @@ describe('App', () => {
 
     const epub = JSON.stringify(renderApp(controller));
     expect(epub).toContain('EPUB configuration');
-    expect(epub).toContain('Cover image');
+    expect(epub).toContain('Front cover');
     expect(epub).toContain('language must be a BCP 47 tag');
     expect(epub).toContain('identifier is missing');
     expect(epub).not.toContain('Create EPUB preview');
+  });
+
+  it('renders all cover controls and a live deterministic preview', () => {
+    const state = createInitialState('2026-07-16');
+    state.stage = 2;
+    state.preferences.outputFormat = 'epub';
+    state.cover.source = 'generated';
+    state.model = editorModel();
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+    for (const label of [
+      'Text alignment',
+      'Title position',
+      'Author position',
+      'Title size',
+      'Author size',
+      'Text colour',
+      'Contrast panel',
+      'Panel opacity',
+      'Image opacity',
+      'Safe margin',
+      'Image crop',
+      'Preview aspect ratio',
+      'Live cover preview',
+    ])
+      expect(rendered).toContain(label);
+    expect(rendered).toContain('semantic XHTML title page is always included');
   });
 
   it('renders EPUB file list as a selector with a right-side content viewer', () => {
@@ -292,6 +326,10 @@ function controllerFor(
     addAuthor: () => undefined,
     updateAuthor: () => undefined,
     removeAuthor: () => undefined,
+    setCoverSource: () => undefined,
+    updateCover: () => undefined,
+    selectCoverFile: () => undefined,
+    selectExtractedCover: () => undefined,
   };
 }
 

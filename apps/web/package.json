@@ -10,6 +10,7 @@
     "typecheck": "tsc --project tsconfig.json && tsc --project tsconfig.worker.json"
   },
   "dependencies": {
+    "@wordconvert/cover-generator": "workspace:*",
     "@wordconvert/document-model": "workspace:*",
     "@wordconvert/docx-reader": "workspace:*",
     "@wordconvert/epub-writer": "workspace:*",

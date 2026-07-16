@@ -22,6 +22,16 @@ import {
   type ThemePreference,
 } from './state.ts';
 import type { WorkerRequest, WorkerResponse } from './worker/protocol.ts';
+import {
+  coverComposition,
+  validateCoverFile,
+  type CoverSettings,
+  type CoverSource,
+} from './cover.ts';
+import {
+  prepareCoverImage,
+  titleTextWarning,
+} from '@wordconvert/cover-generator';
 
 export function createBrowserController(): AppController {
   const state: AppState = createInitialState(
@@ -37,6 +47,14 @@ export function createBrowserController(): AppController {
     if (!state.model) return;
     state.status = 'converting';
     state.operationId = operationId('convert');
+    const metadata = state.model.metadata;
+    const cover = coverComposition(state.cover, {
+      title: metadata.title?.value ?? 'Untitled',
+      ...(metadata.subtitle?.value
+        ? { subtitle: metadata.subtitle.value }
+        : {}),
+      authors: metadata.authors.map(({ value }) => value.name),
+    });
     worker.postMessage({
       type: 'convert',
       operationId: state.operationId,
@@ -44,6 +62,7 @@ export function createBrowserController(): AppController {
       filename: sourceFilename ?? state.selectedFilename ?? 'document.docx',
       format: state.preferences.outputFormat,
       conversionDate: state.conversionDate,
+      ...(cover ? { cover } : {}),
     } satisfies WorkerRequest);
   };
   const refreshEpubPreview = (): void => {
@@ -246,6 +265,81 @@ export function createBrowserController(): AppController {
       };
       refreshEpubPreview();
     },
+    setCoverSource(source: CoverSource) {
+      state.cover = { ...state.cover, source };
+      refreshEpubPreview();
+    },
+    updateCover(patch: Partial<CoverSettings>) {
+      state.cover = { ...state.cover, ...patch };
+      refreshEpubPreview();
+    },
+    selectCoverFile(file: File) {
+      const error = validateCoverFile(file);
+      if (error) {
+        state.cover = { ...state.cover, warning: error };
+        return;
+      }
+      void file.arrayBuffer().then((data) => {
+        try {
+          const image = prepareCoverImage({
+            mediaType: file.type as
+              'image/jpeg' | 'image/png' | 'image/webp' | 'image/svg+xml',
+            data: new Uint8Array(data),
+          });
+          const warning = titleTextWarning(
+            file.name,
+            state.model?.metadata.title?.value ?? '',
+          );
+          const next: CoverSettings = {
+            ...state.cover,
+            source: 'upload',
+            image,
+            imageName: file.name,
+            ...(warning ? { warning } : {}),
+          };
+          if (!warning) delete next.warning;
+          state.cover = next;
+          refreshEpubPreview();
+          m.redraw();
+        } catch (cause) {
+          state.cover = {
+            ...state.cover,
+            warning:
+              cause instanceof Error
+                ? cause.message
+                : 'The cover image is invalid.',
+          };
+        }
+      });
+    },
+    selectExtractedCover(assetId: string) {
+      const asset = state.model?.assets[assetId];
+      if (
+        !asset ||
+        !['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'].includes(
+          asset.mediaType,
+        )
+      )
+        return;
+      const warning = titleTextWarning(
+        assetId,
+        state.model?.metadata.title?.value ?? '',
+      );
+      const next: CoverSettings = {
+        ...state.cover,
+        source: 'extracted',
+        image: prepareCoverImage({
+          mediaType: asset.mediaType as
+            'image/jpeg' | 'image/png' | 'image/webp' | 'image/svg+xml',
+          data: asset.data,
+        }),
+        imageName: assetId,
+        ...(warning ? { warning } : {}),
+      };
+      if (!warning) delete next.warning;
+      state.cover = next;
+      refreshEpubPreview();
+    },
   };
 }
 
@@ -273,7 +367,8 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
   }
   if (response.type === 'output') {
     state.output = response;
-    state.selectedEpubFile = response.files?.[0];
+    if (response.files?.[0]) state.selectedEpubFile = response.files[0];
+    else delete state.selectedEpubFile;
     state.stage = 2;
     state.status = 'complete';
     delete state.progress;

@@ -35,3 +35,9 @@ Both modes are deterministic. ZIP asset names are generated rather than copied f
 `@wordconvert/epub-writer` exposes `writeEpub` for deterministic, reflowable EPUB 3 output. It writes the stored `mimetype` entry first, then the container, package metadata, navigation document, title page, H1-based XHTML chapters, local stylesheet, and generated passive image/font assets with a complete manifest and spine.
 
 Required identifier, title, language, and EPUB modification time can come from the document model or typed writer overrides. ZIP entries use a fixed 1980 timestamp and stable order for byte-identical output; the independently injected `dcterms:modified` value records the publication modification time required by EPUB 3. The writer omits remote links, active media, SVG, scripts, event handlers, iframes, unsafe URLs, and unsupported resources. Install `epubcheck` to enable the focused local conformance test.
+
+## EPUB covers
+
+`@wordconvert/cover-generator` creates deterministic, browser-independent SVG compositions for image-only, overlay, title-panel, separate-title-page, and generated typographic covers. It accepts bounded JPEG, PNG, WebP, and sanitized SVG inputs, uses only system-safe font families, and exposes rasterization through an injected adapter for browser-only compatibility paths.
+
+The EPUB editor can omit a cover, upload an image, choose a supported extracted document image, or generate a typographic cover. Its live preview exposes crop, alignment, title and author positions and sizes, text colour, contrast panel and opacity, image opacity, safe margins, and aspect ratio. A conservative filename heuristic explains when an image may already contain title text. Generated EPUBs declare the cover image and cover page while always retaining a separate semantic XHTML title page.

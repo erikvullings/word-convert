@@ -212,6 +212,45 @@ h1 {
   display: grid;
   gap: 0.4rem;
 }
+.cover-editor {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+}
+.cover-editor label,
+.cover-controls {
+  display: grid;
+  gap: 0.35rem;
+}
+.cover-controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.cover-controls label {
+  padding: 0.5rem;
+  border-radius: 0.4rem;
+  background: var(--panel);
+}
+.cover-preview {
+  width: min(100%, 18rem);
+  margin: 0 auto;
+  filter: drop-shadow(0 0.7rem 1rem rgb(0 0 0 / 18%));
+}
+.cover-preview svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.cover-warning {
+  padding: 0.7rem;
+  border-left: 0.25rem solid #c98200;
+  background: color-mix(in srgb, #c98200 12%, transparent);
+}
+.cover-title-page-note {
+  color: var(--muted);
+}
 /* .preview-mode, */
 .preview-actions {
   display: flex;
@@ -524,7 +563,8 @@ h1 {
     min-height: auto;
   }
   .metadata-editor,
-  .author-card {
+  .author-card,
+  .cover-controls {
     grid-template-columns: 1fr;
   }
   .style-review-card {
