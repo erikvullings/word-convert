@@ -467,13 +467,22 @@ h1 {
   border-radius: 0.35rem;
   overflow: auto;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+.epub-file-viewer > .document-preview,
+.epub-file-viewer > .markdown-source,
+.epub-file-viewer > p {
+  margin: 0;
 }
 .image-preview {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.epub-file-viewer .image-preview {
+  width: 100%;
+  min-height: 100%;
 }
 .output-options label {
   display: flex;
@@ -699,4 +708,10 @@ h1 {
   flex-direction: column;
   overflow: auto;
   align-self: flex-start;
+}
+
+.epub-file-viewer .markdown-source {
+  max-height: 100%;
+  flex: 1;
+  align-self: stretch;
 }
