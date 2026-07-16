@@ -175,7 +175,7 @@ export function createBrowserController(): AppController {
           createAnchor: () => document.createElement('a'),
         },
         () => {
-          delete state.output;
+          if (state.preferences.outputFormat !== 'epub') delete state.output;
           delete state.markdownEdit;
         },
       );
