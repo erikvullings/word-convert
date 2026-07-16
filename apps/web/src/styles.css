@@ -105,7 +105,7 @@ h1 {
     700 clamp(2.3rem, 7vw, 5rem)/0.95 Georgia,
     serif;
 }
-.privacy-note {
+.information-note {
   width: min(100%, 76rem);
   margin: 1.5rem auto;
   color: var(--muted);

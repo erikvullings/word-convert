@@ -118,7 +118,7 @@ export function renderApp(
       themeToggle(controller),
     ]),
     m(
-      'p.privacy-note',
+      'p.information-note',
       'All processing stays on this device. Your document is never uploaded or stored.',
     ),
     m(
