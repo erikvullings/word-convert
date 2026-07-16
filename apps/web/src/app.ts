@@ -121,6 +121,10 @@ export function renderApp(
       'p.privacy-note',
       'All processing stays on this device. Your document is never uploaded or stored.',
     ),
+    m(
+      'p.format-note',
+      'Convert Word documents to Markdown, HTML, or EPUB 3 directly in the browser.',
+    ),
     m('main.workspace', [
       m('section.panel', [
         m('h2', WORKFLOW_STAGES[controller.state.stage] ?? WORKFLOW_STAGES[0]),

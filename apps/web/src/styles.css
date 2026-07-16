@@ -52,6 +52,7 @@ textarea {
   padding: clamp(1rem, 3vw, 2.5rem);
   background: var(--page);
   color: var(--ink);
+  white-space: normal;
 }
 .app-header,
 .workspace {
@@ -108,6 +109,14 @@ h1 {
   width: min(100%, 76rem);
   margin: 1.5rem auto;
   color: var(--muted);
+  white-space: normal;
+}
+.format-note {
+  width: min(100%, 76rem);
+  margin: -0.8rem auto 1.5rem;
+  color: var(--ink);
+  font-size: 1.02rem;
+  white-space: normal;
 }
 .workspace {
   min-width: 0;
