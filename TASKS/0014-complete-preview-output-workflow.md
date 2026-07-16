@@ -1,6 +1,6 @@
 # 0014 Complete preview and output workflow
 
-Status: open
+Status: done
 Priority: high
 Owner: unassigned
 Agent: unassigned
@@ -27,3 +27,4 @@ Complete configuration, previews, warnings, conversion, and downloads for every 
 ## Agent Notes
 
 - Next step: enumerate output option combinations and test each through the worker boundary.
+- 2026-07-16 codex: Completed typed Markdown, HTML, EPUB, formula, asset, and cover settings with standalone/single-file and generated-folder ZIP modes; added sanitized HTML/Markdown and EPUB package previews, propagated navigable warnings, preserved progress/cancellation and reruns across editor/output changes, and released object URLs and large output buffers after download. Added 16 task-specific tests across output defaults/naming, both ZIP modes through the worker boundary, packaged previews, restrictive remote/active-content policy, warning destinations, and download cleanup; verified their exact files, the full 118-test workspace suite, every strict TypeScript configuration, zero-warning lint, production build, `git diff --check`, and the local browser shell with no console errors. No known limitations within this task's scope.

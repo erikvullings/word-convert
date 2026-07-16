@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createWorkerRuntime } from './runtime.ts';
 import type { WorkerResponse } from './protocol.ts';
+import { unzipSync } from 'fflate';
 
 const fixturePath = fileURLToPath(
   new URL(
@@ -109,6 +110,42 @@ describe('worker runtime', () => {
       if (!output || output.type !== 'output') throw new Error('No output');
       expect(new TextDecoder().decode(output.data)).toContain(contentStart);
       expect(runtime.activeOperationCount()).toBe(0);
+    },
+  );
+
+  it.each([
+    ['html', 'zip', 'fixture-html.zip', 'document.html'],
+    ['markdown', 'zip', 'fixture-markdown.zip', 'document.md'],
+  ] as const)(
+    'creates the requested %s package mode with generated assets',
+    async (format, mode, filename, primaryFile) => {
+      const sent: WorkerResponse[] = [];
+      const runtime = createWorkerRuntime((message) => sent.push(message));
+      await runtime.handle({
+        type: 'analyse',
+        operationId: `analyse-${format}-zip`,
+        input: await fixtureBuffer(),
+        filename: 'fixture.docx',
+        conversionDate: '2026-07-15',
+      });
+      const analysed = sent.find((message) => message.type === 'analysed');
+      if (!analysed || analysed.type !== 'analysed')
+        throw new Error('No model');
+      await runtime.handle({
+        type: 'convert',
+        operationId: `convert-${format}-zip`,
+        model: analysed.model,
+        filename: 'fixture.docx',
+        format,
+        mode,
+        conversionDate: '2026-07-15',
+      });
+      const output = sent.at(-1);
+      if (!output || output.type !== 'output') throw new Error('No output');
+      expect(output.filename).toBe(filename);
+      expect(Object.keys(unzipSync(new Uint8Array(output.data)))).toContain(
+        primaryFile,
+      );
     },
   );
 

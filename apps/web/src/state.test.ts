@@ -39,6 +39,10 @@ describe('SPA state', () => {
       outputFormat: 'markdown' as const,
       mappingPresets: { editorial: { Heading1: 'heading1' as const } },
       formulaMode: 'katex' as const,
+      htmlMode: 'standalone' as const,
+      markdownMode: 'single' as const,
+      assetMode: 'embedded' as const,
+      epubIncludeCover: true,
     };
 
     persistPreferences(storage, preferences);
@@ -54,6 +58,10 @@ describe('SPA state', () => {
       outputFormat: 'html',
       mappingPresets: { unsafe: { Heading1: 'heading1' } },
       formulaMode: 'mathml',
+      htmlMode: 'standalone',
+      markdownMode: 'single',
+      assetMode: 'embedded',
+      epubIncludeCover: true,
     });
     const key = [...storage.values.keys()][0];
     if (!key) throw new Error('No preference key');

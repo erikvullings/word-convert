@@ -6,10 +6,38 @@ import {
 } from '@wordconvert/document-model';
 import { strToU8, zipSync } from 'fflate';
 
-import { extractHtmlBody, renderApp, type AppController } from './app.ts';
+import {
+  extractHtmlBody,
+  outputPreviewSource,
+  renderApp,
+  type AppController,
+} from './app.ts';
 import { createInitialState } from './state.ts';
 
 describe('App', () => {
+  it.each([
+    ['html', 'document.html', '<h1>Packaged HTML</h1>'],
+    ['markdown', 'document.md', '# Packaged Markdown'],
+  ] as const)(
+    'previews the primary document inside a %s ZIP',
+    (format, path, source) => {
+      const data = zipSync({ [path]: strToU8(source) });
+      expect(
+        outputPreviewSource(
+          {
+            filename: `report-${format}.zip`,
+            mediaType: 'application/zip',
+            data: data.buffer.slice(
+              data.byteOffset,
+              data.byteOffset + data.byteLength,
+            ),
+          },
+          format,
+        ),
+      ).toBe(source);
+    },
+  );
+
   it('isolates standalone HTML body content from document-level theme styles', () => {
     expect(
       extractHtmlBody(

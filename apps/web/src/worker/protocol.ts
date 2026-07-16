@@ -1,11 +1,13 @@
 import type {
   ConversionError,
   ConversionProgress,
+  ConversionWarning,
   DocumentModel,
   StyleMapping,
 } from '@wordconvert/document-model';
 import type { CoverComposition } from '@wordconvert/cover-generator';
 import type { MathOutputMode } from '@wordconvert/math-converter';
+import type { ConversionMode } from '../output.ts';
 
 export type WorkerRequest =
   | {
@@ -22,6 +24,7 @@ export type WorkerRequest =
       model: DocumentModel;
       filename: string;
       format: 'html' | 'markdown' | 'epub';
+      mode?: ConversionMode;
       conversionDate: string;
       cover?: CoverComposition;
       formulaMode?: MathOutputMode;
@@ -38,6 +41,7 @@ export type WorkerResponse =
       mediaType: string;
       data: ArrayBuffer;
       files?: string[];
+      warnings?: ConversionWarning[];
     }
   | { type: 'error'; operationId: string; error: ConversionError };
 

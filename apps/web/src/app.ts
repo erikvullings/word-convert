@@ -19,6 +19,7 @@ import {
   DOCX_MEDIA_TYPE,
   WORKFLOW_STAGES,
   type AppState,
+  type DownloadOutput,
   type PreviewMode,
   type ThemePreference,
 } from './state.ts';
@@ -30,6 +31,8 @@ import {
 } from './cover.ts';
 import { createCoverSvg } from '@wordconvert/cover-generator';
 import type { MathOutputMode } from '@wordconvert/math-converter';
+import { previewSanitizeConfig, warningDestination } from './preview/index.ts';
+import type { HtmlOutputMode, MarkdownOutputMode } from './output.ts';
 
 const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
   id: mapping,
@@ -49,6 +52,9 @@ export interface AppController {
   setTheme(theme: ThemePreference): void;
   setOutputFormat(format: 'html' | 'markdown' | 'epub'): void;
   setFormulaMode?(mode: MathOutputMode): void;
+  setHtmlMode?(mode: HtmlOutputMode): void;
+  setMarkdownMode?(mode: MarkdownOutputMode): void;
+  setEpubIncludeCover?(include: boolean): void;
   setStyleMapping(styleId: string, mapping: StyleMapping): void;
   acceptHighConfidence(): void;
   rerunAnalysis(): void;
@@ -162,7 +168,7 @@ function outputChooser(controller: AppController): m.Vnode {
     return m('p', 'Inspecting the document in the background…');
   return m('div.output-chooser', [
     m('p', 'Analysis is complete. Choose how you want to use the document.'),
-    m('fieldset.formula-options', [
+    m('fieldset.formula-options#formula-output-settings', [
       m('legend', 'Formula output'),
       ...(['mathml', 'katex', 'source', 'disabled'] as const).map((mode) =>
         m('label', [
@@ -182,6 +188,45 @@ function outputChooser(controller: AppController): m.Vnode {
                 : 'Disabled',
         ]),
       ),
+    ]),
+    m('fieldset.output-options#asset-output-settings', [
+      m('legend', 'Markdown and HTML assets'),
+      m('label', [
+        m('input', {
+          type: 'radio',
+          name: 'markdown-mode',
+          checked: state.preferences.markdownMode === 'single',
+          onchange: () => controller.setMarkdownMode?.('single'),
+        }),
+        'Single Markdown file with embedded images',
+      ]),
+      m('label', [
+        m('input', {
+          type: 'radio',
+          name: 'markdown-mode',
+          checked: state.preferences.markdownMode === 'zip',
+          onchange: () => controller.setMarkdownMode?.('zip'),
+        }),
+        'Markdown ZIP with generated images folder',
+      ]),
+      m('label', [
+        m('input', {
+          type: 'radio',
+          name: 'html-mode',
+          checked: state.preferences.htmlMode === 'standalone',
+          onchange: () => controller.setHtmlMode?.('standalone'),
+        }),
+        'Standalone HTML with embedded assets',
+      ]),
+      m('label', [
+        m('input', {
+          type: 'radio',
+          name: 'html-mode',
+          checked: state.preferences.htmlMode === 'zip',
+          onchange: () => controller.setHtmlMode?.('zip'),
+        }),
+        'HTML ZIP with generated image and font folders',
+      ]),
     ]),
     m(
       'div.format-cards',
@@ -247,6 +292,17 @@ function epubConfiguration(controller: AppController): m.Vnode {
       'The title, language, identifier, and authors come from the analysed document metadata.',
     ),
     coverEditor(controller),
+    m('label', [
+      m('input', {
+        type: 'checkbox',
+        checked: controller.state.preferences.epubIncludeCover,
+        onchange: (event: Event) =>
+          controller.setEpubIncludeCover?.(
+            (event.currentTarget as HTMLInputElement).checked,
+          ),
+      }),
+      'Include the configured EPUB cover',
+    ]),
     issues.length
       ? m('p.error[role="alert"]', [
           `Update required EPUB metadata: ${issues.join('; ')}. `,
@@ -501,6 +557,7 @@ function preview(controller: AppController): m.Vnode {
   if (state.preferences.outputFormat === 'epub')
     return m('div.preview-panel', [
       previewActions(controller),
+      warningPanel(controller),
       epubConfiguration(controller),
       epubLayoutPreview(controller),
       previewActions(controller),
@@ -521,12 +578,16 @@ function preview(controller: AppController): m.Vnode {
         },
       }),
     ]);
-  const source = new TextDecoder().decode(state.output.data);
+  const source = outputPreviewSource(
+    state.output,
+    state.preferences.outputFormat,
+  );
   const isMarkdown = state.preferences.outputFormat === 'markdown';
   const rendered = isMarkdown ? renderMarkdown(source) : source;
   const previewMarkup = isMarkdown ? rendered : extractHtmlBody(rendered);
   return m('div.preview-panel', [
     previewActions(controller),
+    warningPanel(controller),
     isMarkdown
       ? m(
           'div.preview-mode',
@@ -547,15 +608,21 @@ function preview(controller: AppController): m.Vnode {
       ? m('pre.markdown-source', source)
       : m(
           'article.document-preview',
-          m.trust(
-            DOMPurify.sanitize(previewMarkup, {
-              FORBID_TAGS: ['style', 'link', 'meta', 'title'],
-              FORBID_ATTR: ['style'],
-            }),
-          ),
+          m.trust(DOMPurify.sanitize(previewMarkup, previewSanitizeConfig())),
         ),
     previewActions(controller),
   ]);
+}
+
+export function outputPreviewSource(
+  output: DownloadOutput,
+  format: 'html' | 'markdown' | 'epub',
+): string {
+  if (output.mediaType !== 'application/zip')
+    return new TextDecoder().decode(output.data);
+  const archive = unzipSync(new Uint8Array(output.data));
+  const primary = archive[format === 'html' ? 'document.html' : 'document.md'];
+  return primary ? strFromU8(primary) : '';
 }
 
 const epubFileOrder = (a: string, b: string): number => {
@@ -648,12 +715,7 @@ function renderEpubFilePreview(
     html = html.replace(/<nav\b/gi, '<div').replace(/<\/nav\s*>/gi, '</div>');
     return m(
       'article.document-preview',
-      m.trust(
-        DOMPurify.sanitize(html, {
-          FORBID_TAGS: ['style', 'link', 'meta', 'title'],
-          FORBID_ATTR: ['style'],
-        }),
-      ),
+      m.trust(DOMPurify.sanitize(html, previewSanitizeConfig())),
     );
   }
   if (
@@ -742,6 +804,57 @@ function previewActions(controller: AppController): m.Vnode {
       'Choose another format',
     ),
   ]);
+}
+
+function warningPanel(controller: AppController): m.Vnode | null {
+  const warnings =
+    controller.state.output?.warnings ?? controller.state.model?.warnings ?? [];
+  if (warnings.length === 0) return null;
+  return m('section.warning-panel[aria-label="Conversion warnings"]', [
+    m('h3', `Warnings (${warnings.length})`),
+    m(
+      'ul',
+      warnings.map((warning) =>
+        m('li', [
+          m('span', warning.message),
+          ' ',
+          m(
+            'button.link-button',
+            {
+              type: 'button',
+              onclick: () =>
+                navigateToWarning(
+                  controller.state,
+                  warningDestination(warning),
+                ),
+            },
+            'Review setting',
+          ),
+        ]),
+      ),
+    ),
+  ]);
+}
+
+function navigateToWarning(
+  state: AppState,
+  destination: ReturnType<typeof warningDestination>,
+): void {
+  if (destination === 'styles' || destination === 'metadata') {
+    openReview(state, destination);
+    return;
+  }
+  delete state.review;
+  state.stage = 1;
+  queueMicrotask(() =>
+    document
+      .getElementById(
+        destination === 'formula'
+          ? 'formula-output-settings'
+          : 'asset-output-settings',
+      )
+      ?.focus(),
+  );
 }
 
 function downloadPanel(controller: AppController): m.Vnode {

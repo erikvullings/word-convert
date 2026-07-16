@@ -32,6 +32,7 @@ import {
   prepareCoverImage,
   titleTextWarning,
 } from '@wordconvert/cover-generator';
+import { deliverDownload } from './download/index.ts';
 
 export function createBrowserController(): AppController {
   const state: AppState = createInitialState(
@@ -63,7 +64,13 @@ export function createBrowserController(): AppController {
       format: state.preferences.outputFormat,
       conversionDate: state.conversionDate,
       formulaMode: state.preferences.formulaMode,
-      ...(cover ? { cover } : {}),
+      mode:
+        state.preferences.outputFormat === 'html'
+          ? state.preferences.htmlMode
+          : state.preferences.outputFormat === 'markdown'
+            ? state.preferences.markdownMode
+            : 'epub',
+      ...(cover && state.preferences.epubIncludeCover ? { cover } : {}),
     } satisfies WorkerRequest);
   };
   const refreshEpubPreview = (): void => {
@@ -148,14 +155,17 @@ export function createBrowserController(): AppController {
     },
     download() {
       if (!state.output) return;
-      const url = URL.createObjectURL(
-        new Blob([state.output.data], { type: state.output.mediaType }),
+      deliverDownload(
+        state.output,
+        {
+          createObjectURL: (blob) => URL.createObjectURL(blob),
+          revokeObjectURL: (url) => URL.revokeObjectURL(url),
+          createAnchor: () => document.createElement('a'),
+        },
+        () => {
+          delete state.output;
+        },
       );
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = state.output.filename;
-      anchor.click();
-      URL.revokeObjectURL(url);
     },
     setTheme(theme: ThemePreference) {
       state.preferences.theme = theme;
@@ -177,6 +187,23 @@ export function createBrowserController(): AppController {
       persistPreferences(localStorage, state.preferences);
       delete state.output;
       if (state.stage === 2) requestConvert();
+    },
+    setHtmlMode(mode) {
+      state.preferences.htmlMode = mode;
+      state.preferences.assetMode = mode === 'zip' ? 'folder' : 'embedded';
+      persistPreferences(localStorage, state.preferences);
+      if (state.stage === 2) requestConvert();
+    },
+    setMarkdownMode(mode) {
+      state.preferences.markdownMode = mode;
+      state.preferences.assetMode = mode === 'zip' ? 'folder' : 'embedded';
+      persistPreferences(localStorage, state.preferences);
+      if (state.stage === 2) requestConvert();
+    },
+    setEpubIncludeCover(include) {
+      state.preferences.epubIncludeCover = include;
+      persistPreferences(localStorage, state.preferences);
+      refreshEpubPreview();
     },
     setStyleMapping(styleId: string, mapping: StyleMapping) {
       state.styleMappings = { ...state.styleMappings, [styleId]: mapping };

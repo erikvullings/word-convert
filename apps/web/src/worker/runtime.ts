@@ -4,8 +4,8 @@ import {
   type ConversionError,
 } from '@wordconvert/document-model';
 import { DocxReadError, secureDocxReader } from '@wordconvert/docx-reader';
-import { writeHtml } from '@wordconvert/html-writer';
-import { writeMarkdown } from '@wordconvert/markdown-writer';
+import { writeHtml, writeHtmlZip } from '@wordconvert/html-writer';
+import { writeMarkdown, writeMarkdownZip } from '@wordconvert/markdown-writer';
 import { writeEpub } from '@wordconvert/epub-writer';
 import { unzipSync } from 'fflate';
 
@@ -63,6 +63,7 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
             operationId: request.operationId,
             progress: { phase: 'write', completed: 0, total: 1 },
           });
+          const warnings = [...request.model.warnings];
           const written =
             request.format === 'epub'
               ? await writeEpub(request.model, {
@@ -70,31 +71,50 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                   formulaMode: request.formulaMode ?? 'mathml',
                   ...(request.cover ? { cover: request.cover } : {}),
                 })
-              : new TextEncoder().encode(
-                  request.format === 'html'
-                    ? writeHtml(request.model, {
-                        conversionDate: request.conversionDate,
-                        formulaMode: request.formulaMode ?? 'mathml',
-                      })
-                    : writeMarkdown(request.model, {
-                        conversionDate: request.conversionDate,
-                        formulaMode: request.formulaMode ?? 'mathml',
-                      }),
-                );
+              : request.format === 'html' && request.mode === 'zip'
+                ? await writeHtmlZip(request.model, {
+                    conversionDate: request.conversionDate,
+                    formulaMode: request.formulaMode ?? 'mathml',
+                  })
+                : request.format === 'markdown' && request.mode === 'zip'
+                  ? await writeMarkdownZip(request.model, {
+                      conversionDate: request.conversionDate,
+                      formulaMode: request.formulaMode ?? 'mathml',
+                      onWarning: (warning) => warnings.push(warning),
+                    })
+                  : new TextEncoder().encode(
+                      request.format === 'html'
+                        ? writeHtml(request.model, {
+                            conversionDate: request.conversionDate,
+                            formulaMode: request.formulaMode ?? 'mathml',
+                          })
+                        : writeMarkdown(request.model, {
+                            conversionDate: request.conversionDate,
+                            formulaMode: request.formulaMode ?? 'mathml',
+                            onWarning: (warning) => warnings.push(warning),
+                          }),
+                    );
           if (signal.cancelled) throw cancelledError();
           const data = Uint8Array.from(written).buffer;
           send(
             {
               type: 'output',
               operationId: request.operationId,
-              filename: outputFilename(request.filename, request.format),
+              filename: outputFilename(
+                request.filename,
+                request.format,
+                request.mode,
+              ),
               mediaType:
-                request.format === 'html'
-                  ? 'text/html;charset=utf-8'
-                  : request.format === 'markdown'
-                    ? 'text/markdown;charset=utf-8'
-                    : 'application/epub+zip',
+                request.mode === 'zip'
+                  ? 'application/zip'
+                  : request.format === 'html'
+                    ? 'text/html;charset=utf-8'
+                    : request.format === 'markdown'
+                      ? 'text/markdown;charset=utf-8'
+                      : 'application/epub+zip',
               data,
+              warnings,
               ...(request.format === 'epub'
                 ? { files: Object.keys(unzipSync(written)).sort() }
                 : {}),
@@ -118,9 +138,16 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
 function outputFilename(
   sourceFilename: string,
   format: 'html' | 'markdown' | 'epub',
+  mode?: import('../output.ts').ConversionMode,
 ): string {
   const extension =
-    format === 'html' ? '.html' : format === 'markdown' ? '.md' : '.epub';
+    mode === 'zip'
+      ? `-${format}.zip`
+      : format === 'html'
+        ? '.html'
+        : format === 'markdown'
+          ? '.md'
+          : '.epub';
   const baseName = sourceFilename.split(/[\\/]/).at(-1)?.trim() ?? '';
   const stem = baseName.replace(/\.[^./\\]+$/, '').trim();
   return `${stem || 'document'}${extension}`;

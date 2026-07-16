@@ -7,6 +7,12 @@ import type {
 import { STYLE_MAPPINGS } from './editors.ts';
 import { createCoverSettings, type CoverSettings } from './cover.ts';
 import type { MathOutputMode } from '@wordconvert/math-converter';
+import type { ConversionWarning } from '@wordconvert/document-model';
+import type {
+  AssetOutputMode,
+  HtmlOutputMode,
+  MarkdownOutputMode,
+} from './output.ts';
 
 export const WORKFLOW_STAGES = [
   'Document',
@@ -24,6 +30,10 @@ export interface Preferences {
   outputFormat: OutputFormat;
   mappingPresets: Record<string, Record<string, StyleMapping>>;
   formulaMode: MathOutputMode;
+  htmlMode: HtmlOutputMode;
+  markdownMode: MarkdownOutputMode;
+  assetMode: AssetOutputMode;
+  epubIncludeCover: boolean;
 }
 
 export interface DownloadOutput {
@@ -31,6 +41,7 @@ export interface DownloadOutput {
   mediaType: string;
   data: ArrayBuffer;
   files?: string[];
+  warnings?: ConversionWarning[];
 }
 
 export interface AppState {
@@ -71,6 +82,10 @@ const DEFAULT_PREFERENCES: Preferences = {
   outputFormat: 'html',
   mappingPresets: {},
   formulaMode: 'mathml',
+  htmlMode: 'standalone',
+  markdownMode: 'single',
+  assetMode: 'embedded',
+  epubIncludeCover: true,
 };
 
 export function createInitialState(
@@ -114,12 +129,26 @@ export function loadPreferences(storage: PreferenceStorage): Preferences {
       !['html', 'markdown', 'epub'].includes(value.outputFormat ?? '') ||
       !isMappingPresets(value.mappingPresets) ||
       (value.formulaMode !== undefined &&
-        !['source', 'mathml', 'katex', 'disabled'].includes(value.formulaMode))
+        !['source', 'mathml', 'katex', 'disabled'].includes(
+          value.formulaMode,
+        )) ||
+      (value.htmlMode !== undefined &&
+        !['standalone', 'zip'].includes(value.htmlMode)) ||
+      (value.markdownMode !== undefined &&
+        !['single', 'zip'].includes(value.markdownMode)) ||
+      (value.assetMode !== undefined &&
+        !['embedded', 'folder'].includes(value.assetMode)) ||
+      (value.epubIncludeCover !== undefined &&
+        typeof value.epubIncludeCover !== 'boolean')
     )
       return DEFAULT_PREFERENCES;
     return {
       ...value,
       formulaMode: value.formulaMode ?? 'mathml',
+      htmlMode: value.htmlMode ?? 'standalone',
+      markdownMode: value.markdownMode ?? 'single',
+      assetMode: value.assetMode ?? 'embedded',
+      epubIncludeCover: value.epubIncludeCover ?? true,
     } as Preferences;
   } catch {
     return DEFAULT_PREFERENCES;
