@@ -270,7 +270,7 @@ function splitLongWord(
 function estimateTextWidth(value: string, fontSize: number): number {
   const units = Array.from(value).reduce((sum, char) => {
     if (char === ' ') return sum + 0.34;
-    if (/[ilI1\.,:;'!]/.test(char)) return sum + 0.28;
+    if (/[ilI1.,:;'!]/.test(char)) return sum + 0.28;
     if (/[MW@%#&]/.test(char)) return sum + 0.9;
     return sum + 0.62;
   }, 0);
