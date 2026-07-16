@@ -14,7 +14,17 @@ function serviceWorkerSource(
   bundle: Record<string, { fileName: string }>,
 ): string {
   const files = Object.values(bundle).map((entry) => `./${entry.fileName}`);
-  files.push('./', './index.html', './manifest.webmanifest', './icon.svg');
+  files.push(
+    './',
+    './index.html',
+    './manifest.webmanifest',
+    './wc.svg',
+    './favicon.ico',
+    './favicon-96x96.png',
+    './apple-touch-icon.png',
+    './web-app-manifest-192x192.png',
+    './web-app-manifest-512x512.png',
+  );
 
   return `const CACHE_NAME = 'wordconvert-${Date.now()}';
 const PRECACHE_URLS = ${JSON.stringify(files.sort())};
