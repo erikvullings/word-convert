@@ -262,37 +262,34 @@ h1 {
   transform: rotate(180deg);
 }
 .epub-config {
-  display: grid;
-  gap: 0.8rem;
+  display: block;
   margin-top: 1.5rem;
   padding: 1rem;
   border: 1px solid var(--line);
   border-radius: 0.7rem;
+}
+.epub-config > * + * {
+  margin-top: 0.8rem;
 }
 .epub-config label {
   display: grid;
   gap: 0.4rem;
 }
 .cover-editor {
-  display: grid;
-  gap: 0.8rem;
+  display: block;
   margin-top: 1rem;
   padding: 1rem;
   border: 1px solid var(--line);
   border-radius: 0.7rem;
 }
-.cover-editor label,
-.cover-controls {
+.cover-editor label {
   display: grid;
   gap: 0.35rem;
 }
+.cover-editor .row,
+.epub-config .row,
 .cover-controls {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-.cover-controls label {
-  padding: 0.5rem;
-  border-radius: 0.4rem;
-  background: var(--panel);
+  margin-bottom: 0;
 }
 .cover-preview {
   width: min(100%, 18rem);
@@ -362,7 +359,9 @@ h1 {
 }
 .document-preview h1 {
   margin: 0 0 0.7em;
-  font: 700 clamp(1.7rem, 4vw, 2.4rem) / 1.2 Georgia, serif;
+  font:
+    700 clamp(1.7rem, 4vw, 2.4rem) / 1.2 Georgia,
+    serif;
 }
 .document-preview :is(p, ul, ol, blockquote, figure, table, pre) {
   margin-block: 0 1.25em;
@@ -632,8 +631,7 @@ h1 {
     min-height: auto;
   }
   .metadata-editor,
-  .author-card,
-  .cover-controls {
+  .author-card {
     grid-template-columns: 1fr;
   }
   .style-review-card {

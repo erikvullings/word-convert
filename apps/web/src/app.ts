@@ -174,67 +174,60 @@ function outputChooser(controller: AppController): m.Vnode {
     m(
       'div.format-cards',
       (['markdown', 'html', 'epub'] as const).map((format) =>
-        m(
-          `article.format-card.format-card--${format}`,
-          [
-            m(
-              'strong',
-              format === 'html'
-                ? 'HTML'
-                : format === 'markdown'
-                  ? 'Markdown'
-                  : 'EPUB 3',
-            ),
-            m(
-              'span',
-              format === 'html'
-                ? 'Preview directly in the browser'
-                : format === 'markdown'
-                  ? 'Rendered preview and Markdown source'
-                  : 'Configure and inspect the publication package',
-            ),
-            format === 'markdown'
+        m(`article.format-card.format-card--${format}`, [
+          m(
+            'strong',
+            format === 'html'
+              ? 'HTML'
+              : format === 'markdown'
+                ? 'Markdown'
+                : 'EPUB 3',
+          ),
+          m(
+            'span',
+            format === 'html'
+              ? 'Preview directly in the browser'
+              : format === 'markdown'
+                ? 'Rendered preview and Markdown source'
+                : 'Configure and inspect the publication package',
+          ),
+          format === 'markdown'
+            ? packagingOptions(
+                'Markdown packaging',
+                state.preferences.markdownMode,
+                [
+                  ['single', 'Single file'],
+                  ['zip', 'ZIP with images folder'],
+                ],
+                (value) =>
+                  controller.setMarkdownMode?.(value as MarkdownOutputMode),
+              )
+            : format === 'html'
               ? packagingOptions(
-                  'Markdown packaging',
-                  state.preferences.markdownMode,
+                  'HTML packaging',
+                  state.preferences.htmlMode,
                   [
-                    ['single', 'Single file'],
-                    ['zip', 'ZIP with images folder'],
+                    ['standalone', 'Standalone file'],
+                    ['zip', 'ZIP with asset folders'],
                   ],
-                  (value) =>
-                    controller.setMarkdownMode?.(
-                      value as MarkdownOutputMode,
-                    ),
+                  (value) => controller.setHtmlMode?.(value as HtmlOutputMode),
                 )
-              : format === 'html'
-                ? packagingOptions(
-                    'HTML packaging',
-                    state.preferences.htmlMode,
-                    [
-                      ['standalone', 'Standalone file'],
-                      ['zip', 'ZIP with asset folders'],
-                    ],
-                    (value) =>
-                      controller.setHtmlMode?.(value as HtmlOutputMode),
-                  )
               : epubPackaging(),
-            format === 'epub' ? epubCoverSource(controller) : null,
-            hasFormulas
-              ? formulaOptions(
-                  controller,
-                  format === 'markdown' ? 'formula-output-settings' : undefined,
-                )
-              : null,
-            m(
-              'button.format-card-action',
-              {
-                type: 'button',
-                onclick: () => controller.setOutputFormat(format),
-              },
-              `Convert to ${format === 'epub' ? 'EPUB 3' : format === 'html' ? 'HTML' : 'Markdown'}`,
-            ),
-          ],
-        ),
+          hasFormulas
+            ? formulaOptions(
+                controller,
+                format === 'markdown' ? 'formula-output-settings' : undefined,
+              )
+            : null,
+          m(
+            'button.format-card-action',
+            {
+              type: 'button',
+              onclick: () => controller.setOutputFormat(format),
+            },
+            `Convert to ${format === 'epub' ? 'EPUB 3' : format === 'html' ? 'HTML' : 'Markdown'}`,
+          ),
+        ]),
       ),
     ),
     m('p.secondary-actions', [
@@ -304,19 +297,6 @@ function epubPackaging(): m.Vnode {
   ]);
 }
 
-function epubCoverSource(controller: AppController): m.Vnode {
-  const images = Object.values(controller.state.model?.assets ?? {}).filter(
-    (asset) =>
-      ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'].includes(
-        asset.mediaType,
-      ),
-  );
-  return m('label.format-card-options', [
-    m('span.form-group-label', 'Cover source'),
-    coverSourceSelect(controller, images.length > 0),
-  ]);
-}
-
 function epubConfiguration(controller: AppController): m.Vnode {
   const metadata = controller.state.model?.metadata;
   const issues = epubMetadataIssues(metadata);
@@ -326,7 +306,7 @@ function epubConfiguration(controller: AppController): m.Vnode {
       'p',
       'The title, language, identifier, and authors come from the analysed document metadata.',
     ),
-    coverEditor(controller),
+    m('.row.epub-config-grid', [coverEditor(controller)]),
     m('label', [
       m('input', {
         type: 'checkbox',
@@ -377,123 +357,207 @@ function coverEditor(controller: AppController): m.Vnode {
     key: K,
     value: CoverSettings[K],
   ): void => controller.updateCover({ [key]: value } as Pick<CoverSettings, K>);
-  return m('section.cover-editor', [
+  return m('section.cover-editor.col.s12', [
     m('h4', 'Front cover'),
-    m('label', ['Source', coverSourceSelect(controller, images.length > 0)]),
-    settings.source === 'upload'
-      ? m('label', [
-          'Cover image (JPEG, PNG, WebP, or sanitized SVG; max 10 MiB)',
-          m('input', {
-            type: 'file',
-            accept: 'image/png,image/jpeg,image/webp,image/svg+xml',
-            onchange: (event: Event) => {
-              const file = (event.currentTarget as HTMLInputElement).files?.[0];
-              if (file) controller.selectCoverFile(file);
-            },
-          }),
-        ])
-      : null,
-    settings.source === 'extracted'
-      ? m('label', [
-          'Document image',
-          m(
-            'select',
-            {
-              value: settings.imageName ?? '',
-              onchange: (event: Event) =>
-                controller.selectExtractedCover(
-                  (event.currentTarget as HTMLSelectElement).value,
-                ),
-            },
-            [
-              m('option', { value: '' }, 'Choose an image'),
-              ...images.map(([id]) => m('option', { value: id }, id)),
+    m('.row.cover-editor-grid', [
+      m(Select<CoverSource>, {
+        label: 'Source',
+        checkedId: controller.state.cover.source,
+        options: [
+          { id: 'none', label: 'No cover' },
+          { id: 'upload', label: 'Upload image' },
+          {
+            id: 'extracted',
+            label: 'Extracted document image',
+            disabled: images.length <= 0,
+          },
+          { id: 'generated', label: 'Generated typographic cover' },
+        ],
+        onchange: (checkedIds: CoverSource[]) => {
+          const source = checkedIds[0];
+          if (source) controller.setCoverSource(source);
+        },
+      }),
+      settings.source === 'upload'
+        ? m('label.col.s12', [
+            'Cover image (JPEG, PNG, WebP, or sanitized SVG; max 10 MiB)',
+            m('input', {
+              type: 'file',
+              accept: 'image/png,image/jpeg,image/webp,image/svg+xml',
+              onchange: (event: Event) => {
+                const file = (event.currentTarget as HTMLInputElement)
+                  .files?.[0];
+                if (file) controller.selectCoverFile(file);
+              },
+            }),
+          ])
+        : null,
+      settings.source === 'extracted'
+        ? m(Select<string>, {
+            label: 'Document image',
+            className: 'col s12 m6',
+            checkedId: settings.imageName ?? '',
+            options: [
+              { id: '', label: 'Choose an image', disabled: true },
+              ...images.map(([id]) => ({ id, label: id })),
             ],
-          ),
-        ])
-      : null,
-    settings.source !== 'none' && settings.source !== 'generated'
-      ? m('label', [
-          'Layout',
-          m(
-            'select',
-            {
-              value: settings.layout,
-              onchange: (event: Event) =>
-                select(
-                  'layout',
-                  (event.currentTarget as HTMLSelectElement)
-                    .value as CoverSettings['layout'],
-                ),
+            onchange: (checkedIds: string[]) =>
+              controller.selectExtractedCover(checkedIds[0] ?? ''),
+          })
+        : null,
+      settings.source !== 'none' && settings.source !== 'generated'
+        ? m(Select<CoverSettings['layout']>, {
+            label: 'Layout',
+            className: 'col s12 m6',
+            checkedId: settings.layout,
+            options: [
+              { id: 'image-only', label: 'Image only' },
+              { id: 'overlay', label: 'Overlay' },
+              { id: 'title-panel', label: 'Title panel' },
+              { id: 'separate-title-page', label: 'Separate title page' },
+            ],
+            onchange: (checkedIds: CoverSettings['layout'][]) => {
+              const layout = checkedIds[0];
+              if (layout) select('layout', layout);
             },
-            ['image-only', 'overlay', 'title-panel', 'separate-title-page'].map(
-              (value) => m('option', { value }, value.replaceAll('-', ' ')),
+          })
+        : null,
+      settings.source !== 'none'
+        ? m('.cover-controls', [
+            m(Select<CoverSettings['alignment']>, {
+              label: 'Text alignment',
+              className: 'col s12 m6',
+              checkedId: settings.alignment,
+              options: [
+                { id: 'left', label: 'Left' },
+                { id: 'center', label: 'Center' },
+                { id: 'right', label: 'Right' },
+              ],
+              onchange: (checkedIds: CoverSettings['alignment'][]) => {
+                const alignment = checkedIds[0];
+                if (alignment) select('alignment', alignment);
+              },
+            }),
+            m(Select<CoverSettings['textColor']>, {
+              label: 'Text colour',
+              className: 'col s12 m6',
+              checkedId: settings.textColor,
+              options: [
+                { id: 'light', label: 'Light' },
+                { id: 'dark', label: 'Dark' },
+              ],
+              onchange: (checkedIds: CoverSettings['textColor'][]) => {
+                const textColor = checkedIds[0];
+                if (textColor) select('textColor', textColor);
+              },
+            }),
+            m(Select<CoverSettings['contrastPanel']>, {
+              label: 'Contrast panel',
+              className: 'col s12 m6',
+              checkedId: settings.contrastPanel,
+              options: [
+                { id: 'none', label: 'None' },
+                { id: 'light', label: 'Light' },
+                { id: 'dark', label: 'Dark' },
+              ],
+              onchange: (checkedIds: CoverSettings['contrastPanel'][]) => {
+                const contrastPanel = checkedIds[0];
+                if (contrastPanel) select('contrastPanel', contrastPanel);
+              },
+            }),
+            m(Select<CoverSettings['crop']>, {
+              label: 'Image crop',
+              className: 'col s12 m6',
+              checkedId: settings.crop,
+              options: [
+                { id: 'cover', label: 'Cover' },
+                { id: 'contain', label: 'Contain' },
+                { id: 'stretch', label: 'Stretch' },
+              ],
+              onchange: (checkedIds: CoverSettings['crop'][]) => {
+                const crop = checkedIds[0];
+                if (crop) select('crop', crop);
+              },
+            }),
+            m(Select<CoverSettings['aspectRatio']>, {
+              label: 'Preview aspect ratio',
+              className: 'col s12 m6',
+              checkedId: settings.aspectRatio,
+              options: [
+                { id: 'book', label: 'Book' },
+                { id: 'square', label: 'Square' },
+              ],
+              onchange: (checkedIds: CoverSettings['aspectRatio'][]) => {
+                const aspectRatio = checkedIds[0];
+                if (aspectRatio) select('aspectRatio', aspectRatio);
+              },
+            }),
+            range(
+              'Title position',
+              settings.titlePosition,
+              8,
+              45,
+              1,
+              (value) => select('titlePosition', value),
+              'col s12 m6',
             ),
-          ),
-        ])
-      : null,
-    settings.source !== 'none'
-      ? m('div.cover-controls', [
-          choice(
-            'Text alignment',
-            settings.alignment,
-            ['left', 'center', 'right'],
-            (value) => select('alignment', value as CoverSettings['alignment']),
-          ),
-          choice(
-            'Text colour',
-            settings.textColor,
-            ['light', 'dark'],
-            (value) => select('textColor', value as CoverSettings['textColor']),
-          ),
-          choice(
-            'Contrast panel',
-            settings.contrastPanel,
-            ['none', 'light', 'dark'],
-            (value) =>
-              select('contrastPanel', value as CoverSettings['contrastPanel']),
-          ),
-          choice(
-            'Image crop',
-            settings.crop,
-            ['cover', 'contain', 'stretch'],
-            (value) => select('crop', value as CoverSettings['crop']),
-          ),
-          choice(
-            'Preview aspect ratio',
-            settings.aspectRatio,
-            ['book', 'square'],
-            (value) =>
-              select('aspectRatio', value as CoverSettings['aspectRatio']),
-          ),
-          range('Title position', settings.titlePosition, 8, 45, 1, (value) =>
-            select('titlePosition', value),
-          ),
-          range(
-            'Author position',
-            settings.authorPosition,
-            55,
-            94,
-            1,
-            (value) => select('authorPosition', value),
-          ),
-          range('Title size', settings.titleSize, 48, 180, 2, (value) =>
-            select('titleSize', value),
-          ),
-          range('Author size', settings.authorSize, 28, 96, 2, (value) =>
-            select('authorSize', value),
-          ),
-          range('Panel opacity', settings.panelOpacity, 0, 0.9, 0.05, (value) =>
-            select('panelOpacity', value),
-          ),
-          range('Image opacity', settings.imageOpacity, 0.2, 1, 0.05, (value) =>
-            select('imageOpacity', value),
-          ),
-          range('Safe margin', settings.margin, 4, 20, 1, (value) =>
-            select('margin', value),
-          ),
-        ])
-      : null,
+            range(
+              'Author position',
+              settings.authorPosition,
+              55,
+              94,
+              1,
+              (value) => select('authorPosition', value),
+              'col s12 m6',
+            ),
+            range(
+              'Title size',
+              settings.titleSize,
+              48,
+              180,
+              2,
+              (value) => select('titleSize', value),
+              'col s12 m6',
+            ),
+            range(
+              'Author size',
+              settings.authorSize,
+              28,
+              96,
+              2,
+              (value) => select('authorSize', value),
+              'col s12 m6',
+            ),
+            range(
+              'Panel opacity',
+              settings.panelOpacity,
+              0,
+              0.9,
+              0.05,
+              (value) => select('panelOpacity', value),
+              'col s12 m6',
+            ),
+            range(
+              'Image opacity',
+              settings.imageOpacity,
+              0.2,
+              1,
+              0.05,
+              (value) => select('imageOpacity', value),
+              'col s12 m6',
+            ),
+            range(
+              'Safe margin',
+              settings.margin,
+              4,
+              20,
+              1,
+              (value) => select('margin', value),
+              'col s12 m6',
+            ),
+          ])
+        : null,
+    ]),
     settings.warning
       ? m('p.cover-warning[role="status"]', settings.warning)
       : null,
@@ -510,52 +574,6 @@ function coverEditor(controller: AppController): m.Vnode {
   ]);
 }
 
-function coverSourceSelect(
-  controller: AppController,
-  hasExtractedImages: boolean,
-): m.Vnode {
-  return m(
-    'select',
-    {
-      value: controller.state.cover.source,
-      onchange: (event: Event) =>
-        controller.setCoverSource(
-          (event.currentTarget as HTMLSelectElement).value as CoverSource,
-        ),
-    },
-    [
-      m('option', { value: 'none' }, 'No cover'),
-      m('option', { value: 'upload' }, 'Upload image'),
-      m(
-        'option',
-        { value: 'extracted', disabled: !hasExtractedImages },
-        'Extracted document image',
-      ),
-      m('option', { value: 'generated' }, 'Generated typographic cover'),
-    ],
-  );
-}
-
-function choice(
-  label: string,
-  value: string,
-  values: readonly string[],
-  onchange: (value: string) => void,
-): m.Vnode {
-  return m('label', [
-    label,
-    m(
-      'select',
-      {
-        value,
-        onchange: (event: Event) =>
-          onchange((event.currentTarget as HTMLSelectElement).value),
-      },
-      values.map((option) => m('option', { value: option }, option)),
-    ),
-  ]);
-}
-
 function range(
   label: string,
   value: number,
@@ -563,8 +581,9 @@ function range(
   max: number,
   step: number,
   onchange: (value: number) => void,
+  className = '',
 ): m.Vnode {
-  return m('label', [
+  return m('label', { class: className }, [
     `${label}: ${value}`,
     m('input', {
       type: 'range',
@@ -890,7 +909,11 @@ function warningPanel(controller: AppController): m.Vnode | null {
                               warningStyleId(warning),
                             ),
                         },
-                        warningReviewLabel(controller.state, warning, destination),
+                        warningReviewLabel(
+                          controller.state,
+                          warning,
+                          destination,
+                        ),
                       ),
                     ]
                   : null,
@@ -937,8 +960,12 @@ function warningReviewLabel(
   if (destination === 'formula') return 'Review formula output';
   if (destination === 'styles') {
     const styleId = warningStyleId(warning);
-    const style = state.model?.styles.find((candidate) => candidate.id === styleId);
-    return style ? `Review ${style.name ?? style.id} mapping` : 'Review style mapping';
+    const style = state.model?.styles.find(
+      (candidate) => candidate.id === styleId,
+    );
+    return style
+      ? `Review ${style.name ?? style.id} mapping`
+      : 'Review style mapping';
   }
   return 'Review metadata';
 }
@@ -1076,22 +1103,16 @@ function styleEditor(controller: AppController): m.Vnode {
           onclick: () => controller.exportPreset(),
         }),
       ]),
-      m('label', [
-        'Saved preset',
-        m(
-          'select',
-          {
-            onchange: (event: Event) =>
-              controller.loadPreset(
-                (event.currentTarget as HTMLSelectElement).value,
-              ),
-          },
-          [
-            m('option', { value: '' }, 'Choose preset'),
-            ...presetNames.map((name) => m('option', { value: name }, name)),
-          ],
-        ),
-      ]),
+      m(Select<string>, {
+        label: 'Saved preset',
+        checkedId: '',
+        options: [
+          { id: '', label: 'Choose preset', disabled: true },
+          ...presetNames.map((name) => ({ id: name, label: name })),
+        ],
+        onchange: (checkedIds: string[]) =>
+          controller.loadPreset(checkedIds[0] ?? ''),
+      }),
       m('label', ['New preset name', m('input#preset-name', { type: 'text' })]),
       m(Button, {
         label: 'Save preset',
