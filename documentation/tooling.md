@@ -78,9 +78,20 @@ WORDCONVERT_BASE_PATH=/my-repository/ pnpm build
 ```
 
 In GitHub repository settings, select **GitHub Actions** as the Pages source. The
-`Deploy SPA to GitHub Pages` workflow installs the frozen lockfile, builds
+`Verify and deploy WordConvert` workflow installs the frozen lockfile, builds
 `apps/web/dist`, uploads it, and deploys on pushes to `main` or manual dispatch.
-No application secret or server component is required.
+Before upload it runs formatting, zero-warning lint, strict type checks, Vitest
+with a checksum-pinned EPUBCheck 5.3.0 installation, the production build, and a
+static-output assertion. The PWA manifest and generated service worker use
+relative URLs, so installation and offline application-shell caching work under
+the `/word-convert/` Pages base.
+
+All third-party actions are pinned to full commit SHAs. The verification job has
+read-only repository access; Pages and OIDC write permissions exist only on the
+deployment job. pnpm's store is keyed by the lockfile through `setup-node`,
+concurrent runs for the same ref cancel older work, timeouts bound both jobs, and
+the Pages artifact is retained for one day. No application secret or server
+component is required.
 
 ## Dependency licence review
 

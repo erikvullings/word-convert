@@ -15,6 +15,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "oxlint --deny-warnings .",
+    "static:check": "node scripts/verify-static-build.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "pnpm -r --if-present typecheck"

@@ -2,6 +2,10 @@
 
 WordConvert is a privacy-preserving, browser-only DOCX conversion workspace. Document input remains local and is converted through a typed neutral document model.
 
+The static site is also an installable progressive web app. After one successful
+load, its application shell is cached for offline use; document conversion and
+downloads continue to run entirely on the device.
+
 It accepts unencrypted `.docx` files and produces standalone HTML, an HTML ZIP,
 single-file Markdown, a Markdown ZIP, or a reflowable EPUB 3 publication. Legacy
 `.doc`, encrypted documents, and macro-enabled `.docm` files are rejected.
@@ -150,10 +154,13 @@ name, include both slashes when overriding it:
 WORDCONVERT_BASE_PATH=/my-repository/ pnpm build
 ```
 
-The `Deploy SPA to GitHub Pages` workflow builds `apps/web/dist` on pushes to
-`main` and deploys it with GitHub's Pages actions. In repository settings, select
-**GitHub Actions** as the Pages source, then run the workflow or push to `main`.
-The deployment is static; it requires no secrets or conversion backend.
+The `Verify and deploy WordConvert` workflow builds `apps/web/dist` on pushes to
+`main` and deploys it with GitHub's Pages actions. Pull requests run the same
+frozen install, formatting, lint, strict type, test, EPUBCheck, production build,
+and static/offline-output checks without deployment permissions. In repository
+settings, select **GitHub Actions** as the Pages source, then run the workflow or
+push to `main`. The deployment is static; it requires no secrets or conversion
+backend.
 
 ## Future Rust/WASM reader
 

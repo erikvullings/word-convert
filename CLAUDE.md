@@ -13,6 +13,7 @@
 - Keep OMML normalization in `@wordconvert/math-converter` separate from TeX/MathML serialization and KaTeX rendering. Preserve unsupported source diagnostics, keep KaTeX `trust: false`, embed its CSS/font locally, and prefer MathML for EPUB output.
 - Keep writer asset paths generated and POSIX-relative. Do not pass source filenames, active media types, or remote resource URLs into HTML output.
 - Keep SPA workflow state explicit and structured-clone safe. Persist only preferences and style-mapping presets, never source buffers, models, output, filenames, or document diagnostics.
+- Keep the PWA shell base-path safe: manifest, service-worker registration, and precache entries must work under `/word-convert/` and custom `WORDCONVERT_BASE_PATH` builds. Cache only same-origin GET requests and keep conversion independent of the network.
 - Route every preview insertion through the shared restrictive DOMPurify policy. Do not allow remote preview URLs or active elements. Release object URLs and output buffers immediately after browser downloads.
 - Keep standalone/ZIP output modes in the typed worker protocol, propagate writer warnings with output, and route warning actions to the relevant editor or output setting.
 - Validate style presets against `wordconvert.style-preset` version 1 and the complete `StyleMapping` union before applying or persisting them. Render preset and document text only through Mithril text nodes or form values.

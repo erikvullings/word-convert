@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="WordConvert">
+  <rect width="512" height="512" rx="96" fill="#243447"/>
+  <path d="M126 106h198l62 62v238H126z" fill="#f5f2ea"/>
+  <path d="M324 106v62h62" fill="#c6d7de"/>
+  <path d="M178 218h156M178 266h156M178 314h102" fill="none" stroke="#243447" stroke-linecap="round" stroke-width="24"/>
+  <path d="m274 360 34 34 66-74" fill="none" stroke="#d16b4b" stroke-linecap="round" stroke-linejoin="round" stroke-width="24"/>
+</svg>
