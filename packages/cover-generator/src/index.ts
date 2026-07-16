@@ -75,6 +75,7 @@ export function createCoverSvg(input: CoverComposition): string {
   validateComposition(input);
   const image = input.image ? prepareCoverImage(input.image) : undefined;
   const margin = (input.width * input.margin) / 100;
+  const maxTextWidth = Math.max(80, input.width - margin * 2);
   const x =
     input.alignment === 'left'
       ? margin
@@ -96,12 +97,28 @@ export function createCoverSvg(input: CoverComposition): string {
     input.layout === 'overlay' ||
     input.layout === 'title-panel' ||
     input.layout === 'typographic';
+  const titleLineHeight = input.titleSize * 0.95;
+  const titleLines = containsText
+    ? wrapTextLines(input.title, input.titleSize, maxTextWidth)
+    : [];
+  const titleLineCount = Math.max(1, titleLines.length);
+  const subtitleY =
+    (input.height * input.titlePosition) / 100 +
+    titleLineHeight * titleLineCount;
   const panel =
     containsText && input.contrastPanel !== 'none'
-      ? `<rect x="${margin / 2}" y="${(input.height * input.titlePosition) / 100 - input.titleSize * 1.15}" width="${input.width - margin}" height="${input.titleSize * (input.subtitle ? 2.5 : 1.65)}" rx="24" fill="${input.contrastPanel === 'dark' ? '#000' : '#fff'}" opacity="${input.panelOpacity}"/>`
+      ? `<rect x="${margin / 2}" y="${(input.height * input.titlePosition) / 100 - input.titleSize * 1.15}" width="${input.width - margin}" height="${input.titleSize * (0.95 + titleLineCount * 0.95 + (input.subtitle ? 0.95 : 0))}" rx="24" fill="${input.contrastPanel === 'dark' ? '#000' : '#fff'}" opacity="${input.panelOpacity}"/>`
       : '';
   const title = containsText
-    ? `<text x="${x}" y="${(input.height * input.titlePosition) / 100}" text-anchor="${anchor}" font-family="Georgia,serif" font-size="${input.titleSize}" font-weight="700" fill="${foreground}">${escapeXml(input.title)}</text>${input.subtitle ? `<text x="${x}" y="${(input.height * input.titlePosition) / 100 + input.titleSize * 0.9}" text-anchor="${anchor}" font-family="Arial,sans-serif" font-size="${input.authorSize}" fill="${foreground}">${escapeXml(input.subtitle)}</text>` : ''}`
+    ? `<text x="${x}" y="${(input.height * input.titlePosition) / 100}" text-anchor="${anchor}" font-family="Georgia,serif" font-size="${input.titleSize}" font-weight="700" fill="${foreground}">${titleLines
+        .map((line, index) =>
+          index === 0
+            ? `<tspan x="${x}" dy="0">${escapeXml(line)}</tspan>`
+            : `<tspan x="${x}" dy="${titleLineHeight}">${escapeXml(line)}</tspan>`,
+        )
+        .join(
+          '',
+        )}</text>${input.subtitle ? `<text x="${x}" y="${subtitleY}" text-anchor="${anchor}" font-family="Arial,sans-serif" font-size="${input.authorSize}" fill="${foreground}">${escapeXml(input.subtitle)}</text>` : ''}`
     : '';
   const authors = containsText
     ? `<text x="${x}" y="${(input.height * input.authorPosition) / 100}" text-anchor="${anchor}" font-family="Arial,sans-serif" font-size="${input.authorSize}" fill="${foreground}">${escapeXml(input.authors.join(' · '))}</text>`
@@ -200,6 +217,64 @@ function escapeXml(value: string): string {
         "'": '&apos;',
       })[character] ?? character,
   );
+}
+
+function wrapTextLines(
+  value: string,
+  fontSize: number,
+  maxWidth: number,
+): string[] {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [''];
+  const lines: string[] = [];
+  let current = words[0] ?? '';
+  for (const word of words.slice(1)) {
+    const candidate = `${current} ${word}`;
+    if (estimateTextWidth(candidate, fontSize) <= maxWidth) {
+      current = candidate;
+      continue;
+    }
+    if (current) lines.push(current);
+    if (estimateTextWidth(word, fontSize) <= maxWidth) {
+      current = word;
+      continue;
+    }
+    const split = splitLongWord(word, fontSize, maxWidth);
+    lines.push(...split.slice(0, -1));
+    current = split[split.length - 1] ?? '';
+  }
+  if (current) lines.push(current);
+  return lines.length > 0 ? lines : [value];
+}
+
+function splitLongWord(
+  word: string,
+  fontSize: number,
+  maxWidth: number,
+): string[] {
+  const segments: string[] = [];
+  let current = '';
+  for (const char of Array.from(word)) {
+    const candidate = `${current}${char}`;
+    if (current && estimateTextWidth(candidate, fontSize) > maxWidth) {
+      segments.push(current);
+      current = char;
+      continue;
+    }
+    current = candidate;
+  }
+  if (current) segments.push(current);
+  return segments;
+}
+
+function estimateTextWidth(value: string, fontSize: number): number {
+  const units = Array.from(value).reduce((sum, char) => {
+    if (char === ' ') return sum + 0.34;
+    if (/[ilI1\.,:;'!]/.test(char)) return sum + 0.28;
+    if (/[MW@%#&]/.test(char)) return sum + 0.9;
+    return sum + 0.62;
+  }, 0);
+  return units * fontSize;
 }
 
 function encodeUtf8(value: string): Uint8Array {

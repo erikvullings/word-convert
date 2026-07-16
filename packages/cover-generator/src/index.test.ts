@@ -98,4 +98,25 @@ describe('cover generator', () => {
       titleTextWarning('mountain-photo.png', 'The Long Road'),
     ).toBeUndefined();
   });
+
+  it('wraps long titles to multiple lines and keeps subtitle below wrapped title block', () => {
+    const svg = createCoverSvg({
+      ...base,
+      title:
+        'A Very Long Cover Title That Must Wrap Across Multiple Lines To Stay Inside The Safe Margin',
+      alignment: 'left',
+      margin: 10,
+      titleSize: 120,
+    });
+    const tspanCount = (svg.match(/<tspan\b/g) ?? []).length;
+    expect(tspanCount).toBeGreaterThan(1);
+
+    const subtitleMatch = svg.match(
+      /<text x="[^"]+" y="([0-9.]+)"[^>]*>Notes from elsewhere<\/text>/,
+    );
+    expect(subtitleMatch?.[1]).toBeDefined();
+    expect(Number(subtitleMatch?.[1])).toBeGreaterThan(
+      (base.height * base.titlePosition) / 100 + 80,
+    );
+  });
 });
