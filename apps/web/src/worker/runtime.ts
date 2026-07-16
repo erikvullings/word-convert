@@ -23,11 +23,8 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
     activeOperationCount: () => operations.size,
     async handle(request) {
       if (request.type === 'cancel') {
-        const signal = operations.get(request.operationId) ?? {
-          cancelled: false,
-        };
-        signal.cancelled = true;
-        operations.set(request.operationId, signal);
+        const signal = operations.get(request.operationId);
+        if (signal) signal.cancelled = true;
         return;
       }
 
@@ -36,6 +33,7 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
       };
       operations.set(request.operationId, signal);
       try {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
         if (signal.cancelled) throw cancelledError();
         if (request.type === 'analyse') {
           const model = await secureDocxReader.read(

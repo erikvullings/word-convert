@@ -18,3 +18,4 @@
 - Validate style presets against `wordconvert.style-preset` version 1 and the complete `StyleMapping` union before applying or persisting them. Render preset and document text only through Mithril text nodes or form values.
 - Keep style mappings and metadata edits in explicit SPA state across stages. Re-analysis sends mappings to the reader; metadata edits replace inferred provenance with typed user provenance.
 - Keep `apps/web/src/worker` as a thin typed adapter over the core reader/writers. Transfer input/output `ArrayBuffer` ownership, key progress and cancellation by operation ID, return private `ConversionError` objects, and clean up every completed operation.
+- Preserve the reader's configurable package, expansion, entry-count, compression-ratio, and per-image limits. Update `documentation/hardening.md` whenever a security boundary, browser support assumption, or representative performance budget changes.

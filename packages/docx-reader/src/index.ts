@@ -62,6 +62,7 @@ const DEFAULT_LIMITS: ReaderLimits = {
   maxUncompressedBytes: 200 * 1024 * 1024,
   maxEntries: 1_000,
   maxCompressionRatio: 100,
+  maxImageBytes: 25 * 1024 * 1024,
 };
 const safeExternalProtocols = new Set(['http:', 'https:', 'mailto:']);
 const activeMedia = new Set(['text/html', 'application/xhtml+xml']);
@@ -87,6 +88,7 @@ interface Relationship {
 
 interface ParseContext {
   pkg: DocxPackage;
+  limits: ReaderLimits;
   relationships: Map<string, Relationship>;
   numbering: Map<string, boolean>;
   equations: Record<string, Equation>;
@@ -317,6 +319,10 @@ function assetForRelationship(
     : `word/${normalized}`;
   const bytes = context.pkg.entries[path];
   if (!bytes) return undefined;
+  if (bytes.byteLength > context.limits.maxImageBytes)
+    fail('resource-limit', 'DOCX image exceeds the per-image size limit.', {
+      limit: context.limits.maxImageBytes,
+    });
   const extension = path.split('.').at(-1)?.toLowerCase() ?? '';
   const mediaTypes: Record<string, string> = {
     gif: 'image/gif',
@@ -917,6 +923,7 @@ export const secureDocxReader: DocxReader = {
     }
     const context: ParseContext = {
       pkg,
+      limits,
       relationships,
       numbering: parseNumbering(pkg),
       equations: {},

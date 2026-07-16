@@ -7,6 +7,7 @@ export interface ReaderLimits {
   maxUncompressedBytes: number;
   maxEntries: number;
   maxCompressionRatio: number;
+  maxImageBytes: number;
 }
 
 export interface DocxPackage {

@@ -260,6 +260,19 @@ describe('secure DOCX reader', () => {
     ]);
   });
 
+  it('rejects an image that exceeds the configurable per-image limit', async () => {
+    const input = docxWithSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg"><path d="${'M0 0 '.repeat(30)}"/></svg>`,
+    );
+
+    await expect(
+      secureDocxReader.read(input, {
+        ...options,
+        limits: { maxImageBytes: 64 },
+      }),
+    ).rejects.toMatchObject({ code: 'resource-limit' });
+  });
+
   it.each([
     ['scripts', '<script>alert(1)</script>'],
     ['event handlers', '<path onload="alert(1)"/>'],
@@ -287,6 +300,13 @@ describe('secure DOCX reader', () => {
   );
 
   it('enforces configurable entry and expanded-size limits before extraction', async () => {
+    const representative = await fixture('standard-comprehensive.docx');
+    await expect(
+      secureDocxReader.read(representative, {
+        ...options,
+        limits: { maxCompressedBytes: representative.byteLength - 1 },
+      }),
+    ).rejects.toMatchObject({ code: 'resource-limit' });
     await expect(
       secureDocxReader.read(createEntryCountLimitFixture(10), {
         ...options,
@@ -299,6 +319,17 @@ describe('secure DOCX reader', () => {
         limits: { maxUncompressedBytes: 512 },
       }),
     ).rejects.toMatchObject({ code: 'resource-limit' });
+  });
+
+  it('reads the representative fixture deterministically within its regression budget', async () => {
+    const input = await fixture('standard-comprehensive.docx');
+    const started = performance.now();
+    const first = await secureDocxReader.read(input, options);
+    const second = await secureDocxReader.read(input, options);
+    const elapsedMs = performance.now() - started;
+
+    expect(second).toEqual(first);
+    expect(elapsedMs).toBeLessThan(1_000);
   });
 
   it('rejects legacy input and honours cancellation without exposing content', async () => {

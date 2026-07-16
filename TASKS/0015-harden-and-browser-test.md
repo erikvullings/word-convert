@@ -1,6 +1,6 @@
 # 0015 Harden and browser test
 
-Status: open
+Status: done
 Priority: high
 Owner: unassigned
 Agent: unassigned
@@ -27,3 +27,7 @@ Verify resilience, privacy, accessibility, browser compatibility, performance, a
 ## Agent Notes
 
 - Next step: maintain a requirement-to-test matrix and record browser evidence/screenshots.
+- Added a configurable 25 MiB per-image reader limit and regressions for every package limit, representative-fixture determinism/performance, privacy, and failure/cancellation cleanup.
+- Added `documentation/hardening.md` with the requirement-to-test matrix, default budgets, browser policy, accessibility caveats, and Chromium evidence from the 16 July 2026 in-app browser run.
+- Verified style and metadata editing, formula-bearing content, HTML/Markdown standalone and ZIP modes, EPUB cover/layout, previews, downloads, keyboard theme activation, light/dark styling, and responsive widths. Firefox and Safari direct runs remain an explicit human release gate because those engines were unavailable.
+- Full verification: 19 test files / 122 tests, strict typecheck, lint, and production build pass.

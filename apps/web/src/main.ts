@@ -3,6 +3,7 @@ import 'mithril-materialized/index.min.css';
 
 import { App } from './app.ts';
 import { createBrowserController } from './controller.ts';
+import { devFixtureRequested } from './dev-fixture.ts';
 import './styles.css';
 
 const root = document.querySelector<HTMLElement>('#app');
@@ -11,4 +12,19 @@ if (root === null) {
   throw new Error('WordConvert application root was not found.');
 }
 
-m.mount(root, App(createBrowserController()));
+const controller = createBrowserController();
+m.mount(root, App(controller));
+
+if (devFixtureRequested(import.meta.env.DEV, window.location.search)) {
+  void fetch('/__wordconvert_browser_fixture__.docx')
+    .then(async (response) => {
+      if (!response.ok) throw new Error('Browser fixture could not be loaded.');
+      const data = await response.arrayBuffer();
+      controller.selectFiles([
+        new File([data], 'standard-comprehensive.docx', {
+          type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        }),
+      ]);
+    })
+    .catch(() => undefined);
+}

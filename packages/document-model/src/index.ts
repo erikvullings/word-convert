@@ -299,6 +299,7 @@ export interface DocxReaderOptions extends ConversionOptions {
     maxUncompressedBytes?: number;
     maxEntries?: number;
     maxCompressionRatio?: number;
+    maxImageBytes?: number;
   };
 }
 

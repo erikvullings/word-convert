@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createWorkerRuntime } from './runtime.ts';
 import type { WorkerResponse } from './protocol.ts';
@@ -20,6 +20,29 @@ async function fixtureBuffer(): Promise<ArrayBuffer> {
 }
 
 describe('worker runtime', () => {
+  it('does not log document data or make network requests during analysis', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const runtime = createWorkerRuntime(() => undefined);
+
+    await runtime.handle({
+      type: 'analyse',
+      operationId: 'private-analysis',
+      input: await fixtureBuffer(),
+      filename: 'sensitive board report.docx',
+      conversionDate: '2026-07-15',
+    });
+
+    expect(
+      [log, warn, error, fetch].every((spy) => spy.mock.calls.length === 0),
+    ).toBe(true);
+    vi.restoreAllMocks();
+  });
+
   it('analyses a transferred DOCX buffer, reports progress, and cleans up', async () => {
     const sent: WorkerResponse[] = [];
     const runtime = createWorkerRuntime((message) => sent.push(message));
@@ -195,17 +218,18 @@ describe('worker runtime', () => {
     });
   });
 
-  it('returns private structured errors and supports cancellation', async () => {
+  it('returns private structured errors, supports cancellation, and cleans up stale cancellation', async () => {
     const sent: WorkerResponse[] = [];
     const runtime = createWorkerRuntime((message) => sent.push(message));
-    await runtime.handle({ type: 'cancel', operationId: 'cancelled-1' });
-    await runtime.handle({
+    const analysis = runtime.handle({
       type: 'analyse',
       operationId: 'cancelled-1',
       input: new ArrayBuffer(0),
       filename: 'private words.docx',
       conversionDate: '2026-07-15',
     });
+    await runtime.handle({ type: 'cancel', operationId: 'cancelled-1' });
+    await analysis;
 
     const error = sent.at(-1);
     expect(error).toMatchObject({
@@ -213,6 +237,9 @@ describe('worker runtime', () => {
       error: { code: 'cancelled', recoverable: true },
     });
     expect(JSON.stringify(error)).not.toContain('private words');
+    expect(runtime.activeOperationCount()).toBe(0);
+
+    await runtime.handle({ type: 'cancel', operationId: 'already-finished' });
     expect(runtime.activeOperationCount()).toBe(0);
   });
 
