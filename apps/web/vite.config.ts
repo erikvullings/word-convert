@@ -30,6 +30,17 @@ function serviceWorkerSource(
   return `const CACHE_NAME = 'wordconvert-${Date.now()}';
 const PRECACHE_URLS = ${JSON.stringify(files.sort())};
 
+function updateCache(request, response) {
+  if (!response.ok) return response;
+  const copy = response.clone();
+  void caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+  return response;
+}
+
+function isNavigationRequest(request) {
+  return request.mode === 'navigate';
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS)));
   self.skipWaiting();
@@ -47,14 +58,16 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin) return;
+  if (isNavigationRequest(event.request)) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => updateCache(event.request, response))
+        .catch(() => caches.match(event.request).then((cached) => cached ?? caches.match('./index.html'))),
+    );
+    return;
+  }
   event.respondWith(
-    caches.match(event.request).then((cached) => cached ?? fetch(event.request).then((response) => {
-      if (response.ok) {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-      }
-      return response;
-    })),
+    caches.match(event.request).then((cached) => cached ?? fetch(event.request).then((response) => updateCache(event.request, response))),
   );
 });
 `;
