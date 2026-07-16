@@ -224,7 +224,7 @@ function outputChooser(controller: AppController): m.Vnode {
                   ],
                   (value) => controller.setHtmlMode?.(value as HtmlOutputMode),
                 )
-              : epubPackaging(),
+              : epubPackaging(controller),
           hasFormulas
             ? formulaOptions(
                 controller,
@@ -302,10 +302,25 @@ function formulaOptions(
   });
 }
 
-function epubPackaging(): m.Vnode {
-  return m('div.format-card-options.format-card-options--static', [
-    m('h5.form-group-label', 'EPUB packaging'),
-    m('p', 'Single EPUB file with embedded assets'),
+function epubPackaging(controller: AppController): m.Vnode {
+  return m('div.format-card-options', [
+    m('div.format-card-options.format-card-options--static', [
+      m('h5.form-group-label', 'EPUB packaging'),
+      m('p', 'Single EPUB file with embedded assets'),
+    ]),
+    m(Select<CoverSource>, {
+      label: 'Cover source',
+      checkedId: controller.state.cover.source,
+      options: [
+        { id: 'none', label: 'No cover' },
+        { id: 'upload', label: 'Upload image' },
+        { id: 'generated', label: 'Generated typographic cover' },
+      ],
+      onchange: (checkedIds: CoverSource[]) => {
+        const source = checkedIds[0];
+        if (source) controller.setCoverSource(source);
+      },
+    }),
   ]);
 }
 
