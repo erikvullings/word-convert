@@ -133,6 +133,17 @@ export function renderApp(
         controller.state.error
           ? m('.error[role="alert"]', controller.state.error.message)
           : null,
+        m('p.secondary-actions', [
+          m('i', 'Found a bug, or missing something? '),
+          m(
+            'a',
+            {
+              href: 'https://github.com/erikvullings/word-convert/issues',
+              target: '_blank',
+            },
+            m('i', 'File an issue.'),
+          ),
+        ]),
         controller.state.progress ? progress(controller) : null,
       ]),
     ]),
@@ -242,27 +253,6 @@ function outputChooser(controller: AppController): m.Vnode {
         ]),
       ),
     ),
-    m('p.secondary-actions', [
-      'Something looks wrong? ',
-      m(
-        'button.link-button',
-        {
-          type: 'button',
-          onclick: () => openReview(state, 'styles'),
-        },
-        'Review style mapping',
-      ),
-      ' or ',
-      m(
-        'button.link-button',
-        {
-          type: 'button',
-          onclick: () => openReview(state, 'metadata'),
-        },
-        'review metadata',
-      ),
-      '.',
-    ]),
   ]);
 }
 
