@@ -7,7 +7,7 @@ const files = entries.filter((entry) => extname(entry) !== '');
 const requiredFiles = [
   'index.html',
   'manifest.webmanifest',
-  'icon.svg',
+  'favicon.svg',
   'sw.js',
 ];
 

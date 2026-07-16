@@ -19,6 +19,7 @@ function serviceWorkerSource(
     './index.html',
     './manifest.webmanifest',
     './wc.svg',
+    './favicon.svg',
     './favicon.ico',
     './favicon-96x96.png',
     './apple-touch-icon.png',
