@@ -102,9 +102,9 @@ export function renderApp(
   select: (event: Event) => void = () => undefined,
   drop: (event: DragEvent) => void = () => undefined,
 ): m.Vnode {
-  return m('div.app', { 'data-theme': controller.state.preferences.theme }, [
+  return m('.app', { 'data-theme': controller.state.preferences.theme }, [
     m('header.app-header', [
-      m('div.brand', [
+      m('.brand', [
         m('img.brand-logo', {
           src: './wc.svg',
           alt: '',
@@ -131,7 +131,7 @@ export function renderApp(
           ? filePicker(select, drop)
           : stageContent(controller),
         controller.state.error
-          ? m('div.error[role="alert"]', controller.state.error.message)
+          ? m('.error[role="alert"]', controller.state.error.message)
           : null,
         controller.state.progress ? progress(controller) : null,
       ]),
@@ -150,7 +150,7 @@ function filePicker(
   ondrop: (event: DragEvent) => void,
 ): m.Vnode {
   return m(
-    'div.drop-zone',
+    '.drop-zone',
     {
       ondragover: (event: DragEvent) => event.preventDefault(),
       ondrop,
@@ -181,10 +181,10 @@ function outputChooser(controller: AppController): m.Vnode {
   const hasFormulas = Object.keys(state.model?.equations ?? {}).length > 0;
   if (state.status === 'analysing')
     return m('p', 'Inspecting the document in the background…');
-  return m('div.output-chooser', [
+  return m('.output-chooser', [
     m('p', 'Analysis is complete. Choose how you want to use the document.'),
     m(
-      'div.format-cards',
+      '.format-cards',
       (['markdown', 'html', 'epub'] as const).map((format) =>
         m(`article.format-card.format-card--${format}`, [
           m(
@@ -224,7 +224,7 @@ function outputChooser(controller: AppController): m.Vnode {
                   ],
                   (value) => controller.setHtmlMode?.(value as HtmlOutputMode),
                 )
-              : epubPackaging(controller),
+              : epubPackaging(),
           hasFormulas
             ? formulaOptions(
                 controller,
@@ -302,25 +302,10 @@ function formulaOptions(
   });
 }
 
-function epubPackaging(controller: AppController): m.Vnode {
-  return m('div.format-card-options', [
-    m('div.format-card-options.format-card-options--static', [
-      m('h5.form-group-label', 'EPUB packaging'),
-      m('p', 'Single EPUB file with embedded assets'),
-    ]),
-    m(Select<CoverSource>, {
-      label: 'Cover source',
-      checkedId: controller.state.cover.source,
-      options: [
-        { id: 'none', label: 'No cover' },
-        { id: 'upload', label: 'Upload image' },
-        { id: 'generated', label: 'Generated typographic cover' },
-      ],
-      onchange: (checkedIds: CoverSource[]) => {
-        const source = checkedIds[0];
-        if (source) controller.setCoverSource(source);
-      },
-    }),
+function epubPackaging(): m.Vnode {
+  return m('.format-card-options.format-card-options--static', [
+    m('h5.form-group-label', 'EPUB packaging'),
+    m('p', 'Single EPUB file with embedded assets'),
   ]);
 }
 
@@ -595,7 +580,7 @@ function coverEditor(controller: AppController): m.Vnode {
       : null,
     composition
       ? m(
-          'div.cover-preview[aria-label="Live cover preview"]',
+          '.cover-preview[aria-label="Live cover preview"]',
           m.trust(createCoverSvg(composition)),
         )
       : null,
@@ -645,7 +630,7 @@ function epubMetadataIssues(metadata?: DocumentMetadata): string[] {
 function preview(controller: AppController): m.Vnode {
   const state = controller.state;
   if (state.preferences.outputFormat === 'epub')
-    return m('div.preview-panel', [
+    return m('.preview-panel', [
       previewActions(controller),
       epubConfiguration(controller),
       epubLayoutPreview(controller),
@@ -678,11 +663,11 @@ function preview(controller: AppController): m.Vnode {
   const previewMarkup = isMarkdown ? rendered : extractHtmlBody(rendered);
   const modeOptions = canEdit ? previewModeOptionsWithEdit : previewModeOptions;
   const checkboxClass = canEdit ? 'col s4' : 'col s6';
-  return m('div.preview-panel', [
+  return m('.preview-panel', [
     previewActions(controller),
     isMarkdown
       ? m(
-          'div.preview-mode',
+          '.preview-mode',
           m(RadioButtons<PreviewMode>, {
             id: 'markdown-preview-mode',
             options: modeOptions,
@@ -776,7 +761,7 @@ function epubLayoutPreview(controller: AppController): m.Vnode {
 
   return m('section.epub-layout', [
     m('h3', 'EPUB file layout'),
-    m('div.epub-layout-grid', [
+    m('.epub-layout-grid', [
       m(
         'ul.file-layout.epub-file-list',
         files.map((file) =>
@@ -798,7 +783,7 @@ function epubLayoutPreview(controller: AppController): m.Vnode {
           ]),
         ),
       ),
-      m('div.epub-file-viewer', renderEpubFilePreview(selected, archive)),
+      m('.epub-file-viewer', renderEpubFilePreview(selected, archive)),
     ]),
   ]);
 }
@@ -836,7 +821,7 @@ function renderEpubFilePreview(
     for (let i = 0; i < data.length; i++) {
       binary += String.fromCharCode(data[i] as number);
     }
-    return m('div.image-preview', [
+    return m('.image-preview', [
       m('img', {
         src: `data:${mimeTypeForImage(filename)};base64,${btoa(binary)}`,
         alt: filename,
@@ -874,7 +859,7 @@ export function extractHtmlBody(source: string): string {
 
 function previewActions(controller: AppController): m.Vnode {
   const state = controller.state;
-  return m('div.preview-actions', [
+  return m('.preview-actions', [
     m(Button, {
       label: `Download ${state.output?.filename ?? 'output'}`,
       disabled: !state.output,
@@ -1072,8 +1057,8 @@ function themeToggle(controller: AppController): m.Vnode {
 function styleEditor(controller: AppController): m.Vnode {
   const state = controller.state;
   const presetNames = Object.keys(state.preferences.mappingPresets);
-  return m('div.editor', [
-    m('div.editor-toolbar', [
+  return m('.editor', [
+    m('.editor-toolbar', [
       m(Button, {
         label: 'Accept high-confidence proposals',
         onclick: () => controller.acceptHighConfidence(),
@@ -1085,7 +1070,7 @@ function styleEditor(controller: AppController): m.Vnode {
       }),
     ]),
     m(
-      'div.style-review-list[aria-label="Style mapping table"]',
+      '.style-review-list[aria-label="Style mapping table"]',
       (state.model?.styles ?? []).map((style) => {
         const name = style.name ?? style.id;
         return m('article.style-review-card', { key: style.id }, [
@@ -1142,7 +1127,7 @@ function styleEditor(controller: AppController): m.Vnode {
             ),
         }),
       ]),
-      m('div.editor-toolbar', [
+      m('.editor-toolbar', [
         m(Button, {
           label: 'Import JSON',
           onclick: () => controller.importPreset(),
@@ -1202,7 +1187,7 @@ const METADATA_FIELDS: readonly [EditableMetadataField, string, string][] = [
 function metadataEditor(controller: AppController): m.Vnode {
   const metadata = controller.state.model?.metadata;
   if (!metadata) return m('p', 'No metadata is available.');
-  return m('div.editor.metadata-editor', [
+  return m('.editor.metadata-editor', [
     m(
       'p.help',
       'Review values with their source, confidence, and whether they are inferred, defaulted, or edited.',
@@ -1298,7 +1283,7 @@ function authorEditor(
 ): m.Vnode {
   const update = (field: keyof Person, value: string): void =>
     controller.updateAuthor(index, { ...person, [field]: value });
-  return m('div.author-card', [
+  return m('.author-card', [
     ...(
       [
         ['name', 'Name'],
@@ -1353,7 +1338,7 @@ function progress(controller: AppController): m.Vnode {
   const total = state.progress?.total;
   const completed = state.progress?.completed ?? 0;
   const value = total ? (completed / total) * 100 : undefined;
-  return m('div.progress-status[aria-live="polite"]', [
+  return m('.progress-status[aria-live="polite"]', [
     m(LinearProgress, {
       mode: value === undefined ? 'indeterminate' : 'determinate',
       ...(value === undefined ? {} : { value }),

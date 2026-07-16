@@ -251,7 +251,7 @@ describe('App', () => {
     expect(epub).not.toContain('HTML packaging');
   });
 
-  it('exposes the EPUB cover source while choosing the output format', () => {
+  it('shows EPUB packaging info while choosing the output format', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 1;
     state.status = 'ready';
@@ -260,9 +260,9 @@ describe('App', () => {
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
     const epub = rendered.slice(rendered.indexOf('format-card--epub'));
 
-    expect(epub).toContain('Cover source');
-    expect(epub).toContain('Upload image');
-    expect(epub).toContain('Generated typographic cover');
+    expect(epub).toContain('EPUB packaging');
+    expect(epub).toContain('Single EPUB file with embedded assets');
+    expect(epub).not.toContain('Cover source');
   });
 
   it('shows EPUB configuration in preview stage and explains metadata issues', () => {
