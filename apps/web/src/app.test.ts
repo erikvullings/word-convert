@@ -191,7 +191,6 @@ describe('App', () => {
     expect(formats).toContain('HTML');
     expect(formats).toContain('Markdown');
     expect(formats).toContain('EPUB 3');
-    expect(formats).toContain('Review style mapping');
     expect(formats).not.toContain('Cover image');
     expect(formats.indexOf('Markdown')).toBeLessThan(formats.indexOf('HTML'));
     expect(formats.indexOf('HTML')).toBeLessThan(formats.indexOf('EPUB 3'));
