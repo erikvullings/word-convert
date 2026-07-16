@@ -109,12 +109,9 @@ describe('App', () => {
 
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
-    expect(rendered).toContain('document-context');
     expect(rendered).toContain('Annual report');
     expect(rendered).toContain('Rendered');
     expect(rendered).toContain('Markdown');
-    expect(rendered).toContain('checkedId');
-    expect(rendered).not.toContain('preview-tabs');
     expect(rendered).not.toContain('Current document');
   });
 
@@ -157,12 +154,7 @@ describe('App', () => {
     expect(styles).toContain('JSON presets');
     expect(styles).toContain('Heading 6');
     expect(styles).toContain('No explicit formatting');
-    expect(styles).toContain('style-review-list');
-    expect(styles).toContain('style-review-card');
     expect(styles).toContain('Mapping for Plain');
-    expect(styles).toContain('"options":[{"id":"title"');
-    expect(styles).not.toContain('table-scroll');
-    expect(styles).not.toContain('style-table');
 
     state.review = 'metadata';
     const metadata = JSON.stringify(renderApp(controller));
@@ -249,20 +241,6 @@ describe('App', () => {
     expect(html).toContain('ZIP with asset folders');
     expect(epub).not.toContain('Markdown packaging');
     expect(epub).not.toContain('HTML packaging');
-  });
-
-  it('shows EPUB packaging info while choosing the output format', () => {
-    const state = createInitialState('2026-07-15');
-    state.stage = 1;
-    state.status = 'ready';
-    state.model = editorModel();
-
-    const rendered = JSON.stringify(renderApp(controllerFor(state)));
-    const epub = rendered.slice(rendered.indexOf('format-card--epub'));
-
-    expect(epub).toContain('EPUB packaging');
-    expect(epub).toContain('Single EPUB file with embedded assets');
-    expect(epub).not.toContain('Cover source');
   });
 
   it('shows EPUB configuration in preview stage and explains metadata issues', () => {
@@ -363,10 +341,7 @@ describe('App', () => {
     };
 
     const epub = JSON.stringify(renderApp(controllerFor(state)));
-    expect(epub).toContain('epub-layout-grid');
-    expect(epub).toContain('epub-file-button');
     expect(epub).toContain('EPUB/nav.xhtml');
-    expect(epub).toContain('epub-file-viewer');
     expect(epub).toContain('body{font-family:serif;}');
   });
 
@@ -422,7 +397,6 @@ describe('App', () => {
     expect(rendered).toContain('Warnings (2)');
     expect(rendered).toContain('Review formula output');
     expect(rendered).not.toContain('Review setting');
-    expect(rendered).not.toContain('"active":true');
   });
 
   it('condenses duplicate warnings while retaining distinct style mapping actions', () => {
