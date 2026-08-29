@@ -17,14 +17,14 @@
     "@wordconvert/html-writer": "workspace:*",
     "@wordconvert/markdown-writer": "workspace:*",
     "@wordconvert/math-converter": "workspace:*",
-    "dompurify": "^3.4.12",
+    "dompurify": "^3.4.14",
     "fflate": "^0.8.3",
     "mithril": "^2.3.8",
-    "mithril-markdown-wysiwyg": "^0.2.3",
-    "mithril-materialized": "^3.16.0",
-    "slimdown-js": "^1.4.1"
+    "mithril-markdown-wysiwyg": "^0.2.5",
+    "mithril-materialized": "^3.17.9",
+    "slimdown-js": "^1.5.0"
   },
   "devDependencies": {
-    "@types/mithril": "^2.2.8"
+    "@types/mithril": "^2.2.9"
   }
 }
