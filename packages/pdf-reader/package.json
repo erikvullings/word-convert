@@ -1,0 +1,15 @@
+{
+  "name": "@wordconvert/pdf-reader",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "dependencies": {
+    "@wordconvert/document-model": "workspace:*",
+    "fflate": "^0.8.3",
+    "pdfjs-dist": "^6.2.108"
+  }
+}

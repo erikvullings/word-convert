@@ -7,9 +7,17 @@ import { DocxReadError, secureDocxReader } from '@wordconvert/docx-reader';
 import { writeHtml, writeHtmlZip } from '@wordconvert/html-writer';
 import { writeMarkdown, writeMarkdownZip } from '@wordconvert/markdown-writer';
 import { writeEpub } from '@wordconvert/epub-writer';
+import {
+  configurePdfJsWorker,
+  PdfReadError,
+  pdfJsReader,
+} from '@wordconvert/pdf-reader';
+import pdfJsWorkerSrc from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import { unzipSync } from 'fflate';
 
 import type { WorkerRequest, WorkerSend } from './protocol.ts';
+
+if (typeof Worker !== 'undefined') configurePdfJsWorker(pdfJsWorkerSrc);
 
 export interface WorkerRuntime {
   handle(request: WorkerRequest): Promise<void>;
@@ -36,25 +44,42 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         if (signal.cancelled) throw cancelledError();
         if (request.type === 'analyse') {
-          const model = await secureDocxReader.read(
-            new Uint8Array(request.input),
-            {
-              filename: request.filename,
-              conversionDate: request.conversionDate,
-              ...(request.styleMappings
-                ? { styleMappings: request.styleMappings }
-                : {}),
-              cancellation: signal,
-              onProgress: (progress) =>
-                send({
-                  type: 'progress',
-                  operationId: request.operationId,
-                  progress,
-                }),
-            },
-          );
+          const readerOptions = {
+            filename: request.filename,
+            conversionDate: request.conversionDate,
+            ...(request.styleMappings
+              ? { styleMappings: request.styleMappings }
+              : {}),
+            cancellation: signal,
+            onProgress: (
+              progress: import('@wordconvert/document-model').ConversionProgress,
+            ) =>
+              send({
+                type: 'progress',
+                operationId: request.operationId,
+                progress,
+              }),
+          };
+          const pdfResult =
+            request.sourceFormat === 'pdf'
+              ? await pdfJsReader.read(new Uint8Array(request.input), {
+                  ...readerOptions,
+                  ...request.pdfOptions,
+                })
+              : undefined;
+          const model =
+            pdfResult?.model ??
+            (await secureDocxReader.read(
+              new Uint8Array(request.input),
+              readerOptions,
+            ));
           if (signal.cancelled) throw cancelledError();
-          send({ type: 'analysed', operationId: request.operationId, model });
+          send({
+            type: 'analysed',
+            operationId: request.operationId,
+            model,
+            ...(pdfResult ? { pdfAnalysis: pdfResult.analysis } : {}),
+          });
         } else {
           send({
             type: 'progress',
@@ -160,7 +185,11 @@ function cancelledError(): ConversionError {
 }
 
 function normaliseError(cause: unknown): ConversionError {
-  if (cause instanceof DocxReadError || isConversionError(cause)) {
+  if (
+    cause instanceof DocxReadError ||
+    cause instanceof PdfReadError ||
+    isConversionError(cause)
+  ) {
     return {
       code: cause.code,
       message: cause.message,

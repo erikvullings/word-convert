@@ -8,6 +8,17 @@ import type {
 import type { CoverComposition } from '@wordconvert/cover-generator';
 import type { MathOutputMode } from '@wordconvert/math-converter';
 import type { ConversionMode } from '../output.ts';
+import type {
+  PdfAnalysisSummary,
+  PdfCropOptions,
+} from '@wordconvert/pdf-reader';
+
+export interface PdfWorkerOptions {
+  crop?: Partial<PdfCropOptions>;
+  removeDetectedFurniture?: boolean;
+  removedCandidateIds?: string[];
+  retainedCandidateIds?: string[];
+}
 
 export type WorkerRequest =
   | {
@@ -15,8 +26,10 @@ export type WorkerRequest =
       operationId: string;
       input: ArrayBuffer;
       filename: string;
+      sourceFormat?: 'docx' | 'pdf';
       conversionDate: string;
       styleMappings?: Readonly<Record<string, StyleMapping>>;
+      pdfOptions?: PdfWorkerOptions;
     }
   | {
       type: 'convert';
@@ -33,7 +46,12 @@ export type WorkerRequest =
 
 export type WorkerResponse =
   | { type: 'progress'; operationId: string; progress: ConversionProgress }
-  | { type: 'analysed'; operationId: string; model: DocumentModel }
+  | {
+      type: 'analysed';
+      operationId: string;
+      model: DocumentModel;
+      pdfAnalysis?: PdfAnalysisSummary;
+    }
   | {
       type: 'output';
       operationId: string;

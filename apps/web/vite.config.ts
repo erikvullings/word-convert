@@ -9,6 +9,9 @@ const browserFixture = fileURLToPath(
     import.meta.url,
   ),
 );
+const pdfBrowserFixture = fileURLToPath(
+  new URL('../../tests/fixtures/pdf/one-column-book.pdf', import.meta.url),
+);
 
 function serviceWorkerSource(
   bundle: Record<string, { fileName: string }>,
@@ -104,6 +107,16 @@ export default defineConfig(({ command }) => ({
                 'Content-Type',
                 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
               );
+              response.end(fixture);
+            });
+          },
+        );
+        server.middlewares.use(
+          '/__wordconvert_browser_fixture__.pdf',
+          (_request, response) => {
+            void readFile(pdfBrowserFixture).then((fixture) => {
+              response.statusCode = 200;
+              response.setHeader('Content-Type', 'application/pdf');
               response.end(fixture);
             });
           },

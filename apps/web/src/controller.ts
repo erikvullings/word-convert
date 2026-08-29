@@ -17,7 +17,7 @@ import {
   createInitialState,
   loadPreferences,
   persistPreferences,
-  validateDocxFile,
+  validateSourceFile,
   type AppState,
   type ThemePreference,
 } from './state.ts';
@@ -108,13 +108,23 @@ export function createBrowserController(): AppController {
     applyResponse(state, event.data);
     m.redraw();
   });
+  worker.addEventListener('error', () => {
+    state.error = {
+      code: 'conversion-failed',
+      message: 'The background conversion worker could not be started.',
+      recoverable: true,
+    };
+    state.status = 'error';
+    delete state.progress;
+    m.redraw();
+  });
 
   return {
     state,
     selectFiles(files) {
       const file = files[0];
       if (!file) return;
-      const validation = validateDocxFile(file);
+      const validation = validateSourceFile(file);
       if (validation) {
         state.error = {
           code: 'invalid-input',
@@ -128,20 +138,29 @@ export function createBrowserController(): AppController {
       delete state.output;
       delete state.selectedEpubFile;
       delete state.model;
+      delete state.pdfAnalysis;
       state.selectedFilename = file.name;
+      const sourceFormat = file.name.toLowerCase().endsWith('.pdf')
+        ? 'pdf'
+        : 'docx';
+      state.sourceFormat = sourceFormat;
       state.stage = 1;
       state.status = 'analysing';
       state.operationId = operationId('analyse');
       void file.arrayBuffer().then((input) => {
         sourceInput = input;
         sourceFilename = file.name;
-        const request: WorkerRequest = {
+        const request = {
           type: 'analyse',
           operationId: state.operationId ?? operationId('analyse'),
           input: input.slice(0),
           filename: file.name,
+          sourceFormat,
           conversionDate: state.conversionDate,
-        };
+          ...(sourceFormat === 'pdf'
+            ? { pdfOptions: pdfWorkerOptions(state) }
+            : {}),
+        } satisfies WorkerRequest;
         worker.postMessage(request, [request.input]);
       });
     },
@@ -232,17 +251,44 @@ export function createBrowserController(): AppController {
       state.status = 'analysing';
       state.operationId = operationId('analyse');
       const input = sourceInput.slice(0);
+      const sourceFormat =
+        state.sourceFormat ??
+        (sourceFilename.toLowerCase().endsWith('.pdf') ? 'pdf' : 'docx');
       worker.postMessage(
         {
           type: 'analyse',
           operationId: state.operationId,
           input,
           filename: sourceFilename,
+          sourceFormat,
           conversionDate: state.conversionDate,
           styleMappings: state.styleMappings,
+          ...(sourceFormat === 'pdf'
+            ? { pdfOptions: pdfWorkerOptions(state) }
+            : {}),
         } satisfies WorkerRequest,
         [input],
       );
+    },
+    setPdfCrop(edge, value) {
+      const amount = Math.min(0.45, Math.max(0, value));
+      if (edge === 'top') state.pdfImport.cropTop = amount;
+      else state.pdfImport.cropBottom = amount;
+    },
+    setPdfCandidateRemoval(candidateId, remove) {
+      state.pdfImport.removedCandidateIds =
+        state.pdfImport.removedCandidateIds.filter((id) => id !== candidateId);
+      state.pdfImport.retainedCandidateIds =
+        state.pdfImport.retainedCandidateIds.filter((id) => id !== candidateId);
+      if (remove) state.pdfImport.removedCandidateIds.push(candidateId);
+      else state.pdfImport.retainedCandidateIds.push(candidateId);
+      const candidate = state.pdfAnalysis?.candidates.find(
+        ({ id }) => id === candidateId,
+      );
+      if (candidate) candidate.removed = remove;
+    },
+    setPdfAutomaticFurnitureRemoval(remove) {
+      state.pdfImport.removeDetectedFurniture = remove;
     },
     setPresetText(value: string) {
       state.presetText = value;
@@ -408,10 +454,13 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
   if (response.type === 'progress') state.progress = response.progress;
   if (response.type === 'analysed') {
     state.model = response.model;
+    if (response.pdfAnalysis) state.pdfAnalysis = response.pdfAnalysis;
+    else delete state.pdfAnalysis;
     state.stage = 1;
     state.status = 'ready';
     delete state.progress;
   }
+
   if (response.type === 'output') {
     state.output = response;
     if (response.files?.[0]) state.selectedEpubFile = response.files[0];
@@ -425,6 +474,20 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
     state.status = 'error';
     delete state.progress;
   }
+}
+
+function pdfWorkerOptions(
+  state: AppState,
+): import('./worker/protocol.ts').PdfWorkerOptions {
+  return {
+    crop: {
+      top: state.pdfImport.cropTop,
+      bottom: state.pdfImport.cropBottom,
+    },
+    removeDetectedFurniture: state.pdfImport.removeDetectedFurniture,
+    removedCandidateIds: [...state.pdfImport.removedCandidateIds],
+    retainedCandidateIds: [...state.pdfImport.retainedCandidateIds],
+  };
 }
 
 function operationId(prefix: string): string {

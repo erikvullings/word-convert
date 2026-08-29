@@ -4,7 +4,7 @@ import {
   createInitialState,
   loadPreferences,
   persistPreferences,
-  validateDocxFile,
+  validateSourceFile,
   WORKFLOW_STAGES,
   type PreferenceStorage,
 } from './state.ts';
@@ -73,13 +73,18 @@ describe('SPA state', () => {
     expect(loadPreferences(storage).mappingPresets).toEqual({});
   });
 
-  it('accepts DOCX files and rejects unsafe or misleading input', () => {
-    expect(validateDocxFile({ name: 'report.docx', type: '' })).toBeUndefined();
-    expect(validateDocxFile({ name: 'macro.docm', type: '' })).toContain(
+  it('accepts DOCX and PDF files and rejects unsafe or misleading input', () => {
+    expect(
+      validateSourceFile({ name: 'report.docx', type: '' }),
+    ).toBeUndefined();
+    expect(
+      validateSourceFile({ name: 'article.pdf', type: 'application/pdf' }),
+    ).toBeUndefined();
+    expect(validateSourceFile({ name: 'macro.docm', type: '' })).toContain(
       '.docx',
     );
     expect(
-      validateDocxFile({ name: 'report.docx', type: 'text/html' }),
-    ).toContain('DOCX');
+      validateSourceFile({ name: 'report.pdf', type: 'text/html' }),
+    ).toContain('PDF');
   });
 });

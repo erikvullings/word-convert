@@ -4,7 +4,7 @@ import 'mithril-markdown-wysiwyg/dist/index.css';
 
 import { App } from './app.ts';
 import { createBrowserController } from './controller.ts';
-import { devFixtureRequested } from './dev-fixture.ts';
+import { devFixtureKind } from './dev-fixture.ts';
 import './styles.css';
 
 const root = document.querySelector<HTMLElement>('#app');
@@ -24,16 +24,31 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   });
 }
 
-if (devFixtureRequested(import.meta.env.DEV, window.location.search)) {
-  void fetch('/__wordconvert_browser_fixture__.docx')
+const fixtureKind = devFixtureKind(import.meta.env.DEV, window.location.search);
+if (fixtureKind) {
+  const fixture =
+    fixtureKind === 'pdf'
+      ? {
+          url: '/__wordconvert_browser_fixture__.pdf',
+          name: 'one-column-book.pdf',
+          mediaType: 'application/pdf',
+        }
+      : {
+          url: '/__wordconvert_browser_fixture__.docx',
+          name: 'standard-comprehensive.docx',
+          mediaType:
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        };
+  void fetch(fixture.url)
     .then(async (response) => {
       if (!response.ok) throw new Error('Browser fixture could not be loaded.');
       const data = await response.arrayBuffer();
       controller.selectFiles([
-        new File([data], 'standard-comprehensive.docx', {
-          type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        new File([data], fixture.name, {
+          type: fixture.mediaType,
         }),
       ]);
+      m.redraw.sync();
     })
     .catch(() => undefined);
 }

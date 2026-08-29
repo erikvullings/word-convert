@@ -13,6 +13,7 @@ import type {
   HtmlOutputMode,
   MarkdownOutputMode,
 } from './output.ts';
+import type { PdfAnalysisSummary } from '@wordconvert/pdf-reader';
 
 export const WORKFLOW_STAGES = [
   'Document',
@@ -24,6 +25,15 @@ export const WORKFLOW_STAGES = [
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type OutputFormat = 'html' | 'markdown' | 'epub';
 export type PreviewMode = 'rendered' | 'source' | 'edit';
+export type SourceFormat = 'docx' | 'pdf';
+
+export interface PdfImportSettings {
+  cropTop: number;
+  cropBottom: number;
+  removeDetectedFurniture: boolean;
+  removedCandidateIds: string[];
+  retainedCandidateIds: string[];
+}
 
 export interface Preferences {
   theme: ThemePreference;
@@ -49,9 +59,12 @@ export interface AppState {
   status: 'idle' | 'analysing' | 'ready' | 'converting' | 'complete' | 'error';
   conversionDate: string;
   selectedFilename?: string;
+  sourceFormat?: SourceFormat;
   operationId?: string;
   progress?: ConversionProgress;
   model?: DocumentModel;
+  pdfAnalysis?: PdfAnalysisSummary;
+  pdfImport: PdfImportSettings;
   output?: DownloadOutput;
   selectedEpubFile?: string;
   markdownEdit?: string;
@@ -78,6 +91,7 @@ export interface FileDescriptor {
 const STORAGE_KEY = 'wordconvert.preferences.v1';
 const DOCX_MEDIA_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const PDF_MEDIA_TYPE = 'application/pdf';
 const DEFAULT_PREFERENCES: Preferences = {
   theme: 'system',
   outputFormat: 'html',
@@ -101,15 +115,28 @@ export function createInitialState(
     presetText: '',
     previewMode: 'rendered',
     cover: createCoverSettings(),
+    pdfImport: {
+      cropTop: 0,
+      cropBottom: 0,
+      removeDetectedFurniture: true,
+      removedCandidateIds: [],
+      retainedCandidateIds: [],
+    },
     preferences,
   };
 }
 
-export function validateDocxFile(file: FileDescriptor): string | undefined {
-  if (!file.name.toLowerCase().endsWith('.docx'))
-    return 'Choose a file with the .docx extension.';
-  if (file.type !== '' && file.type !== DOCX_MEDIA_TYPE)
-    return 'The selected file is not identified as a safe DOCX document.';
+export function validateSourceFile(file: FileDescriptor): string | undefined {
+  const name = file.name.toLowerCase();
+  const format = name.endsWith('.docx')
+    ? 'docx'
+    : name.endsWith('.pdf')
+      ? 'pdf'
+      : undefined;
+  if (!format) return 'Choose a file with the .docx or .pdf extension.';
+  const expectedType = format === 'docx' ? DOCX_MEDIA_TYPE : PDF_MEDIA_TYPE;
+  if (file.type !== '' && file.type !== expectedType)
+    return `The selected file is not identified as a safe ${format.toUpperCase()} document.`;
   return undefined;
 }
 
@@ -180,4 +207,4 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   );
 }
 
-export { DOCX_MEDIA_TYPE };
+export { DOCX_MEDIA_TYPE, PDF_MEDIA_TYPE };

@@ -18,12 +18,26 @@ This document is the release checklist for security, privacy, performance, and b
 | Script injection through metadata, formulas, or filenames | Escape semantic text and generate safe output paths | HTML/Markdown/EPUB writer hostile-input tests, math-converter injection test, cover-generator escaping test |
 | Failure and cancellation cleanup | Remove every operation in `finally`; stale cancellation creates no retained state | Worker runtime cancellation and actual reader-failure tests assert zero active operations and private errors |
 | Sensitive-data disclosure | No document logging, analytics, conversion fetches, URL parameters, or document persistence | Worker test spies on console and `fetch`; state tests restrict storage to preferences and validated mapping presets |
+| Excessive PDF input | `maxInputBytes: 50 MiB`, `maxPages: 2,000`, `maxTextItems: 2,000,000`, and `maxTextItemsPerPage: 100,000` | PDF reader corpus and configurable-limit tests |
+| Excessive PDF raster images | `maxImagePixels: 40,000,000` per image, `maxImages: 10,000`, and `maxTotalImagePixels: 80,000,000` across placements | PDF reader configurable per-image and aggregate-limit tests |
+| Encrypted or malformed PDF | Reject before semantic analysis with private structured errors | Password-protected and malformed PDF corpus fixtures |
+| PDF external loading | Supply exact bytes; disable range, streaming, auto-fetch, system-font, and external WASM loading | Worker privacy regression spies on `fetch` during DOCX and PDF analysis |
+| False-positive page-furniture removal | Crop bounds are explicit; repeated content is parity/position aware; medium/low confidence remains until user review | PDF layout tests cover crop boundaries, short documents, odd/even headers, and explicit candidate overrides |
 
 All reader limits are configurable through `DocxReaderOptions.limits`. Raising them increases peak memory exposure and should be a deliberate host-application decision.
+
+PDF limits are configurable through `PdfReaderOptions.limits`. The application
+conversion worker launches the bundled PDF.js module worker; conversion does not
+load optional CMaps, standard fonts, image decoders, or WASM from remote URLs.
 
 ## Determinism and performance budget
 
 The representative `standard-comprehensive.docx` fixture is parsed twice and both `DocumentModel` values must be deeply equal. The two reads share a 1,000 ms regression budget in Vitest. The 16 July 2026 local run completed the pair in approximately 2 ms; the generous CI threshold is intended to catch large regressions without making shared runners flaky. Writer suites separately assert byte-identical deterministic HTML, Markdown ZIP, EPUB, and cover output.
+
+The synthetic PDF corpus covers one- and two-column text, tagged structure,
+links, raster images, odd/even running headers, page-number footers, image-only
+pages, password protection, and malformed input. Repeated PDF reads must produce
+deeply equal analysis and `DocumentModel` values.
 
 ## Browser support policy
 

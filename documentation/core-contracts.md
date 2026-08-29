@@ -1,6 +1,8 @@
 # Core contracts
 
-`@wordconvert/document-model` is the stable boundary between DOCX readers, output writers, the worker adapter, and the UI. It has no browser or UI dependencies.
+`@wordconvert/document-model` is the stable boundary between DOCX/PDF readers,
+output writers, the worker adapter, and the UI. It has no browser or UI
+dependencies.
 
 ## Model and versioning
 
@@ -24,7 +26,15 @@ This representation favors an unambiguous initial contract over compactness. A l
 
 ## Operations
 
-`DocxReader.read` accepts DOCX bytes and explicit options, then returns a `DocumentModel`. Text writers return strings; binary writers return `Promise<Uint8Array>`. Progress callbacks and an in-process mutable cancellation signal are runtime controls rather than model data. Worker adapters translate them to serializable `OperationControlMessage` values keyed by operation ID and must not duplicate conversion logic.
+`DocxReader.read` accepts DOCX bytes and explicit options, then returns a
+`DocumentModel`. `PdfReader.readRaw` returns source facts before
+`analysePdf` applies layout and cleanup choices; `PdfReader.read` composes both
+operations and returns a model plus a reviewable PDF analysis summary. Text
+writers return strings; binary writers return `Promise<Uint8Array>`. Progress
+callbacks and an in-process mutable cancellation signal are runtime controls
+rather than model data. Worker adapters translate them to serializable
+`OperationControlMessage` values keyed by operation ID and must not duplicate
+conversion logic.
 
 Failures crossing a package or worker boundary use `ConversionError`, a plain structured object, not an `Error` instance. Error details must not contain document text, metadata, filenames, images, formula source, or other private input.
 
@@ -38,13 +48,20 @@ operation and removes operation state after success, failure, or cancellation.
 The UI may persist preferences and validated style presets, but never document
 content, filenames, metadata, generated output, or diagnostics.
 
-The reader validates package type, paths, XML, aggregate size, entry count,
+The DOCX reader validates package type, paths, XML, aggregate size, entry count,
 compression ratio, and individual image size before exposing semantic content.
 Writers generate asset paths and escape or reject active content rather than
 trusting source filenames, relationships, HTML, SVG, formulas, or metadata.
 Browser preview sanitization is a final boundary in addition to writer escaping,
 not a replacement for it. Default limits and their regression coverage are kept
 in [hardening and browser verification](hardening.md).
+
+The PDF reader validates the signature before invoking bundled PDF.js, disables
+range, streaming, auto-fetch, system-font, and external WASM paths, and applies
+input, page, text-item, per-image, image-count, and aggregate image-pixel limits.
+Page coordinates are normalized after rotation. Raw extraction, semantic
+analysis, crop choices, and repeated
+page-furniture proposals remain separate typed stages.
 
 ## Future WASM boundary
 

@@ -1,7 +1,7 @@
 import type { ConversionWarning } from '@wordconvert/document-model';
 import type { Config } from 'dompurify';
 
-export type WarningDestination = 'styles' | 'metadata' | 'formula';
+export type WarningDestination = 'styles' | 'metadata' | 'formula' | 'pdf';
 
 export function previewSanitizeConfig(): Config {
   return {
@@ -36,5 +36,6 @@ export function warningDestination(
   if (code.includes('formula') || code.includes('math')) return 'formula';
   if (code.includes('metadata')) return 'metadata';
   if (code.includes('style') || code.includes('heading')) return 'styles';
+  if (code.startsWith('pdf-')) return 'pdf';
   return undefined;
 }

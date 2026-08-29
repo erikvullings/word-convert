@@ -1,20 +1,35 @@
 # WordConvert
 
-WordConvert is a privacy-preserving, browser-only DOCX conversion workspace. Document input remains local and is converted through a typed neutral document model.
+WordConvert is a privacy-preserving, browser-only DOCX and PDF conversion
+workspace. Document input remains local and is converted through a typed
+neutral document model.
 
 The static site is also an installable progressive web app. After one successful
-load, its application shell is cached for offline use; document conversion and
+load, its application shell, including PDF.js, is cached for offline use;
+document conversion and
 downloads continue to run entirely on the device.
 
-It accepts unencrypted `.docx` files and produces standalone HTML, an HTML ZIP,
-single-file Markdown, a Markdown ZIP, or a reflowable EPUB 3 publication. Legacy
-`.doc`, encrypted documents, and macro-enabled `.docm` files are rejected.
+It accepts unencrypted `.docx` and text-native `.pdf` files and produces
+standalone HTML, an HTML ZIP, single-file Markdown, a Markdown ZIP, or a
+reflowable EPUB 3 publication. Legacy `.doc`, encrypted documents, and
+macro-enabled `.docm` files are rejected.
 
 ## Browser workflow
 
-The Mithril SPA presents the eight conversion stages from document selection through download in a responsive, keyboard-accessible light/dark shell. The file picker and drag-and-drop target accept `.docx` input, and the interface states clearly that source content is processed only in memory on the current device. Local storage is limited to theme/output preferences and style-mapping presets.
+The Mithril SPA presents the conversion workflow from document selection
+through download in a responsive, keyboard-accessible light/dark shell. The
+file picker and drag-and-drop target accept `.docx` and `.pdf` input, and the
+interface states clearly that source content is processed only in memory on the
+current device. Local storage is limited to theme/output preferences and
+style-mapping presets.
 
-The security defaults cap DOCX input at 50 MiB compressed, 200 MiB expanded, 1,000 ZIP entries, a 100:1 per-entry compression ratio, and 25 MiB per image. Hosts may override these typed reader limits deliberately. See [hardening and browser verification](documentation/hardening.md) for the threat-to-test matrix, performance budget, compatibility policy, and interactive evidence.
+The security defaults cap DOCX input at 50 MiB compressed, 200 MiB expanded,
+1,000 ZIP entries, a 100:1 per-entry compression ratio, and 25 MiB per image.
+PDF input is capped at 50 MiB, 2,000 pages, 2,000,000 text items, and 40
+megapixels per extracted image. Hosts may override these typed reader limits
+deliberately. See [hardening and browser verification](documentation/hardening.md)
+for the threat-to-test matrix, performance budget, compatibility policy, and
+interactive evidence.
 
 Analysis and output generation run in a Web Worker through a typed protocol with transferable input/output buffers, progress messages, cancellation, private structured errors, and per-operation cleanup. The worker delegates directly to the reader and output writers; it contains no conversion logic. Output settings cover standalone or packaged HTML, single-file or packaged Markdown, EPUB, embedded or generated-folder assets, formula rendering, and optional EPUB covers. Every setting can be changed and rerun without re-uploading the source; generated object URLs and output buffers are released immediately after download.
 
@@ -27,6 +42,15 @@ The metadata review stage covers title, subtitle, structured authors, language, 
 ## Style and metadata analysis
 
 `@wordconvert/docx-reader` separates OOXML extraction from analysis and final model construction. `analyseStyles` reports every used paragraph and character style with inherited effective formatting, usage samples, a proposed semantic mapping, confidence, and reasons. Heading evidence follows the documented precedence; font size is never sufficient by itself.
+
+`@wordconvert/pdf-reader` similarly separates PDF.js extraction, layout
+analysis, user cleanup choices, and final model construction. It preserves
+rotated page-relative text geometry, links, raster images, metadata, outlines,
+and tagged structure, then reconstructs one- or two-column reading order.
+Configurable top and bottom crop regions provide predictable page-furniture
+removal. Repeated odd/even headers, footers, and variable page numbers are
+proposed separately; only high-confidence repetition is removed automatically,
+and every candidate remains reviewable.
 
 Callers can pass `stylePreset` and `styleMappings` to `DocxReaderOptions`. Explicit mappings take precedence over presets and inferred evidence, making reruns deterministic. `resolveMetadataCandidates` selects metadata by source priority while retaining provenance and confidence, structured authors, and separate source, publication, and conversion dates.
 
@@ -71,6 +95,13 @@ SVG, unsafe links, unsupported image formats, and uncommon OMML constructs may b
 degraded or replaced by a safe fallback. Always review the preview and warnings
 before publishing.
 
+PDF conversion reconstructs semantics from positioned drawing instructions.
+Tagged PDFs provide the strongest structure; untagged one- and two-column books
+and articles use deterministic geometry and typography heuristics. Complicated
+tables, sidebars, overlapping text, and irregular multi-column layouts may need
+manual review. Image-only pages are preserved as images and produce an explicit
+warning because OCR is not yet included.
+
 Heading proposals combine OOXML outline levels, stable Word style IDs, document
 structure, localized aliases, inheritance, typography, and usage patterns; font
 size alone never creates a heading. The style-review stage shows confidence and
@@ -92,8 +123,10 @@ network. Source data and generated output stay in memory; local storage contains
 only preferences and validated style presets. A static host can serve the app
 without a conversion service.
 
-The default reader limits are 50 MiB compressed input, 200 MiB expanded content,
-1,000 ZIP entries, a 100:1 per-entry compression ratio, and 25 MiB per image.
+The default DOCX reader limits are 50 MiB compressed input, 200 MiB expanded
+content, 1,000 ZIP entries, a 100:1 per-entry compression ratio, and 25 MiB per
+image. PDF limits are 50 MiB input, 2,000 pages, 2,000,000 text items, and 40
+megapixels per extracted image.
 Unsafe XML, paths, links, HTML, SVG, and remote resources are rejected or
 sanitized. Raising these typed limits increases memory exposure. See the
 [hardening checklist](documentation/hardening.md) for the complete threat matrix,
@@ -119,7 +152,8 @@ pnpm test
 pnpm build
 ```
 
-Regenerate the synthetic DOCX corpus with `pnpm fixtures:generate`, then confirm
+Regenerate the synthetic DOCX corpus with `pnpm fixtures:generate` and the PDF
+corpus with `pnpm fixtures:pdf`, then confirm
 that `git diff --exit-code -- tests/fixtures/docx` is empty. See
 [fixture documentation](tests/fixtures/docx/README.md) for its deterministic
 manifest and generated-in-memory security cases.

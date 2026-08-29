@@ -1,0 +1,29 @@
+{
+  "generatedAt": "2026-08-29T12:00:00.000Z",
+  "fixtures": [
+    {
+      "file": "one-column-book.pdf",
+      "covers": ["metadata", "running headers", "page numbers", "link"]
+    },
+    {
+      "file": "two-column-article.pdf",
+      "covers": ["two-column reading order", "footer"]
+    },
+    {
+      "file": "tagged-article.pdf",
+      "covers": ["tagged structure", "marked content"]
+    },
+    {
+      "file": "scanned-page.pdf",
+      "covers": ["image-only page", "OCR warning"]
+    },
+    {
+      "file": "encrypted.pdf",
+      "covers": ["password-protected PDF error"]
+    },
+    {
+      "file": "malformed.pdf",
+      "covers": ["invalid PDF error"]
+    }
+  ]
+}

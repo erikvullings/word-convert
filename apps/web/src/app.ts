@@ -20,6 +20,7 @@ import { render as renderMarkdown } from 'slimdown-js';
 
 import {
   DOCX_MEDIA_TYPE,
+  PDF_MEDIA_TYPE,
   WORKFLOW_STAGES,
   type AppState,
   type DownloadOutput,
@@ -65,6 +66,9 @@ export interface AppController {
   setStyleMapping(styleId: string, mapping: StyleMapping): void;
   acceptHighConfidence(): void;
   rerunAnalysis(): void;
+  setPdfCrop?(edge: 'top' | 'bottom', value: number): void;
+  setPdfCandidateRemoval?(candidateId: string, remove: boolean): void;
+  setPdfAutomaticFurnitureRemoval?(remove: boolean): void;
   setPresetText(value: string): void;
   importPreset(): void;
   exportPreset(): void;
@@ -123,7 +127,7 @@ export function renderApp(
     ),
     m(
       'p.format-note',
-      'Convert Word documents to Markdown, HTML, or EPUB 3 directly in the browser.',
+      'Convert Word and PDF documents to Markdown, HTML, or EPUB 3 directly in the browser.',
     ),
     m('main.workspace', [
       m('section.panel', [
@@ -171,13 +175,16 @@ function filePicker(
       ondrop,
     },
     [
-      m('label.file-label[for="docx-input"]', 'Choose a DOCX document'),
-      m('input#docx-input', {
+      m(
+        'label.file-label[for="document-input"]',
+        'Choose a DOCX or PDF document',
+      ),
+      m('input#document-input', {
         type: 'file',
-        accept: `${DOCX_MEDIA_TYPE},.docx`,
+        accept: `${DOCX_MEDIA_TYPE},${PDF_MEDIA_TYPE},.docx,.pdf`,
         onchange,
       }),
-      m('p', 'or drag and drop a .docx file here'),
+      m('p', 'or drag and drop a .docx or .pdf file here'),
     ],
   );
 }
@@ -198,6 +205,7 @@ function outputChooser(controller: AppController): m.Vnode {
     return m('p', 'Inspecting the document in the background…');
   return m('.output-chooser', [
     m('p', 'Analysis is complete. Choose how you want to use the document.'),
+    state.sourceFormat === 'pdf' ? pdfImportEditor(controller) : null,
     m(
       '.format-cards',
       (['markdown', 'html', 'epub'] as const).map((format) =>
@@ -257,6 +265,102 @@ function outputChooser(controller: AppController): m.Vnode {
         ]),
       ),
     ),
+  ]);
+}
+
+function pdfImportEditor(controller: AppController): m.Vnode {
+  const { state } = controller;
+  const top = Math.round(state.pdfImport.cropTop * 100);
+  const bottom = Math.round(state.pdfImport.cropBottom * 100);
+  return m('section#pdf-import-settings.pdf-import-editor', [
+    m('h3', 'PDF page cleanup'),
+    m(
+      'p',
+      'Crop repeated page furniture, then review detected chapter headers, page numbers, and footers.',
+    ),
+    m('.pdf-crop-layout', [
+      m(
+        '.pdf-page-preview[aria-label="Preview of excluded PDF page regions"]',
+        [
+          m('.pdf-page-preview__crop.pdf-page-preview__crop--top', {
+            style: { height: `${top}%` },
+            title: `Top ${top}% excluded`,
+          }),
+          m('.pdf-page-preview__body', 'Page content'),
+          m('.pdf-page-preview__crop.pdf-page-preview__crop--bottom', {
+            style: { height: `${bottom}%` },
+            title: `Bottom ${bottom}% excluded`,
+          }),
+        ],
+      ),
+      m('.pdf-crop-controls', [
+        cropControl(controller, 'top', 'Top crop', top),
+        cropControl(controller, 'bottom', 'Bottom crop', bottom),
+        m('label', [
+          m('input', {
+            type: 'checkbox',
+            checked: state.pdfImport.removeDetectedFurniture,
+            onchange: (event: Event) =>
+              controller.setPdfAutomaticFurnitureRemoval?.(
+                (event.currentTarget as HTMLInputElement).checked,
+              ),
+          }),
+          'Automatically remove high-confidence repeated content',
+        ]),
+      ]),
+    ]),
+    ...(state.pdfAnalysis?.candidates.length
+      ? [
+          m('h4', 'Detected page furniture'),
+          m(
+            'ul.pdf-furniture-candidates',
+            state.pdfAnalysis.candidates.map((candidate) =>
+              m('li', [
+                m('label', [
+                  m('input', {
+                    type: 'checkbox',
+                    checked: candidate.removed,
+                    onchange: (event: Event) =>
+                      controller.setPdfCandidateRemoval?.(
+                        candidate.id,
+                        (event.currentTarget as HTMLInputElement).checked,
+                      ),
+                  }),
+                  `${candidate.text || candidate.normalizedText} (${candidate.pageParity} pages, ${candidate.confidence} confidence)`,
+                ]),
+              ]),
+            ),
+          ),
+        ]
+      : []),
+    m(
+      'button.secondary-button',
+      { type: 'button', onclick: () => controller.rerunAnalysis() },
+      'Apply PDF cleanup and rerun analysis',
+    ),
+  ]);
+}
+
+function cropControl(
+  controller: AppController,
+  edge: 'top' | 'bottom',
+  label: string,
+  value: number,
+): m.Vnode {
+  return m('label', [
+    `${label}: ${value}%`,
+    m('input', {
+      type: 'range',
+      min: 0,
+      max: 45,
+      step: 1,
+      value,
+      oninput: (event: Event) =>
+        controller.setPdfCrop?.(
+          edge,
+          Number((event.currentTarget as HTMLInputElement).value) / 100,
+        ),
+    }),
   ]);
 }
 
@@ -986,6 +1090,7 @@ function warningReviewLabel(
   destination: NonNullable<ReturnType<typeof warningDestination>>,
 ): string {
   if (destination === 'formula') return 'Review formula output';
+  if (destination === 'pdf') return 'Review PDF cleanup';
   if (destination === 'styles') {
     const styleId = warningStyleId(warning);
     const style = state.model?.styles.find(
@@ -1018,7 +1123,11 @@ function navigateToWarning(
   state.stage = 1;
   queueMicrotask(() =>
     document
-      .getElementById('formula-output-settings')
+      .getElementById(
+        destination === 'pdf'
+          ? 'pdf-import-settings'
+          : 'formula-output-settings',
+      )
       ?.querySelector<HTMLInputElement>('input')
       ?.focus(),
   );

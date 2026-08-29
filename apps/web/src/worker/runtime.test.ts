@@ -13,10 +13,23 @@ const fixturePath = fileURLToPath(
     import.meta.url,
   ),
 );
+const pdfFixturePath = fileURLToPath(
+  new URL(
+    '../../../../tests/fixtures/pdf/one-column-book.pdf',
+    import.meta.url,
+  ),
+);
+const scannedPdfFixturePath = fileURLToPath(
+  new URL('../../../../tests/fixtures/pdf/scanned-page.pdf', import.meta.url),
+);
 
 async function fixtureBuffer(): Promise<ArrayBuffer> {
   const bytes = await readFile(fixturePath);
   return Uint8Array.from(bytes).buffer;
+}
+
+async function pdfBuffer(): Promise<ArrayBuffer> {
+  return Uint8Array.from(await readFile(pdfFixturePath)).buffer;
 }
 
 describe('worker runtime', () => {
@@ -34,6 +47,14 @@ describe('worker runtime', () => {
       operationId: 'private-analysis',
       input: await fixtureBuffer(),
       filename: 'sensitive board report.docx',
+      conversionDate: '2026-07-15',
+    });
+    await runtime.handle({
+      type: 'analyse',
+      sourceFormat: 'pdf',
+      operationId: 'private-pdf-analysis',
+      input: await pdfBuffer(),
+      filename: 'sensitive article.pdf',
       conversionDate: '2026-07-15',
     });
 
@@ -61,6 +82,67 @@ describe('worker runtime', () => {
       operationId: 'analyse-1',
     });
     expect(runtime.activeOperationCount()).toBe(0);
+  });
+
+  it('dispatches PDF input to PDF.js and returns source-specific analysis', async () => {
+    const sent: WorkerResponse[] = [];
+    const runtime = createWorkerRuntime((message) => sent.push(message));
+
+    await runtime.handle({
+      type: 'analyse',
+      sourceFormat: 'pdf',
+      operationId: 'analyse-pdf',
+      input: await pdfBuffer(),
+      filename: 'fixture.pdf',
+      conversionDate: '2026-08-29',
+      pdfOptions: {
+        crop: { top: 0.05, bottom: 0.05 },
+        removeDetectedFurniture: true,
+      },
+    });
+
+    expect(sent.at(-1)).toMatchObject({
+      type: 'analysed',
+      operationId: 'analyse-pdf',
+      model: {
+        metadata: { title: { value: 'A Practical Book' } },
+      },
+      pdfAnalysis: {
+        pageCount: 6,
+        crop: { top: 0.05, bottom: 0.05 },
+      },
+    });
+    expect(runtime.activeOperationCount()).toBe(0);
+  });
+
+  it('passes extracted PDF images through the existing Markdown writer', async () => {
+    const sent: WorkerResponse[] = [];
+    const runtime = createWorkerRuntime((message) => sent.push(message));
+    await runtime.handle({
+      type: 'analyse',
+      sourceFormat: 'pdf',
+      operationId: 'analyse-scanned-pdf',
+      input: Uint8Array.from(await readFile(scannedPdfFixturePath)).buffer,
+      filename: 'scan.pdf',
+      conversionDate: '2026-08-29',
+    });
+    const analysed = sent.at(-1);
+    if (analysed?.type !== 'analysed') throw new Error('No PDF model');
+
+    await runtime.handle({
+      type: 'convert',
+      operationId: 'convert-scanned-pdf',
+      model: analysed.model,
+      filename: 'scan.pdf',
+      format: 'markdown',
+      conversionDate: '2026-08-29',
+    });
+
+    const output = sent.at(-1);
+    if (output?.type !== 'output') throw new Error('No Markdown output');
+    expect(new TextDecoder().decode(output.data)).toContain(
+      'data:image/png;base64,',
+    );
   });
 
   it('rebuilds the model with explicit edited style mappings', async () => {

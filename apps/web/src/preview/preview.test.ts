@@ -29,6 +29,7 @@ describe('preview safety and warning navigation', () => {
     ['markdown-unsafe-asset', undefined],
     ['missing-required-metadata', 'metadata'],
     ['style-ambiguous', 'styles'],
+    ['pdf-cropped-page-furniture', 'pdf'],
   ] as const)('routes %s warnings to %s', (code, destination) => {
     expect(
       warningDestination({ code, severity: 'warning', message: 'Check it' }),

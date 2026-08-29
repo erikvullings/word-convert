@@ -79,10 +79,46 @@ describe('App', () => {
     expect(rendered).not.toContain('Conversion workflow');
     expect(rendered).not.toContain('Current document');
     expect(rendered).toContain('All processing stays on this device');
-    expect(rendered).toContain('Choose a DOCX document');
+    expect(rendered).toContain('Choose a DOCX or PDF document');
     expect(rendered).toContain(
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     );
+    expect(rendered).toContain('application/pdf');
+  });
+
+  it('shows PDF crop preview and reviewable page-furniture candidates', () => {
+    const state = createInitialState('2026-08-29');
+    state.stage = 1;
+    state.status = 'ready';
+    state.sourceFormat = 'pdf';
+    state.pdfImport.cropTop = 0.08;
+    state.pdfImport.cropBottom = 0.06;
+    state.pdfAnalysis = {
+      pageCount: 12,
+      crop: { top: 0.08, bottom: 0.06 },
+      scannedPages: [],
+      candidates: [
+        {
+          id: 'header-1',
+          kind: 'header',
+          text: 'Chapter One',
+          normalizedText: 'chapter one',
+          pageParity: 'odd',
+          pageNumbers: [1, 3, 5],
+          confidence: 'high',
+          removed: true,
+        },
+      ],
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('PDF page cleanup');
+    expect(rendered).toContain('Preview of excluded PDF page regions');
+    expect(rendered).toContain('Top crop: 8%');
+    expect(rendered).toContain('Bottom crop: 6%');
+    expect(rendered).toContain('Chapter One (odd pages, high confidence)');
+    expect(rendered).toContain('Apply PDF cleanup and rerun analysis');
   });
 
   it('shows the document title quietly and uses radio buttons for Markdown preview mode', () => {

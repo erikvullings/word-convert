@@ -198,6 +198,52 @@ h1 {
   gap: 0.8rem;
   margin: 1.5rem 0;
 }
+.pdf-import-editor {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+}
+.pdf-import-editor h3 {
+  margin-top: 0;
+}
+.pdf-crop-layout {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+.pdf-page-preview {
+  display: flex;
+  height: 10rem;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: #333;
+}
+.pdf-page-preview__crop {
+  flex: 0 0 auto;
+  min-height: 0;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.pdf-page-preview__body {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  place-items: center;
+  font-size: 0.72rem;
+}
+.pdf-crop-controls {
+  display: grid;
+  gap: 0.8rem;
+}
+.pdf-crop-controls label {
+  display: grid;
+  gap: 0.3rem;
+}
+.pdf-furniture-candidates {
+  padding-left: 1.25rem;
+}
 .format-card {
   display: grid;
   height: 100%;
@@ -671,6 +717,12 @@ h1 {
   }
   .format-cards {
     grid-template-columns: 1fr;
+  }
+  .pdf-crop-layout {
+    grid-template-columns: 1fr;
+  }
+  .pdf-page-preview {
+    width: 8rem;
   }
   .format-card {
     min-height: auto;

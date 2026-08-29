@@ -1,7 +1,7 @@
 # Third-party notices
 
 This audit covers the direct third-party runtime dependencies bundled by the
-WordConvert web application at `pnpm-lock.yaml` as reviewed on 16 July 2026.
+WordConvert web application at `pnpm-lock.yaml` as reviewed on 29 August 2026.
 Workspace packages are part of WordConvert; development-only dependencies are not
 distributed in its browser bundle.
 
@@ -12,10 +12,12 @@ distributed in its browser bundle.
 | KaTeX | 0.16.47 | MIT | Copyright (c) 2013–2020 Khan Academy and other contributors | <https://github.com/KaTeX/KaTeX> |
 | Mithril | 2.3.8 | MIT | Copyright (c) 2017 Leo Horie | <https://github.com/MithrilJS/mithril.js> |
 | mithril-materialized | 3.16.0 | MIT | Erik Vullings and contributors | <https://github.com/erikvullings/mithril-materialized> |
+| PDF.js (`pdfjs-dist`) | 6.2.108 | Apache-2.0 | Mozilla Foundation and PDF.js contributors | <https://github.com/mozilla/pdf.js> |
 | slimdown-js | 1.4.0 | MIT | Copyright (c) 2019 Erik Vullings | <https://github.com/erikvullings/slimdown-js> |
 
-DOMPurify is used under the Apache License 2.0 option. Its installed package
-contains the complete Apache-2.0 text in `LICENSE` and does not include a separate
+DOMPurify is used under the Apache License 2.0 option. PDF.js is also used under
+Apache License 2.0. Their installed packages
+contain the complete Apache-2.0 text in `LICENSE` and do not include separate
 `NOTICE` file. A copy of those terms is included in
 [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt).
 
