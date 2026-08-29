@@ -110,15 +110,27 @@ describe('App', () => {
         },
       ],
     };
+    state.pdfPreviewPage = 3;
+    state.pdfPreview = {
+      pageNumber: 3,
+      width: 900,
+      height: 1200,
+      url: 'blob:pdf-page-3',
+    };
 
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
     expect(rendered).toContain('PDF page cleanup');
-    expect(rendered).toContain('Preview of excluded PDF page regions');
+    expect(rendered).toContain('Actual PDF page with excluded crop regions');
+    expect(rendered).toContain('PDF page 3 preview');
+    expect(rendered).toContain('Preview previous PDF page');
+    expect(rendered).toContain('Preview next PDF page');
     expect(rendered).toContain('Top crop: 8%');
     expect(rendered).toContain('Bottom crop: 6%');
-    expect(rendered).toContain('Chapter One (odd pages, high confidence)');
-    expect(rendered).toContain('Apply PDF cleanup and rerun analysis');
+    expect(rendered).toContain(
+      'Remove from output · header · odd pages · high confidence',
+    );
+    expect(rendered).toContain('Apply crop and selected removals');
   });
 
   it('shows the document title quietly and uses radio buttons for Markdown preview mode', () => {

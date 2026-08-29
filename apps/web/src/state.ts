@@ -35,6 +35,13 @@ export interface PdfImportSettings {
   retainedCandidateIds: string[];
 }
 
+export interface PdfPagePreviewState {
+  pageNumber: number;
+  width: number;
+  height: number;
+  url: string;
+}
+
 export interface Preferences {
   theme: ThemePreference;
   outputFormat: OutputFormat;
@@ -65,6 +72,11 @@ export interface AppState {
   model?: DocumentModel;
   pdfAnalysis?: PdfAnalysisSummary;
   pdfImport: PdfImportSettings;
+  pdfPreviewPage: number;
+  pdfPreviewOperationId?: string;
+  pdfPreview?: PdfPagePreviewState;
+  pdfPreviewLoading?: boolean;
+  pdfPreviewError?: string;
   output?: DownloadOutput;
   selectedEpubFile?: string;
   markdownEdit?: string;
@@ -122,6 +134,7 @@ export function createInitialState(
       removedCandidateIds: [],
       retainedCandidateIds: [],
     },
+    pdfPreviewPage: 1,
     preferences,
   };
 }

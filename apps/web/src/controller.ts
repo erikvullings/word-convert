@@ -44,6 +44,38 @@ export function createBrowserController(): AppController {
   });
   let sourceInput: ArrayBuffer | undefined;
   let sourceFilename: string | undefined;
+  const releasePdfPreview = (): void => {
+    if (state.pdfPreview) URL.revokeObjectURL(state.pdfPreview.url);
+    delete state.pdfPreview;
+  };
+  const requestPdfPage = (requestedPage: number): void => {
+    if (!sourceInput || state.sourceFormat !== 'pdf') return;
+    const pageCount = state.pdfAnalysis?.pageCount ?? 1;
+    const pageNumber = Math.min(
+      pageCount,
+      Math.max(1, Math.round(requestedPage)),
+    );
+    if (state.pdfPreviewOperationId)
+      worker.postMessage({
+        type: 'cancel',
+        operationId: state.pdfPreviewOperationId,
+      } satisfies WorkerRequest);
+    releasePdfPreview();
+    state.pdfPreviewPage = pageNumber;
+    state.pdfPreviewLoading = true;
+    delete state.pdfPreviewError;
+    state.pdfPreviewOperationId = operationId('pdf-preview');
+    const input = sourceInput.slice(0);
+    worker.postMessage(
+      {
+        type: 'pdf-page-preview',
+        operationId: state.pdfPreviewOperationId,
+        input,
+        pageNumber,
+      } satisfies WorkerRequest,
+      [input],
+    );
+  };
   const requestConvert = (): void => {
     if (!state.model) return;
     delete state.markdownEdit;
@@ -86,6 +118,7 @@ export function createBrowserController(): AppController {
   };
 
   if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', releasePdfPreview, { once: true });
     window.addEventListener('popstate', (event: PopStateEvent) => {
       const stage =
         typeof event.state?.stage === 'number' ? event.state.stage : 1;
@@ -105,7 +138,34 @@ export function createBrowserController(): AppController {
   }
 
   worker.addEventListener('message', (event: MessageEvent<WorkerResponse>) => {
+    if (event.data.operationId === state.pdfPreviewOperationId) {
+      delete state.pdfPreviewOperationId;
+      if (event.data.type === 'pdf-page-preview') {
+        releasePdfPreview();
+        state.pdfPreview = {
+          pageNumber: event.data.pageNumber,
+          width: event.data.width,
+          height: event.data.height,
+          url: URL.createObjectURL(
+            new Blob([event.data.data], { type: 'image/png' }),
+          ),
+        };
+        state.pdfPreviewLoading = false;
+        delete state.pdfPreviewError;
+      } else if (event.data.type === 'error') {
+        state.pdfPreviewLoading = false;
+        state.pdfPreviewError = event.data.error.message;
+      }
+      m.redraw();
+      return;
+    }
     applyResponse(state, event.data);
+    if (
+      event.data.type === 'analysed' &&
+      event.data.operationId === state.operationId &&
+      event.data.pdfAnalysis
+    )
+      requestPdfPage(state.pdfPreviewPage);
     m.redraw();
   });
   worker.addEventListener('error', () => {
@@ -139,6 +199,10 @@ export function createBrowserController(): AppController {
       delete state.selectedEpubFile;
       delete state.model;
       delete state.pdfAnalysis;
+      releasePdfPreview();
+      state.pdfPreviewPage = 1;
+      delete state.pdfPreviewError;
+      delete state.pdfPreviewOperationId;
       state.selectedFilename = file.name;
       const sourceFormat = file.name.toLowerCase().endsWith('.pdf')
         ? 'pdf'
@@ -274,6 +338,9 @@ export function createBrowserController(): AppController {
       const amount = Math.min(0.45, Math.max(0, value));
       if (edge === 'top') state.pdfImport.cropTop = amount;
       else state.pdfImport.cropBottom = amount;
+    },
+    setPdfPreviewPage(pageNumber) {
+      requestPdfPage(pageNumber);
     },
     setPdfCandidateRemoval(candidateId, remove) {
       state.pdfImport.removedCandidateIds =
@@ -479,13 +546,16 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
 function pdfWorkerOptions(
   state: AppState,
 ): import('./worker/protocol.ts').PdfWorkerOptions {
+  const removedCandidateIds = new Set(state.pdfImport.removedCandidateIds);
+  for (const candidate of state.pdfAnalysis?.candidates ?? [])
+    if (candidate.removed) removedCandidateIds.add(candidate.id);
   return {
     crop: {
       top: state.pdfImport.cropTop,
       bottom: state.pdfImport.cropBottom,
     },
     removeDetectedFurniture: state.pdfImport.removeDetectedFurniture,
-    removedCandidateIds: [...state.pdfImport.removedCandidateIds],
+    removedCandidateIds: [...removedCandidateIds],
     retainedCandidateIds: [...state.pdfImport.retainedCandidateIds],
   };
 }

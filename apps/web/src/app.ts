@@ -67,6 +67,7 @@ export interface AppController {
   acceptHighConfidence(): void;
   rerunAnalysis(): void;
   setPdfCrop?(edge: 'top' | 'bottom', value: number): void;
+  setPdfPreviewPage?(pageNumber: number): void;
   setPdfCandidateRemoval?(candidateId: string, remove: boolean): void;
   setPdfAutomaticFurnitureRemoval?(remove: boolean): void;
   setPresetText(value: string): void;
@@ -276,23 +277,91 @@ function pdfImportEditor(controller: AppController): m.Vnode {
     m('h3', 'PDF page cleanup'),
     m(
       'p',
-      'Crop repeated page furniture, then review detected chapter headers, page numbers, and footers.',
+      'Preview each source page, crop unwanted edge regions, and choose which repeated headers, page numbers, or footers to remove.',
     ),
     m('.pdf-crop-layout', [
-      m(
-        '.pdf-page-preview[aria-label="Preview of excluded PDF page regions"]',
-        [
-          m('.pdf-page-preview__crop.pdf-page-preview__crop--top', {
-            style: { height: `${top}%` },
-            title: `Top ${top}% excluded`,
-          }),
-          m('.pdf-page-preview__body', 'Page content'),
-          m('.pdf-page-preview__crop.pdf-page-preview__crop--bottom', {
-            style: { height: `${bottom}%` },
-            title: `Bottom ${bottom}% excluded`,
-          }),
-        ],
-      ),
+      m('.pdf-preview-workspace', [
+        m('.pdf-page-navigation', [
+          m(
+            'button.secondary-button',
+            {
+              type: 'button',
+              disabled: state.pdfPreviewPage <= 1,
+              onclick: () =>
+                controller.setPdfPreviewPage?.(state.pdfPreviewPage - 1),
+              'aria-label': 'Preview previous PDF page',
+            },
+            'Previous',
+          ),
+          m('label.pdf-page-number', [
+            'Page',
+            m('input', {
+              type: 'number',
+              min: 1,
+              max: state.pdfAnalysis?.pageCount ?? 1,
+              value: state.pdfPreviewPage,
+              onchange: (event: Event) =>
+                controller.setPdfPreviewPage?.(
+                  Number((event.currentTarget as HTMLInputElement).value),
+                ),
+              'aria-label': 'PDF preview page number',
+            }),
+            `of ${state.pdfAnalysis?.pageCount ?? 1}`,
+          ]),
+          m(
+            'button.secondary-button',
+            {
+              type: 'button',
+              disabled:
+                state.pdfPreviewPage >= (state.pdfAnalysis?.pageCount ?? 1),
+              onclick: () =>
+                controller.setPdfPreviewPage?.(state.pdfPreviewPage + 1),
+              'aria-label': 'Preview next PDF page',
+            },
+            'Next',
+          ),
+        ]),
+        m(
+          '.pdf-page-preview[aria-label="Actual PDF page with excluded crop regions"]',
+          [
+            state.pdfPreview
+              ? m('.pdf-page-preview__sheet', [
+                  m('img', {
+                    src: state.pdfPreview.url,
+                    width: state.pdfPreview.width,
+                    height: state.pdfPreview.height,
+                    alt: `PDF page ${state.pdfPreview.pageNumber} preview`,
+                  }),
+                  m(
+                    '.pdf-page-preview__crop.pdf-page-preview__crop--top',
+                    {
+                      style: { height: `${top}%` },
+                      'aria-label': `Top ${top}% excluded`,
+                    },
+                    top ? `Top ${top}% removed` : null,
+                  ),
+                  m(
+                    '.pdf-page-preview__crop.pdf-page-preview__crop--bottom',
+                    {
+                      style: { height: `${bottom}%` },
+                      'aria-label': `Bottom ${bottom}% excluded`,
+                    },
+                    bottom ? `Bottom ${bottom}% removed` : null,
+                  ),
+                ])
+              : null,
+            state.pdfPreviewLoading
+              ? m('.pdf-page-preview__status', 'Rendering page preview…')
+              : null,
+            state.pdfPreviewError
+              ? m(
+                  '.pdf-page-preview__status.pdf-page-preview__status--error',
+                  state.pdfPreviewError,
+                )
+              : null,
+          ],
+        ),
+      ]),
       m('.pdf-crop-controls', [
         cropControl(controller, 'top', 'Top crop', top),
         cropControl(controller, 'bottom', 'Bottom crop', bottom),
@@ -313,6 +382,10 @@ function pdfImportEditor(controller: AppController): m.Vnode {
       ? [
           m('h4', 'Detected page furniture'),
           m(
+            'p.pdf-furniture-help',
+            'These items repeat near page edges. Odd and even pages are separate because books often use mirrored headers. Checked items will be removed from the output when you apply cleanup.',
+          ),
+          m(
             'ul.pdf-furniture-candidates',
             state.pdfAnalysis.candidates.map((candidate) =>
               m('li', [
@@ -326,7 +399,13 @@ function pdfImportEditor(controller: AppController): m.Vnode {
                         (event.currentTarget as HTMLInputElement).checked,
                       ),
                   }),
-                  `${candidate.text || candidate.normalizedText} (${candidate.pageParity} pages, ${candidate.confidence} confidence)`,
+                  m('span', [
+                    m('strong', candidate.text || candidate.normalizedText),
+                    m(
+                      'small',
+                      `Remove from output · ${candidate.kind} · ${candidate.pageParity} pages · ${candidate.confidence} confidence`,
+                    ),
+                  ]),
                 ]),
               ]),
             ),
@@ -336,7 +415,7 @@ function pdfImportEditor(controller: AppController): m.Vnode {
     m(
       'button.secondary-button',
       { type: 'button', onclick: () => controller.rerunAnalysis() },
-      'Apply PDF cleanup and rerun analysis',
+      'Apply crop and selected removals',
     ),
   ]);
 }

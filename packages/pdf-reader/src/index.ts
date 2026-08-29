@@ -14,7 +14,14 @@ import {
   type StyleMapping,
 } from '@wordconvert/document-model';
 import { PdfReadError } from './error.ts';
-import { extractPdfWithPdfJs, type PdfReaderLimits } from './pdfjs.ts';
+import {
+  extractPdfWithPdfJs,
+  renderPdfPagePreviewWithPdfJs,
+  type PdfPagePreview,
+  type PdfReaderLimits,
+} from './pdfjs.ts';
+
+export type { PdfPagePreview } from './pdfjs.ts';
 export { configurePdfJsWorker } from './pdfjs.ts';
 
 export { PdfReadError } from './error.ts';
@@ -153,6 +160,11 @@ export interface PdfReader {
     input: Uint8Array,
     options: PdfReaderOptions,
   ): Promise<PdfAnalysisResult>;
+  renderPagePreview(
+    input: Uint8Array,
+    pageNumber: number,
+    options?: Pick<PdfReaderOptions, 'limits' | 'cancellation'>,
+  ): Promise<PdfPagePreview>;
 }
 
 const DEFAULT_LIMITS: PdfReaderLimits = {
@@ -189,6 +201,15 @@ export const pdfJsReader: PdfReader = {
       total: 1,
     });
     return result;
+  },
+  async renderPagePreview(input, pageNumber, options = {}) {
+    validateInput(input);
+    return renderPdfPagePreviewWithPdfJs(
+      input,
+      pageNumber,
+      { ...DEFAULT_LIMITS, ...options.limits },
+      options.cancellation,
+    );
   },
 };
 

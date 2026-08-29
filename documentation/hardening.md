@@ -41,7 +41,9 @@ deeply equal analysis and `DocumentModel` values.
 
 ## Browser support policy
 
-WordConvert targets the current and immediately previous major releases of Chrome, Edge, Firefox, and Safari on desktop, plus the corresponding current mobile engines. The production build targets ES2022 and relies on standards available in those releases: Web Workers, transferable `ArrayBuffer`, `Blob`, `File`, object URLs, structured cloning, CSS Grid/Flexbox, and module scripts.
+WordConvert targets the current and immediately previous major releases of Chrome, Edge, Firefox, and Safari on desktop, plus the corresponding current mobile engines. The production build targets ES2022 and relies on standards available in those releases: Web Workers, transferable `ArrayBuffer`, `Blob`, `File`, object URLs, structured cloning, CSS Grid/Flexbox, and module scripts. The optional PDF source-page cleanup preview additionally uses `OffscreenCanvas`; PDF conversion remains available when preview rendering is unsupported.
+
+PDF page previews are rasterized in the conversion worker with a maximum width of 1,200 pixels and a 4-megapixel budget. Preview PNG object URLs are revoked when replaced, when another source is selected, and when the page unloads.
 
 The in-app browser run directly verified the Chromium path, which also exercises the engine used by Chrome and Edge. Firefox and Safari were not available in this environment, so direct two-version engine runs remain a release gate rather than a claimed result. No engine-specific API is used in conversion packages; any discovered browser-specific issue should be recorded here with the affected version and workaround.
 

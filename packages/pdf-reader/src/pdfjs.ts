@@ -46,6 +46,13 @@ export interface PdfExtractionOptions {
   onProgress?: (progress: ConversionProgress) => void;
 }
 
+export interface PdfPagePreview {
+  pageNumber: number;
+  width: number;
+  height: number;
+  data: Uint8Array;
+}
+
 interface PdfJsImage {
   width: number;
   height: number;
@@ -197,6 +204,125 @@ export async function extractPdfWithPdfJs(
     });
   } finally {
     await loading.destroy();
+  }
+}
+
+export async function renderPdfPagePreviewWithPdfJs(
+  input: Uint8Array,
+  pageNumber: number,
+  limits: PdfReaderLimits,
+  cancellation?: CancellationSignal,
+): Promise<PdfPagePreview> {
+  if (input.byteLength > limits.maxInputBytes)
+    throw new PdfReadError(
+      'resource-limit',
+      'PDF exceeds the input size limit.',
+      {
+        phase: 'inspect',
+        details: { limit: limits.maxInputBytes, actual: input.byteLength },
+      },
+    );
+  if (typeof OffscreenCanvas === 'undefined')
+    throw new PdfReadError(
+      'conversion-failed',
+      'This browser cannot render PDF page previews.',
+      { phase: 'read', recoverable: true },
+    );
+  throwIfCancelled(cancellation);
+  const loading = getDocument({
+    data: Uint8Array.from(input),
+    disableAutoFetch: true,
+    disableRange: true,
+    disableStream: true,
+    disableFontFace: true,
+    isOffscreenCanvasSupported: false,
+    stopAtErrors: true,
+    useSystemFonts: false,
+    useWasm: false,
+    verbosity: 0,
+  });
+  let cancellationDestroy: Promise<void> | undefined;
+  const loadingCancellationTimer = setInterval(() => {
+    if (cancellation?.cancelled && !cancellationDestroy)
+      cancellationDestroy = loading.destroy();
+  }, 25);
+  let document: PDFDocumentProxy | undefined;
+  try {
+    document = await loading.promise;
+    if (document.numPages > limits.maxPages)
+      throw new PdfReadError('resource-limit', 'PDF exceeds the page limit.', {
+        phase: 'inspect',
+        details: { limit: limits.maxPages, actual: document.numPages },
+      });
+    if (
+      !Number.isInteger(pageNumber) ||
+      pageNumber < 1 ||
+      pageNumber > document.numPages
+    )
+      throw new PdfReadError(
+        'invalid-input',
+        'The requested PDF preview page does not exist.',
+        { phase: 'read', recoverable: true },
+      );
+    const page = await document.getPage(pageNumber);
+    try {
+      const base = page.getViewport({ scale: 1 });
+      const maxWidth = 1_200;
+      const maxPixels = 4_000_000;
+      const scale = Math.min(
+        maxWidth / base.width,
+        Math.sqrt(maxPixels / (base.width * base.height)),
+      );
+      const viewport = page.getViewport({ scale });
+      const width = Math.max(1, Math.round(viewport.width));
+      const height = Math.max(1, Math.round(viewport.height));
+      const canvas = new OffscreenCanvas(width, height);
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context)
+        throw new PdfReadError(
+          'conversion-failed',
+          'The PDF preview canvas could not be created.',
+          { phase: 'read', recoverable: true },
+        );
+      const renderTask = page.render({
+        canvas: null,
+        // PDF.js supports worker canvases at runtime, but its public type only
+        // names the equivalent main-thread canvas context.
+        canvasContext: context as never,
+        viewport,
+        background: '#ffffff',
+      });
+      const cancellationTimer = setInterval(() => {
+        if (cancellation?.cancelled) renderTask.cancel();
+      }, 25);
+      try {
+        await renderTask.promise;
+      } finally {
+        clearInterval(cancellationTimer);
+      }
+      throwIfCancelled(cancellation);
+      const blob = await canvas.convertToBlob({ type: 'image/png' });
+      throwIfCancelled(cancellation);
+      return {
+        pageNumber,
+        width,
+        height,
+        data: new Uint8Array(await blob.arrayBuffer()),
+      };
+    } finally {
+      page.cleanup();
+    }
+  } catch (cause) {
+    throwIfCancelled(cancellation);
+    if (cause instanceof PdfReadError) throw cause;
+    throw new PdfReadError(
+      'conversion-failed',
+      'The PDF page preview could not be rendered.',
+      { phase: 'read', recoverable: true, cause },
+    );
+  } finally {
+    clearInterval(loadingCancellationTimer);
+    await (cancellationDestroy ?? loading.destroy());
   }
 }
 

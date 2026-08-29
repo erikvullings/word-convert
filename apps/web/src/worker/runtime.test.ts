@@ -115,6 +115,40 @@ describe('worker runtime', () => {
     expect(runtime.activeOperationCount()).toBe(0);
   });
 
+  it('renders a requested PDF page preview independently from analysis', async () => {
+    const sent: WorkerResponse[] = [];
+    const renderPdfPagePreview = vi.fn(async () => ({
+      pageNumber: 4,
+      width: 900,
+      height: 1_200,
+      data: new Uint8Array([137, 80, 78, 71]),
+    }));
+    const runtime = createWorkerRuntime((message) => sent.push(message), {
+      renderPdfPagePreview,
+    });
+
+    await runtime.handle({
+      type: 'pdf-page-preview',
+      operationId: 'preview-4',
+      input: new Uint8Array([37, 80, 68, 70]).buffer,
+      pageNumber: 4,
+    });
+
+    expect(renderPdfPagePreview).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      4,
+      { cancellation: expect.objectContaining({ cancelled: false }) },
+    );
+    expect(sent.at(-1)).toMatchObject({
+      type: 'pdf-page-preview',
+      operationId: 'preview-4',
+      pageNumber: 4,
+      width: 900,
+      height: 1_200,
+    });
+    expect(runtime.activeOperationCount()).toBe(0);
+  });
+
   it('passes extracted PDF images through the existing Markdown writer', async () => {
     const sent: WorkerResponse[] = [];
     const runtime = createWorkerRuntime((message) => sent.push(message));
