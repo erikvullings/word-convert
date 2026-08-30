@@ -14,6 +14,7 @@ import type {
 } from '@wordconvert/pdf-reader';
 
 export interface PdfWorkerOptions {
+  samplePageCount?: number;
   crop?: Partial<PdfCropOptions>;
   removeDetectedFurniture?: boolean;
   removedCandidateIds?: string[];
@@ -42,12 +43,6 @@ export type WorkerRequest =
       cover?: CoverComposition;
       formulaMode?: MathOutputMode;
     }
-  | {
-      type: 'pdf-page-preview';
-      operationId: string;
-      input: ArrayBuffer;
-      pageNumber: number;
-    }
   | { type: 'cancel'; operationId: string };
 
 export type WorkerResponse =
@@ -66,14 +61,6 @@ export type WorkerResponse =
       data: ArrayBuffer;
       files?: string[];
       warnings?: ConversionWarning[];
-    }
-  | {
-      type: 'pdf-page-preview';
-      operationId: string;
-      pageNumber: number;
-      width: number;
-      height: number;
-      data: ArrayBuffer;
     }
   | { type: 'error'; operationId: string; error: ConversionError };
 

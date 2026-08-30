@@ -187,6 +187,20 @@ describe('PDF layout analysis', () => {
       });
     });
 
+    it('extracts a deterministic representative page sample without images', async () => {
+      const raw = await pdfJsReader.readRaw(
+        await fixture('one-column-book.pdf'),
+        {
+          conversionDate: '2026-08-29',
+          samplePageCount: 3,
+        },
+      );
+
+      expect(raw.pageCount).toBe(6);
+      expect(raw.pages.map(({ number }) => number)).toEqual([1, 4, 6]);
+      expect(raw.pages.every(({ images }) => images.length === 0)).toBe(true);
+    });
+
     it('preserves links, images, tagged structure, and scanned-page diagnostics', async () => {
       const [book, tagged, scanned] = await Promise.all([
         pdfJsReader.readRaw(await fixture('one-column-book.pdf'), {
@@ -368,7 +382,7 @@ describe('PDF layout analysis', () => {
     expect(result.analysis.candidates).toEqual([]);
   });
 
-  it('applies crop regions to positioned images', async () => {
+  it('keeps positioned images when nearby text is cropped', async () => {
     const pixels = Uint8Array.from([0, 0, 0, 255]);
     const result = await analysePdf(
       rawDocument([
@@ -408,8 +422,11 @@ describe('PDF layout analysis', () => {
       { conversionDate: '2026-08-29', crop: { top: 0.05 } },
     );
 
-    expect(Object.keys(result.model.assets)).toEqual(['body-image']);
-    expect(JSON.stringify(result.model.blocks)).not.toContain('header-image');
+    expect(Object.keys(result.model.assets)).toEqual([
+      'header-image',
+      'body-image',
+    ]);
+    expect(JSON.stringify(result.model.blocks)).toContain('header-image');
   });
 
   it('places images between surrounding text on the same page', async () => {

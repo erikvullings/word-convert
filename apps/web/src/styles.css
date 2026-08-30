@@ -213,28 +213,71 @@ h1 {
   gap: 1.25rem;
   align-items: start;
 }
+.pdf-sample-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: end;
+  margin: 1rem 0;
+}
+.pdf-sample-controls label {
+  display: grid;
+  gap: 0.3rem;
+}
+.pdf-sample-controls input {
+  width: 7rem;
+}
+.pdf-sample-controls .secondary-button {
+  margin: 0;
+}
+.pdf-sample-controls small {
+  flex-basis: 100%;
+  color: var(--muted);
+}
+.pdf-preview-collapsible {
+  margin: 0;
+  border-color: var(--line);
+  box-shadow: none;
+}
+.pdf-preview-collapsible .collapsible-header,
+.pdf-preview-collapsible .collapsible-body {
+  border-color: var(--line);
+  background: var(--panel);
+}
+.pdf-preview-collapsible .collapsible-header {
+  color: var(--ink);
+  font-weight: 700;
+}
+.pdf-preview-collapsible .collapsible-body {
+  padding: 1rem;
+}
 .pdf-preview-workspace {
   min-width: 0;
 }
-.pdf-page-navigation {
+.pdf-preview-workspace .pagination {
   display: flex;
-  gap: 0.65rem;
-  align-items: center;
   justify-content: center;
-  margin-bottom: 0.65rem;
+  margin: 0 0 0.75rem;
 }
-.pdf-page-navigation .secondary-button {
-  margin: 0;
+.pdf-preview-workspace .pagination li.active {
+  background: var(--accent);
 }
-.pdf-page-number {
-  display: flex;
-  gap: 0.45rem;
-  align-items: center;
-  white-space: nowrap;
+.pdf-preview-workspace .pagination a {
+  color: var(--ink);
 }
-.pdf-page-number input {
-  width: 4.25rem;
-  text-align: center;
+.pdf-preview-workspace .pagination li.active a {
+  color: var(--panel);
+}
+.pdf-preview-workspace .material-icons {
+  font-size: 0;
+}
+.pdf-preview-workspace .material-icons::before {
+  content: '‹';
+  font-family: inherit;
+  font-size: 1.5rem;
+}
+.pdf-preview-workspace li:last-child .material-icons::before {
+  content: '›';
 }
 .pdf-page-preview {
   position: relative;
@@ -292,6 +335,11 @@ h1 {
 }
 .pdf-page-preview__status--error {
   color: #ffb4ab;
+}
+.pdf-preview-note {
+  display: block;
+  margin-top: 0.6rem;
+  color: var(--muted);
 }
 .pdf-crop-controls {
   display: grid;

@@ -24,17 +24,8 @@ export interface WorkerRuntime {
   activeOperationCount(): number;
 }
 
-export interface WorkerRuntimeDependencies {
-  renderPdfPagePreview?: typeof pdfJsReader.renderPagePreview;
-}
-
-export function createWorkerRuntime(
-  send: WorkerSend,
-  dependencies: WorkerRuntimeDependencies = {},
-): WorkerRuntime {
+export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
   const operations = new Map<string, CancellationSignal>();
-  const renderPdfPagePreview =
-    dependencies.renderPdfPagePreview ?? pdfJsReader.renderPagePreview;
 
   return {
     activeOperationCount: () => operations.size,
@@ -89,24 +80,6 @@ export function createWorkerRuntime(
             model,
             ...(pdfResult ? { pdfAnalysis: pdfResult.analysis } : {}),
           });
-        } else if (request.type === 'pdf-page-preview') {
-          const preview = await renderPdfPagePreview(
-            new Uint8Array(request.input),
-            request.pageNumber,
-            { cancellation: signal },
-          );
-          const data = Uint8Array.from(preview.data).buffer;
-          send(
-            {
-              type: 'pdf-page-preview',
-              operationId: request.operationId,
-              pageNumber: preview.pageNumber,
-              width: preview.width,
-              height: preview.height,
-              data,
-            },
-            [data],
-          );
         } else {
           send({
             type: 'progress',

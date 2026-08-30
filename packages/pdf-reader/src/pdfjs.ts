@@ -42,15 +42,9 @@ export interface PdfReaderLimits {
 
 export interface PdfExtractionOptions {
   limits: PdfReaderLimits;
+  samplePageCount?: number;
   cancellation?: CancellationSignal;
   onProgress?: (progress: ConversionProgress) => void;
-}
-
-export interface PdfPagePreview {
-  pageNumber: number;
-  width: number;
-  height: number;
-  data: Uint8Array;
 }
 
 interface PdfJsImage {
@@ -129,15 +123,20 @@ export async function extractPdfWithPdfJs(
       readMetadata(document),
       readOutline(document),
     ]);
+    const pageNumbers = representativePageNumbers(
+      document.numPages,
+      options.samplePageCount,
+    );
+    const isSample = pageNumbers.length < document.numPages;
     const pages: RawPdfPage[] = [];
     let textItems = 0;
     const imageBudget: PdfImageBudget = { images: 0, pixels: 0 };
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
+    for (const [index, pageNumber] of pageNumbers.entries()) {
       throwIfCancelled(options.cancellation);
       options.onProgress?.({
         phase: 'read',
-        completed: pageNumber - 1,
-        total: document.numPages,
+        completed: index,
+        total: pageNumbers.length,
         message: `Reading PDF page ${pageNumber}.`,
       });
       const page = await document.getPage(pageNumber);
@@ -148,6 +147,7 @@ export async function extractPdfWithPdfJs(
           options.limits,
           imageBudget,
           options.cancellation,
+          !isSample,
         );
         textItems += extracted.spans.length;
         if (textItems > options.limits.maxTextItems)
@@ -169,8 +169,8 @@ export async function extractPdfWithPdfJs(
     }
     options.onProgress?.({
       phase: 'read',
-      completed: document.numPages,
-      total: document.numPages,
+      completed: pageNumbers.length,
+      total: pageNumbers.length,
     });
     return {
       version: 1,
@@ -207,123 +207,26 @@ export async function extractPdfWithPdfJs(
   }
 }
 
-export async function renderPdfPagePreviewWithPdfJs(
-  input: Uint8Array,
-  pageNumber: number,
-  limits: PdfReaderLimits,
-  cancellation?: CancellationSignal,
-): Promise<PdfPagePreview> {
-  if (input.byteLength > limits.maxInputBytes)
+export function representativePageNumbers(
+  totalPages: number,
+  samplePageCount?: number,
+): number[] {
+  if (samplePageCount === undefined)
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  if (!Number.isInteger(samplePageCount) || samplePageCount < 1)
     throw new PdfReadError(
-      'resource-limit',
-      'PDF exceeds the input size limit.',
-      {
-        phase: 'inspect',
-        details: { limit: limits.maxInputBytes, actual: input.byteLength },
-      },
+      'invalid-input',
+      'PDF sample page count must be a positive integer.',
+      { phase: 'inspect', recoverable: true },
     );
-  if (typeof OffscreenCanvas === 'undefined')
-    throw new PdfReadError(
-      'conversion-failed',
-      'This browser cannot render PDF page previews.',
-      { phase: 'read', recoverable: true },
-    );
-  throwIfCancelled(cancellation);
-  const loading = getDocument({
-    data: Uint8Array.from(input),
-    disableAutoFetch: true,
-    disableRange: true,
-    disableStream: true,
-    disableFontFace: true,
-    isOffscreenCanvasSupported: false,
-    stopAtErrors: true,
-    useSystemFonts: false,
-    useWasm: false,
-    verbosity: 0,
-  });
-  let cancellationDestroy: Promise<void> | undefined;
-  const loadingCancellationTimer = setInterval(() => {
-    if (cancellation?.cancelled && !cancellationDestroy)
-      cancellationDestroy = loading.destroy();
-  }, 25);
-  let document: PDFDocumentProxy | undefined;
-  try {
-    document = await loading.promise;
-    if (document.numPages > limits.maxPages)
-      throw new PdfReadError('resource-limit', 'PDF exceeds the page limit.', {
-        phase: 'inspect',
-        details: { limit: limits.maxPages, actual: document.numPages },
-      });
-    if (
-      !Number.isInteger(pageNumber) ||
-      pageNumber < 1 ||
-      pageNumber > document.numPages
-    )
-      throw new PdfReadError(
-        'invalid-input',
-        'The requested PDF preview page does not exist.',
-        { phase: 'read', recoverable: true },
-      );
-    const page = await document.getPage(pageNumber);
-    try {
-      const base = page.getViewport({ scale: 1 });
-      const maxWidth = 1_200;
-      const maxPixels = 4_000_000;
-      const scale = Math.min(
-        maxWidth / base.width,
-        Math.sqrt(maxPixels / (base.width * base.height)),
-      );
-      const viewport = page.getViewport({ scale });
-      const width = Math.max(1, Math.round(viewport.width));
-      const height = Math.max(1, Math.round(viewport.height));
-      const canvas = new OffscreenCanvas(width, height);
-      const context = canvas.getContext('2d', { alpha: false });
-      if (!context)
-        throw new PdfReadError(
-          'conversion-failed',
-          'The PDF preview canvas could not be created.',
-          { phase: 'read', recoverable: true },
-        );
-      const renderTask = page.render({
-        canvas: null,
-        // PDF.js supports worker canvases at runtime, but its public type only
-        // names the equivalent main-thread canvas context.
-        canvasContext: context as never,
-        viewport,
-        background: '#ffffff',
-      });
-      const cancellationTimer = setInterval(() => {
-        if (cancellation?.cancelled) renderTask.cancel();
-      }, 25);
-      try {
-        await renderTask.promise;
-      } finally {
-        clearInterval(cancellationTimer);
-      }
-      throwIfCancelled(cancellation);
-      const blob = await canvas.convertToBlob({ type: 'image/png' });
-      throwIfCancelled(cancellation);
-      return {
-        pageNumber,
-        width,
-        height,
-        data: new Uint8Array(await blob.arrayBuffer()),
-      };
-    } finally {
-      page.cleanup();
-    }
-  } catch (cause) {
-    throwIfCancelled(cancellation);
-    if (cause instanceof PdfReadError) throw cause;
-    throw new PdfReadError(
-      'conversion-failed',
-      'The PDF page preview could not be rendered.',
-      { phase: 'read', recoverable: true, cause },
-    );
-  } finally {
-    clearInterval(loadingCancellationTimer);
-    await (cancellationDestroy ?? loading.destroy());
-  }
+  if (samplePageCount >= totalPages)
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  if (samplePageCount === 1) return [1];
+  return Array.from(
+    { length: samplePageCount },
+    (_, index) =>
+      1 + Math.round((index * (totalPages - 1)) / (samplePageCount - 1)),
+  );
 }
 
 async function readPage(
@@ -332,6 +235,7 @@ async function readPage(
   limits: PdfReaderLimits,
   imageBudget: PdfImageBudget,
   cancellation?: CancellationSignal,
+  includeImages = true,
 ): Promise<RawPdfPage> {
   const viewport = page.getViewport({ scale: 1 });
   const [text, annotations, structure, images] = await Promise.all([
@@ -341,13 +245,15 @@ async function readPage(
     }),
     page.getAnnotations({ intent: 'display' }),
     page.getStructTree(),
-    readImages(
-      page,
-      viewport.transform as Matrix,
-      limits,
-      cancellation,
-      imageBudget,
-    ),
+    includeImages
+      ? readImages(
+          page,
+          viewport.transform as Matrix,
+          limits,
+          cancellation,
+          imageBudget,
+        )
+      : Promise.resolve([]),
   ]);
   throwIfCancelled(cancellation);
   if (text.items.length > limits.maxTextItemsPerPage)

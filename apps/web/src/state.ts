@@ -30,6 +30,7 @@ export type SourceFormat = 'docx' | 'pdf';
 export interface PdfImportSettings {
   cropTop: number;
   cropBottom: number;
+  samplePageCount: number;
   removeDetectedFurniture: boolean;
   removedCandidateIds: string[];
   retainedCandidateIds: string[];
@@ -73,6 +74,7 @@ export interface AppState {
   pdfAnalysis?: PdfAnalysisSummary;
   pdfImport: PdfImportSettings;
   pdfPreviewPage: number;
+  pdfPreviewRequested?: boolean;
   pdfPreviewOperationId?: string;
   pdfPreview?: PdfPagePreviewState;
   pdfPreviewLoading?: boolean;
@@ -130,6 +132,7 @@ export function createInitialState(
     pdfImport: {
       cropTop: 0,
       cropBottom: 0,
+      samplePageCount: 5,
       removeDetectedFurniture: true,
       removedCandidateIds: [],
       retainedCandidateIds: [],

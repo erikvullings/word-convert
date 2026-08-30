@@ -14,14 +14,7 @@ import {
   type StyleMapping,
 } from '@wordconvert/document-model';
 import { PdfReadError } from './error.ts';
-import {
-  extractPdfWithPdfJs,
-  renderPdfPagePreviewWithPdfJs,
-  type PdfPagePreview,
-  type PdfReaderLimits,
-} from './pdfjs.ts';
-
-export type { PdfPagePreview } from './pdfjs.ts';
+import { extractPdfWithPdfJs, type PdfReaderLimits } from './pdfjs.ts';
 export { configurePdfJsWorker } from './pdfjs.ts';
 
 export { PdfReadError } from './error.ts';
@@ -136,6 +129,7 @@ export interface PdfFurnitureCandidate {
 
 export interface PdfAnalysisSummary {
   pageCount: number;
+  analysedPages: number[];
   crop: PdfCropOptions;
   candidates: PdfFurnitureCandidate[];
   scannedPages: number[];
@@ -148,6 +142,7 @@ export interface PdfAnalysisResult {
 
 export interface PdfReaderOptions extends PdfAnalysisOptions {
   limits?: Partial<PdfReaderLimits>;
+  samplePageCount?: number;
 }
 
 export interface PdfReader {
@@ -160,11 +155,6 @@ export interface PdfReader {
     input: Uint8Array,
     options: PdfReaderOptions,
   ): Promise<PdfAnalysisResult>;
-  renderPagePreview(
-    input: Uint8Array,
-    pageNumber: number,
-    options?: Pick<PdfReaderOptions, 'limits' | 'cancellation'>,
-  ): Promise<PdfPagePreview>;
 }
 
 const DEFAULT_LIMITS: PdfReaderLimits = {
@@ -185,6 +175,9 @@ export const pdfJsReader: PdfReader = {
       limits: { ...DEFAULT_LIMITS, ...options.limits },
       ...(options.cancellation ? { cancellation: options.cancellation } : {}),
       ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+      ...(options.samplePageCount !== undefined
+        ? { samplePageCount: options.samplePageCount }
+        : {}),
     });
   },
   async read(input, options) {
@@ -201,15 +194,6 @@ export const pdfJsReader: PdfReader = {
       total: 1,
     });
     return result;
-  },
-  async renderPagePreview(input, pageNumber, options = {}) {
-    validateInput(input);
-    return renderPdfPagePreviewWithPdfJs(
-      input,
-      pageNumber,
-      { ...DEFAULT_LIMITS, ...options.limits },
-      options.cancellation,
-    );
   },
 };
 
@@ -267,7 +251,6 @@ export async function analysePdf(
     options,
   );
   const croppedSpanIds = new Set<string>();
-  const croppedImageIds = new Set<string>();
   const warnings: ConversionWarning[] = [];
   const scannedPages: number[] = [];
   const retainedPages: RawPdfPage[] = [];
@@ -281,24 +264,15 @@ export async function analysePdf(
       if (cropped) croppedSpanIds.add(span.id);
       return !cropped && !candidateBySpan.has(span.id);
     });
-    const images = page.images.filter((image) => {
-      const cropped =
-        image.top < crop.top || image.top + image.height > 1 - crop.bottom;
-      if (cropped) croppedImageIds.add(image.id);
-      return !cropped;
-    });
-    retainedPages.push({ ...page, spans, images });
+    retainedPages.push({ ...page, spans });
   }
 
-  if (croppedSpanIds.size > 0 || croppedImageIds.size > 0)
+  if (croppedSpanIds.size > 0)
     warnings.push({
       code: 'pdf-cropped-page-furniture',
       severity: 'info',
       message: 'Content inside the configured PDF crop regions was omitted.',
-      details: {
-        textSpans: croppedSpanIds.size,
-        images: croppedImageIds.size,
-      },
+      details: { textSpans: croppedSpanIds.size },
     });
   if (candidateBySpan.size > 0)
     warnings.push({
@@ -350,6 +324,7 @@ export async function analysePdf(
     },
     analysis: {
       pageCount: raw.pageCount,
+      analysedPages: raw.pages.map(({ number }) => number),
       crop,
       candidates,
       scannedPages,

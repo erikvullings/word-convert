@@ -95,6 +95,7 @@ describe('App', () => {
     state.pdfImport.cropBottom = 0.06;
     state.pdfAnalysis = {
       pageCount: 12,
+      analysedPages: [1, 4, 8, 12],
       crop: { top: 0.08, bottom: 0.06 },
       scannedPages: [],
       candidates: [
@@ -111,6 +112,7 @@ describe('App', () => {
       ],
     };
     state.pdfPreviewPage = 3;
+    state.pdfPreviewRequested = true;
     state.pdfPreview = {
       pageNumber: 3,
       width: 900,
@@ -121,16 +123,17 @@ describe('App', () => {
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
     expect(rendered).toContain('PDF page cleanup');
-    expect(rendered).toContain('Actual PDF page with excluded crop regions');
+    expect(rendered).toContain('Source-page preview (optional)');
     expect(rendered).toContain('PDF page 3 preview');
-    expect(rendered).toContain('Preview previous PDF page');
-    expect(rendered).toContain('Preview next PDF page');
+    expect(rendered).toContain('Preview PDF page 3');
+    expect(rendered).toContain('Pages to sample');
+    expect(rendered).toContain('Currently scanned: 1, 4, 8, 12');
     expect(rendered).toContain('Top crop: 8%');
     expect(rendered).toContain('Bottom crop: 6%');
     expect(rendered).toContain(
       'Remove from output · header · odd pages · high confidence',
     );
-    expect(rendered).toContain('Apply crop and selected removals');
+    expect(rendered).toContain('Process all 12 pages and apply cleanup');
   });
 
   it('shows the document title quietly and uses radio buttons for Markdown preview mode', () => {

@@ -41,9 +41,11 @@ deeply equal analysis and `DocumentModel` values.
 
 ## Browser support policy
 
-WordConvert targets the current and immediately previous major releases of Chrome, Edge, Firefox, and Safari on desktop, plus the corresponding current mobile engines. The production build targets ES2022 and relies on standards available in those releases: Web Workers, transferable `ArrayBuffer`, `Blob`, `File`, object URLs, structured cloning, CSS Grid/Flexbox, and module scripts. The optional PDF source-page cleanup preview additionally uses `OffscreenCanvas`; PDF conversion remains available when preview rendering is unsupported.
+WordConvert targets the current and immediately previous major releases of Chrome, Edge, Firefox, and Safari on desktop, plus the corresponding current mobile engines. The production build targets ES2022 and relies on standards available in those releases: Web Workers, transferable `ArrayBuffer`, `Blob`, `File`, object URLs, structured cloning, HTML canvas, CSS Grid/Flexbox, and module scripts.
 
-PDF page previews are rasterized in the conversion worker with a maximum width of 1,200 pixels and a 4-megapixel budget. Preview PNG object URLs are revoked when replaced, when another source is selected, and when the page unloads.
+PDF source-page previews are loaded only on request and rasterized on an HTML canvas with a maximum width of 1,200 pixels and a 4-megapixel budget. The browser-canvas path supports embedded fonts that PDF.js cannot reliably draw on `OffscreenCanvas` for some legacy PDFs. Preview rendering is best-effort so recoverable legacy-font errors do not produce blank pages; extraction remains strict. Preview tasks and PNG object URLs are released when replaced, when another source is selected, and when the page unloads.
+
+Initial PDF cleanup analysis reads five deterministic representative pages by default, without extracting images. The user can increase and rescan that sample before the first full-document pass. Output choices remain unavailable until cleanup is applied to the complete document. Crop bands omit text only; images are retained even when they overlap a configured band.
 
 The in-app browser run directly verified the Chromium path, which also exercises the engine used by Chrome and Edge. Firefox and Safari were not available in this environment, so direct two-version engine runs remain a release gate rather than a claimed result. No engine-specific API is used in conversion packages; any discovered browser-specific issue should be recorded here with the affected version and workaround.
 

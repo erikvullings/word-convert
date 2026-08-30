@@ -44,37 +44,59 @@ export function createBrowserController(): AppController {
   });
   let sourceInput: ArrayBuffer | undefined;
   let sourceFilename: string | undefined;
+  let previewRenderer:
+    import('./pdf-preview.ts').PdfPagePreviewRenderer | undefined;
   const releasePdfPreview = (): void => {
     if (state.pdfPreview) URL.revokeObjectURL(state.pdfPreview.url);
     delete state.pdfPreview;
   };
+  const disposePdfPreview = (): void => {
+    releasePdfPreview();
+    void previewRenderer?.dispose();
+    previewRenderer = undefined;
+  };
   const requestPdfPage = (requestedPage: number): void => {
     if (!sourceInput || state.sourceFormat !== 'pdf') return;
+    const input = sourceInput;
     const pageCount = state.pdfAnalysis?.pageCount ?? 1;
     const pageNumber = Math.min(
       pageCount,
       Math.max(1, Math.round(requestedPage)),
     );
-    if (state.pdfPreviewOperationId)
-      worker.postMessage({
-        type: 'cancel',
-        operationId: state.pdfPreviewOperationId,
-      } satisfies WorkerRequest);
     releasePdfPreview();
     state.pdfPreviewPage = pageNumber;
+    state.pdfPreviewRequested = true;
     state.pdfPreviewLoading = true;
     delete state.pdfPreviewError;
     state.pdfPreviewOperationId = operationId('pdf-preview');
-    const input = sourceInput.slice(0);
-    worker.postMessage(
-      {
-        type: 'pdf-page-preview',
-        operationId: state.pdfPreviewOperationId,
-        input,
-        pageNumber,
-      } satisfies WorkerRequest,
-      [input],
-    );
+    const previewOperationId = state.pdfPreviewOperationId;
+    void import('./pdf-preview.ts')
+      .then(async ({ createPdfPagePreviewRenderer }) => {
+        previewRenderer ??= createPdfPagePreviewRenderer();
+        const preview = await previewRenderer.render(input, pageNumber);
+        if (state.pdfPreviewOperationId !== previewOperationId) return;
+        releasePdfPreview();
+        state.pdfPreview = {
+          pageNumber: preview.pageNumber,
+          width: preview.width,
+          height: preview.height,
+          url: URL.createObjectURL(preview.blob),
+        };
+        state.pdfPreviewLoading = false;
+        delete state.pdfPreviewError;
+        delete state.pdfPreviewOperationId;
+        m.redraw();
+      })
+      .catch((cause: unknown) => {
+        if (state.pdfPreviewOperationId !== previewOperationId) return;
+        state.pdfPreviewLoading = false;
+        state.pdfPreviewError =
+          cause instanceof Error
+            ? cause.message
+            : 'The PDF page preview could not be rendered.';
+        delete state.pdfPreviewOperationId;
+        m.redraw();
+      });
   };
   const requestConvert = (): void => {
     if (!state.model) return;
@@ -118,7 +140,7 @@ export function createBrowserController(): AppController {
   };
 
   if (typeof window !== 'undefined') {
-    window.addEventListener('beforeunload', releasePdfPreview, { once: true });
+    window.addEventListener('beforeunload', disposePdfPreview, { once: true });
     window.addEventListener('popstate', (event: PopStateEvent) => {
       const stage =
         typeof event.state?.stage === 'number' ? event.state.stage : 1;
@@ -138,34 +160,7 @@ export function createBrowserController(): AppController {
   }
 
   worker.addEventListener('message', (event: MessageEvent<WorkerResponse>) => {
-    if (event.data.operationId === state.pdfPreviewOperationId) {
-      delete state.pdfPreviewOperationId;
-      if (event.data.type === 'pdf-page-preview') {
-        releasePdfPreview();
-        state.pdfPreview = {
-          pageNumber: event.data.pageNumber,
-          width: event.data.width,
-          height: event.data.height,
-          url: URL.createObjectURL(
-            new Blob([event.data.data], { type: 'image/png' }),
-          ),
-        };
-        state.pdfPreviewLoading = false;
-        delete state.pdfPreviewError;
-      } else if (event.data.type === 'error') {
-        state.pdfPreviewLoading = false;
-        state.pdfPreviewError = event.data.error.message;
-      }
-      m.redraw();
-      return;
-    }
     applyResponse(state, event.data);
-    if (
-      event.data.type === 'analysed' &&
-      event.data.operationId === state.operationId &&
-      event.data.pdfAnalysis
-    )
-      requestPdfPage(state.pdfPreviewPage);
     m.redraw();
   });
   worker.addEventListener('error', () => {
@@ -199,8 +194,9 @@ export function createBrowserController(): AppController {
       delete state.selectedEpubFile;
       delete state.model;
       delete state.pdfAnalysis;
-      releasePdfPreview();
+      disposePdfPreview();
       state.pdfPreviewPage = 1;
+      delete state.pdfPreviewRequested;
       delete state.pdfPreviewError;
       delete state.pdfPreviewOperationId;
       state.selectedFilename = file.name;
@@ -222,7 +218,12 @@ export function createBrowserController(): AppController {
           sourceFormat,
           conversionDate: state.conversionDate,
           ...(sourceFormat === 'pdf'
-            ? { pdfOptions: pdfWorkerOptions(state) }
+            ? {
+                pdfOptions: pdfWorkerOptions(
+                  state,
+                  state.pdfImport.samplePageCount,
+                ),
+              }
             : {}),
         } satisfies WorkerRequest;
         worker.postMessage(request, [request.input]);
@@ -312,6 +313,11 @@ export function createBrowserController(): AppController {
     },
     rerunAnalysis() {
       if (!sourceInput || !sourceFilename) return;
+      if (state.sourceFormat === 'pdf') {
+        disposePdfPreview();
+        state.pdfPreviewPage = 1;
+        delete state.pdfPreviewRequested;
+      }
       state.status = 'analysing';
       state.operationId = operationId('analyse');
       const input = sourceInput.slice(0);
@@ -334,6 +340,28 @@ export function createBrowserController(): AppController {
         [input],
       );
     },
+    rescanPdfSample() {
+      if (!sourceInput || !sourceFilename || state.sourceFormat !== 'pdf')
+        return;
+      disposePdfPreview();
+      state.pdfPreviewPage = 1;
+      delete state.pdfPreviewRequested;
+      state.status = 'analysing';
+      state.operationId = operationId('analyse-pdf-sample');
+      const input = sourceInput.slice(0);
+      worker.postMessage(
+        {
+          type: 'analyse',
+          operationId: state.operationId,
+          input,
+          filename: sourceFilename,
+          sourceFormat: 'pdf',
+          conversionDate: state.conversionDate,
+          pdfOptions: pdfWorkerOptions(state, state.pdfImport.samplePageCount),
+        } satisfies WorkerRequest,
+        [input],
+      );
+    },
     setPdfCrop(edge, value) {
       const amount = Math.min(0.45, Math.max(0, value));
       if (edge === 'top') state.pdfImport.cropTop = amount;
@@ -341,6 +369,14 @@ export function createBrowserController(): AppController {
     },
     setPdfPreviewPage(pageNumber) {
       requestPdfPage(pageNumber);
+    },
+    setPdfSamplePageCount(pageCount) {
+      const maximum = state.pdfAnalysis?.pageCount ?? 50;
+      const minimum = Math.min(5, maximum);
+      state.pdfImport.samplePageCount = Math.min(
+        maximum,
+        Math.max(minimum, Math.round(pageCount)),
+      );
     },
     setPdfCandidateRemoval(candidateId, remove) {
       state.pdfImport.removedCandidateIds =
@@ -545,11 +581,13 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
 
 function pdfWorkerOptions(
   state: AppState,
+  samplePageCount?: number,
 ): import('./worker/protocol.ts').PdfWorkerOptions {
   const removedCandidateIds = new Set(state.pdfImport.removedCandidateIds);
   for (const candidate of state.pdfAnalysis?.candidates ?? [])
     if (candidate.removed) removedCandidateIds.add(candidate.id);
   return {
+    ...(samplePageCount !== undefined ? { samplePageCount } : {}),
     crop: {
       top: state.pdfImport.cropTop,
       bottom: state.pdfImport.cropBottom,
