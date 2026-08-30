@@ -16,6 +16,7 @@ import pdfJsWorkerSrc from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import { unzipSync } from 'fflate';
 
 import type { WorkerRequest, WorkerSend } from './protocol.ts';
+import { createPdfFigureRasterizer } from './pdf-figure-rasterizer.ts';
 
 if (typeof Worker !== 'undefined') configurePdfJsWorker(pdfJsWorkerSrc);
 
@@ -60,11 +61,17 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                 progress,
               }),
           };
+          const figureRasterizer =
+            request.sourceFormat === 'pdf' &&
+            request.pdfOptions?.samplePageCount === undefined
+              ? createPdfFigureRasterizer()
+              : undefined;
           const pdfResult =
             request.sourceFormat === 'pdf'
               ? await pdfJsReader.read(new Uint8Array(request.input), {
                   ...readerOptions,
                   ...request.pdfOptions,
+                  ...(figureRasterizer ? { figureRasterizer } : {}),
                 })
               : undefined;
           const model =

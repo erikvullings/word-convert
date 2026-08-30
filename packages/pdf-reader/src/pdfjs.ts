@@ -45,6 +45,19 @@ export interface PdfExtractionOptions {
   samplePageCount?: number;
   cancellation?: CancellationSignal;
   onProgress?: (progress: ConversionProgress) => void;
+  figureRasterizer?: PdfFigureRasterizer;
+}
+
+export interface PdfFigureSurface {
+  canvas: unknown;
+  encodePng(): Promise<Uint8Array>;
+  dispose(): void;
+}
+
+export interface PdfFigureRasterizer {
+  CanvasFactory: new (options: { enableHWA?: boolean }) => object;
+  FilterFactory: new (options: { docId: string }) => object;
+  createSurface(width: number, height: number): PdfFigureSurface;
 }
 
 interface PdfJsImage {
@@ -107,6 +120,12 @@ export async function extractPdfWithPdfJs(
     useSystemFonts: false,
     useWasm: false,
     verbosity: 0,
+    ...(options.figureRasterizer
+      ? {
+          CanvasFactory: options.figureRasterizer.CanvasFactory,
+          FilterFactory: options.figureRasterizer.FilterFactory,
+        }
+      : {}),
   });
   let document: PDFDocumentProxy | undefined;
   try {
@@ -148,6 +167,7 @@ export async function extractPdfWithPdfJs(
           imageBudget,
           options.cancellation,
           !isSample,
+          options.figureRasterizer,
         );
         textItems += extracted.spans.length;
         if (textItems > options.limits.maxTextItems)
@@ -236,6 +256,7 @@ async function readPage(
   imageBudget: PdfImageBudget,
   cancellation?: CancellationSignal,
   includeImages = true,
+  figureRasterizer?: PdfFigureRasterizer,
 ): Promise<RawPdfPage> {
   const viewport = page.getViewport({ scale: 1 });
   const [text, annotations, structure, images] = await Promise.all([
@@ -252,6 +273,7 @@ async function readPage(
           limits,
           cancellation,
           imageBudget,
+          figureRasterizer,
         )
       : Promise.resolve([]),
   ]);
@@ -269,18 +291,24 @@ async function readPage(
       },
     );
   const links = readLinks(annotations, viewport);
+  const spans = readSpans(
+    text,
+    links,
+    viewport.width,
+    viewport.height,
+    viewport.transform as Matrix,
+    pageNumber,
+  );
+  const figureRegions = images.filter(
+    ({ source }) => source === 'rendered-figure',
+  );
   return {
     number: pageNumber,
     width: viewport.width,
     height: viewport.height,
     rotation: viewport.rotation,
-    spans: readSpans(
-      text,
-      links,
-      viewport.width,
-      viewport.height,
-      viewport.transform as Matrix,
-      pageNumber,
+    spans: spans.filter(
+      (span) => !figureRegions.some((region) => intersects(span, region)),
     ),
     links,
     images,
@@ -420,11 +448,13 @@ export async function readImages(
   limits: PdfReaderLimits,
   cancellation?: CancellationSignal,
   imageBudget: PdfImageBudget = { images: 0, pixels: 0 },
+  figureRasterizer?: PdfFigureRasterizer,
 ): Promise<RawPdfImage[]> {
   const operators = await page.getOperatorList();
   throwIfCancelled(cancellation);
   const images: RawPdfImage[] = [];
   const stack: Matrix[] = [];
+  const vectorBounds: NormalizedBounds[] = [];
   let transform: Matrix = [1, 0, 0, 1, 0, 0];
   for (let index = 0; index < operators.fnArray.length; index++) {
     if (index % 100 === 0) {
@@ -438,6 +468,23 @@ export async function readImages(
     else if (operation === OPS.transform && isNumberArray(args, 6))
       transform = multiply(transform, args);
     else if (
+      operation === OPS.constructPath &&
+      isNumberSequence(args?.[2]) &&
+      args[2].length >= 4
+    ) {
+      const viewport = page.getViewport({ scale: 1 });
+      vectorBounds.push(
+        rectangleBounds(
+          multiply(viewportTransform, transform),
+          args[2][0]!,
+          args[2][1]!,
+          args[2][2]!,
+          args[2][3]!,
+          viewport.width,
+          viewport.height,
+        ),
+      );
+    } else if (
       operation === OPS.paintImageXObject &&
       typeof args?.[0] === 'string'
     ) {
@@ -523,7 +570,121 @@ export async function readImages(
       }
     }
   }
-  return images;
+  if (!figureRasterizer) return images;
+  const regions = figureRegions(vectorBounds);
+  const standaloneImages = images.filter(
+    (image) => !regions.some((region) => intersects(image, region)),
+  );
+  for (const [index, region] of regions.entries()) {
+    standaloneImages.push(
+      await rasterizeFigure(
+        page,
+        region,
+        index,
+        limits,
+        imageBudget,
+        figureRasterizer,
+        cancellation,
+      ),
+    );
+  }
+  return standaloneImages;
+}
+
+interface NormalizedBounds {
+  x: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+function figureRegions(
+  bounds: readonly NormalizedBounds[],
+): NormalizedBounds[] {
+  const groups = bounds
+    .filter(({ width, height }) => width > 0 || height > 0)
+    .map((region) => ({ region, paths: 1 }));
+  let merged = true;
+  while (merged) {
+    merged = false;
+    for (let leftIndex = 0; leftIndex < groups.length; leftIndex++) {
+      for (
+        let rightIndex = leftIndex + 1;
+        rightIndex < groups.length;
+        rightIndex++
+      ) {
+        const left = groups[leftIndex]!;
+        const right = groups[rightIndex]!;
+        if (!nearby(left.region, right.region, 0.015)) continue;
+        left.region = unionBounds(left.region, right.region);
+        left.paths += right.paths;
+        groups.splice(rightIndex, 1);
+        merged = true;
+        rightIndex--;
+      }
+    }
+  }
+  return groups
+    .filter(
+      ({ region, paths }) =>
+        paths >= 4 &&
+        region.width >= 0.12 &&
+        region.height >= 0.06 &&
+        region.width * region.height <= 0.7,
+    )
+    .map(({ region }) => padBounds(region, 0.008));
+}
+
+async function rasterizeFigure(
+  page: PDFPageProxy,
+  region: NormalizedBounds,
+  index: number,
+  limits: PdfReaderLimits,
+  imageBudget: PdfImageBudget,
+  rasterizer: PdfFigureRasterizer,
+  cancellation?: CancellationSignal,
+): Promise<RawPdfImage> {
+  const base = page.getViewport({ scale: 1 });
+  const regionPixels = base.width * region.width * base.height * region.height;
+  const scale = Math.min(2, Math.sqrt(limits.maxImagePixels / regionPixels));
+  const viewport = page.getViewport({ scale });
+  const pixelWidth = Math.max(1, Math.ceil(viewport.width * region.width));
+  const pixelHeight = Math.max(1, Math.ceil(viewport.height * region.height));
+  reserveImages(
+    { width: pixelWidth, height: pixelHeight },
+    1,
+    limits,
+    imageBudget,
+  );
+  const surface = rasterizer.createSurface(pixelWidth, pixelHeight);
+  try {
+    const task = page.render({
+      canvas: surface.canvas as never,
+      viewport,
+      transform: [
+        1,
+        0,
+        0,
+        1,
+        -region.x * viewport.width,
+        -region.top * viewport.height,
+      ],
+      background: '#ffffff',
+    });
+    await task.promise;
+    throwIfCancelled(cancellation);
+    return {
+      id: `pdf-figure-${page.pageNumber}-${index}`,
+      ...region,
+      pixelWidth,
+      pixelHeight,
+      mediaType: 'image/png',
+      data: await surface.encodePng(),
+      source: 'rendered-figure',
+    };
+  } finally {
+    surface.dispose();
+  }
 }
 
 async function appendImage(
@@ -726,6 +887,70 @@ function imageBounds(
     width: clamp((right - left) / pageWidth),
     height: clamp((bottom - top) / pageHeight),
   };
+}
+
+function rectangleBounds(
+  matrix: Matrix,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  pageWidth: number,
+  pageHeight: number,
+): NormalizedBounds {
+  const points = [
+    transformPoint(matrix, x1, y1),
+    transformPoint(matrix, x2, y1),
+    transformPoint(matrix, x1, y2),
+    transformPoint(matrix, x2, y2),
+  ];
+  const left = Math.min(...points.map(([x]) => x));
+  const right = Math.max(...points.map(([x]) => x));
+  const top = Math.min(...points.map(([, y]) => y));
+  const bottom = Math.max(...points.map(([, y]) => y));
+  const x = clamp(left / pageWidth);
+  const normalizedTop = clamp(top / pageHeight);
+  return {
+    x,
+    top: normalizedTop,
+    width: clamp((right - left) / pageWidth, 0, 1 - x),
+    height: clamp((bottom - top) / pageHeight, 0, 1 - normalizedTop),
+  };
+}
+
+function nearby(
+  left: NormalizedBounds,
+  right: NormalizedBounds,
+  gap: number,
+): boolean {
+  return !(
+    left.x + left.width + gap < right.x ||
+    right.x + right.width + gap < left.x ||
+    left.top + left.height + gap < right.top ||
+    right.top + right.height + gap < left.top
+  );
+}
+
+function unionBounds(
+  left: NormalizedBounds,
+  right: NormalizedBounds,
+): NormalizedBounds {
+  const x = Math.min(left.x, right.x);
+  const top = Math.min(left.top, right.top);
+  const rightEdge = Math.max(left.x + left.width, right.x + right.width);
+  const bottom = Math.max(left.top + left.height, right.top + right.height);
+  return { x, top, width: rightEdge - x, height: bottom - top };
+}
+
+function padBounds(
+  bounds: NormalizedBounds,
+  padding: number,
+): NormalizedBounds {
+  const x = Math.max(0, bounds.x - padding);
+  const top = Math.max(0, bounds.top - padding);
+  const right = Math.min(1, bounds.x + bounds.width + padding);
+  const bottom = Math.min(1, bounds.top + bounds.height + padding);
+  return { x, top, width: right - x, height: bottom - top };
 }
 
 function readStructure(value: unknown): RawPdfStructureNode {

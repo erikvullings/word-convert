@@ -74,7 +74,9 @@ export interface AppState {
   pdfAnalysis?: PdfAnalysisSummary;
   pdfImport: PdfImportSettings;
   pdfPreviewPage: number;
+  pdfPreviewScale: number;
   pdfPreviewRequested?: boolean;
+  pdfOriginalVisible?: boolean;
   pdfPreviewOperationId?: string;
   pdfPreview?: PdfPagePreviewState;
   pdfPreviewLoading?: boolean;
@@ -138,6 +140,7 @@ export function createInitialState(
       retainedCandidateIds: [],
     },
     pdfPreviewPage: 1,
+    pdfPreviewScale: 1,
     preferences,
   };
 }

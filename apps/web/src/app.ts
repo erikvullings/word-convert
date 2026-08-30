@@ -9,8 +9,10 @@ import type {
 import {
   Button,
   Collapsible,
+  FlatButton,
+  InputCheckbox,
   LinearProgress,
-  Pagination,
+  PaginationControls,
   RadioButtons,
   Select,
 } from 'mithril-materialized';
@@ -69,6 +71,8 @@ export interface AppController {
   rerunAnalysis(): void;
   setPdfCrop?(edge: 'top' | 'bottom', value: number): void;
   setPdfPreviewPage?(pageNumber: number): void;
+  setPdfPreviewScale?(scale: number): void;
+  setPdfOriginalVisible?(visible: boolean): void;
   setPdfSamplePageCount?(pageCount: number): void;
   rescanPdfSample?(): void;
   setPdfCandidateRemoval?(candidateId: string, remove: boolean): void;
@@ -133,32 +137,41 @@ export function renderApp(
       'p.format-note',
       'Convert Word and PDF documents to Markdown, HTML, or EPUB 3 directly in the browser.',
     ),
-    m('main.workspace', [
-      m('section.panel', [
-        m('h2', WORKFLOW_STAGES[controller.state.stage] ?? WORKFLOW_STAGES[0]),
-        controller.state.selectedFilename
-          ? m('p.document-context', documentLabel(controller.state))
-          : null,
-        controller.state.stage === 0
-          ? filePicker(select, drop)
-          : stageContent(controller),
-        controller.state.error
-          ? m('.error[role="alert"]', controller.state.error.message)
-          : null,
-        m('p.secondary-actions', [
-          m('i', 'Found a bug, or missing something? '),
+    m(
+      'main.workspace',
+      { class: controller.state.stage === 2 ? 'workspace--preview' : '' },
+      [
+        m('section.panel', [
           m(
-            'a',
-            {
-              href: 'https://github.com/erikvullings/word-convert/issues',
-              target: '_blank',
-            },
-            m('i', 'File an issue.'),
+            'h2',
+            WORKFLOW_STAGES[controller.state.stage] ?? WORKFLOW_STAGES[0],
           ),
+          controller.state.selectedFilename
+            ? m('p.document-context', documentLabel(controller.state))
+            : null,
+          controller.state.stage === 0
+            ? filePicker(select, drop)
+            : stageContent(controller),
+          controller.state.error
+            ? m('.error[role="alert"]', controller.state.error.message)
+            : null,
+          m('p.secondary-actions', [
+            m('i', 'Found a bug, or missing something? '),
+            m(
+              'a',
+              {
+                href: 'https://github.com/erikvullings/word-convert/issues',
+                target: '_blank',
+              },
+              m('i', 'File an issue.'),
+            ),
+          ]),
+          controller.state.progress && controller.state.status !== 'analysing'
+            ? progress(controller)
+            : null,
         ]),
-        controller.state.progress ? progress(controller) : null,
-      ]),
-    ]),
+      ],
+    ),
   ]);
 }
 
@@ -210,7 +223,12 @@ function outputChooser(controller: AppController): m.Vnode {
     state.pdfAnalysis !== undefined &&
     state.pdfAnalysis.analysedPages.length < state.pdfAnalysis.pageCount;
   if (state.status === 'analysing')
-    return m('p', 'Inspecting the document in the background…');
+    return m(
+      '.analysis-status',
+      state.progress
+        ? progress(controller)
+        : m('p', 'Inspecting the document in the background…'),
+    );
   return m('.output-chooser', [
     m(
       'p',
@@ -301,64 +319,79 @@ function pdfImportEditor(controller: AppController): m.Vnode {
         ? `Only ${analysedPages.length} representative pages were scanned. Adjust the sample if needed, then process the full document once with your cleanup choices.`
         : `Cleanup has been applied across all ${pageCount} pages.`,
     ),
-    isSample
-      ? m('.pdf-sample-controls', [
-          m('label', [
-            'Pages to sample',
-            m('input', {
-              type: 'number',
-              min: Math.min(5, pageCount),
-              max: pageCount,
-              value: state.pdfImport.samplePageCount,
-              onchange: (event: Event) =>
-                controller.setPdfSamplePageCount?.(
-                  Number((event.currentTarget as HTMLInputElement).value),
-                ),
+    m('.pdf-sample-controls', [
+      ...(isSample
+        ? [
+            m('label', [
+              'Pages to sample',
+              m('input', {
+                type: 'number',
+                min: Math.min(5, pageCount),
+                max: pageCount,
+                value: state.pdfImport.samplePageCount,
+                onchange: (event: Event) =>
+                  controller.setPdfSamplePageCount?.(
+                    Number((event.currentTarget as HTMLInputElement).value),
+                  ),
+              }),
+            ]),
+            m(FlatButton, {
+              label: 'Rescan representative pages',
+              onclick: () => controller.rescanPdfSample?.(),
             }),
+          ]
+        : []),
+      ...(!isSample
+        ? [
+            m(FlatButton, {
+              label: state.pdfPreviewRequested
+                ? 'Reload source-page preview'
+                : 'Load source-page preview',
+              onclick: () =>
+                controller.setPdfPreviewPage?.(state.pdfPreviewPage),
+            }),
+          ]
+        : []),
+      ...(isSample
+        ? [
+            m(
+              'small',
+              `Currently scanned: ${analysedPages.join(', ') || 'none'}`,
+            ),
+          ]
+        : []),
+    ]),
+    state.pdfPreviewRequested
+      ? m('.pdf-crop-layout', [
+          m('.pdf-preview-slot', [
+            pdfSourcePreview(controller, top, bottom, pageCount, {
+              paginationPosition: 'after',
+              compactPagination: true,
+            }),
+            m('.pdf-crop-controls', [
+              m('.pdf-crop-sliders', [
+                cropControl(controller, 'top', 'Top crop', top),
+                cropControl(controller, 'bottom', 'Bottom crop', bottom),
+              ]),
+              m(
+                'small',
+                'Crop bands remove text only. Images are always retained.',
+              ),
+              m('label', [
+                m('input', {
+                  type: 'checkbox',
+                  checked: state.pdfImport.removeDetectedFurniture,
+                  onchange: (event: Event) =>
+                    controller.setPdfAutomaticFurnitureRemoval?.(
+                      (event.currentTarget as HTMLInputElement).checked,
+                    ),
+                }),
+                'Automatically remove high-confidence repeated content',
+              ]),
+            ]),
           ]),
-          m(
-            'button.secondary-button',
-            { type: 'button', onclick: () => controller.rescanPdfSample?.() },
-            'Rescan representative pages',
-          ),
-          m(
-            'small',
-            `Currently scanned: ${analysedPages.join(', ') || 'none'}`,
-          ),
         ])
       : null,
-    m('.pdf-crop-layout', [
-      m(
-        '.pdf-preview-slot',
-        m(Collapsible, {
-          key: isSample ? 'sample-source-preview' : 'full-source-preview',
-          className: 'pdf-preview-collapsible',
-          accordion: true,
-          items: [
-            {
-              header: 'Source-page preview (optional)',
-              body: pdfSourcePreview(controller, top, bottom, pageCount),
-            },
-          ],
-        }),
-      ),
-      m('.pdf-crop-controls', [
-        cropControl(controller, 'top', 'Top crop', top),
-        cropControl(controller, 'bottom', 'Bottom crop', bottom),
-        m('small', 'Crop bands remove text only. Images are always retained.'),
-        m('label', [
-          m('input', {
-            type: 'checkbox',
-            checked: state.pdfImport.removeDetectedFurniture,
-            onchange: (event: Event) =>
-              controller.setPdfAutomaticFurnitureRemoval?.(
-                (event.currentTarget as HTMLInputElement).checked,
-              ),
-          }),
-          'Automatically remove high-confidence repeated content',
-        ]),
-      ]),
-    ]),
     ...(state.pdfAnalysis?.candidates.length
       ? [
           m('h4', 'Detected page furniture'),
@@ -369,26 +402,24 @@ function pdfImportEditor(controller: AppController): m.Vnode {
           m(
             'ul.pdf-furniture-candidates',
             state.pdfAnalysis.candidates.map((candidate) =>
-              m('li', [
-                m('label', [
-                  m('input', {
-                    type: 'checkbox',
-                    checked: candidate.removed,
-                    onchange: (event: Event) =>
-                      controller.setPdfCandidateRemoval?.(
-                        candidate.id,
-                        (event.currentTarget as HTMLInputElement).checked,
+              m(
+                'li',
+                m(InputCheckbox, {
+                  className: 'pdf-furniture-candidate',
+                  checked: candidate.removed,
+                  onchange: (checked) =>
+                    controller.setPdfCandidateRemoval?.(candidate.id, checked),
+                  label: m('span.pdf-furniture-candidate__control', [
+                    m('.pdf-furniture-candidate__label', [
+                      m('strong', candidate.text || candidate.normalizedText),
+                      m(
+                        'small',
+                        `Remove from output · ${candidate.kind} · ${candidate.pageParity} pages · ${candidate.confidence} confidence`,
                       ),
-                  }),
-                  m('span', [
-                    m('strong', candidate.text || candidate.normalizedText),
-                    m(
-                      'small',
-                      `Remove from output · ${candidate.kind} · ${candidate.pageParity} pages · ${candidate.confidence} confidence`,
-                    ),
+                    ]),
                   ]),
-                ]),
-              ]),
+                }),
+              ),
             ),
           ),
         ]
@@ -408,89 +439,114 @@ function pdfSourcePreview(
   top: number,
   bottom: number,
   pageCount: number,
+  options: {
+    paginationPosition?: 'before' | 'after';
+    showCleanupNote?: boolean;
+    showScaleControl?: boolean;
+    compactPagination?: boolean;
+  } = {},
 ): m.Vnode {
   const { state } = controller;
-  if (!state.pdfPreviewRequested)
-    return m(
-      'button.secondary-button',
-      {
-        type: 'button',
-        onclick: () => controller.setPdfPreviewPage?.(state.pdfPreviewPage),
-      },
-      'Load source-page preview',
-    );
-  return m('.pdf-preview-workspace', [
-    m(Pagination, {
-      size: 7,
-      curPage: state.pdfPreviewPage,
-      items: Array.from({ length: pageCount }, (_, index) => {
-        const pageNumber = index + 1;
-        return {
-          href: '#pdf-source-preview',
-          // Pagination supports Vnode titles at runtime, but its published
-          // Attributes-derived title type is narrower.
-          title: m(
-            'a',
-            {
-              href: '#pdf-source-preview',
-              'aria-label': `Preview PDF page ${pageNumber}`,
-              'aria-current':
-                pageNumber === state.pdfPreviewPage ? 'page' : undefined,
-              onclick: (event: Event) => {
-                event.preventDefault();
-                controller.setPdfPreviewPage?.(pageNumber);
+  if (!state.pdfPreviewRequested) return m('.pdf-preview-placeholder');
+  const pagination = m(PaginationControls, {
+    pagination: {
+      page: state.pdfPreviewPage - 1,
+      pageSize: 1,
+      total: pageCount,
+    },
+    onPaginationChange: (pagination) =>
+      controller.setPdfPreviewPage?.(pagination.page + 1),
+    i18n: {
+      showing: 'Showing',
+      to: 'to',
+      of: 'of',
+      entries: 'pages',
+      page: 'Page',
+    },
+  });
+  const page = m(
+    '.pdf-page-preview[aria-label="Source PDF page with excluded crop regions"]',
+    options.showScaleControl
+      ? {
+          style: {
+            '--pdf-preview-scale': String(state.pdfPreviewScale),
+          },
+        }
+      : {},
+    [
+      state.pdfPreview
+        ? m('.pdf-page-preview__sheet', [
+            m('img', {
+              src: state.pdfPreview.url,
+              width: state.pdfPreview.width,
+              height: state.pdfPreview.height,
+              alt: `PDF page ${state.pdfPreview.pageNumber} preview`,
+            }),
+            m(
+              '.pdf-page-preview__crop.pdf-page-preview__crop--top',
+              {
+                style: { height: `${top}%` },
+                'aria-label': `Top ${top}% excluded`,
               },
-            },
-            pageNumber,
-          ) as unknown as string,
-        };
-      }),
-    }),
-    m(
-      '.pdf-page-preview[aria-label="Source PDF page with excluded crop regions"]',
-      [
-        state.pdfPreview
-          ? m('.pdf-page-preview__sheet', [
-              m('img', {
-                src: state.pdfPreview.url,
-                width: state.pdfPreview.width,
-                height: state.pdfPreview.height,
-                alt: `PDF page ${state.pdfPreview.pageNumber} preview`,
-              }),
-              m(
-                '.pdf-page-preview__crop.pdf-page-preview__crop--top',
-                {
-                  style: { height: `${top}%` },
-                  'aria-label': `Top ${top}% excluded`,
-                },
-                top ? `Top ${top}% removed` : null,
-              ),
-              m(
-                '.pdf-page-preview__crop.pdf-page-preview__crop--bottom',
-                {
-                  style: { height: `${bottom}%` },
-                  'aria-label': `Bottom ${bottom}% excluded`,
-                },
-                bottom ? `Bottom ${bottom}% removed` : null,
-              ),
-            ])
-          : null,
-        state.pdfPreviewLoading
-          ? m('.pdf-page-preview__status', 'Rendering page preview…')
-          : null,
-        state.pdfPreviewError
-          ? m(
-              '.pdf-page-preview__status.pdf-page-preview__status--error',
-              state.pdfPreviewError,
-            )
-          : null,
-      ],
-    ),
-    m(
-      'small.pdf-preview-note',
-      'This is the source page with crop bands overlaid. Selected repeated text is removed from generated output after full processing.',
-    ),
-  ]);
+              top ? `Top ${top}% removed` : null,
+            ),
+            m(
+              '.pdf-page-preview__crop.pdf-page-preview__crop--bottom',
+              {
+                style: { height: `${bottom}%` },
+                'aria-label': `Bottom ${bottom}% excluded`,
+              },
+              bottom ? `Bottom ${bottom}% removed` : null,
+            ),
+          ])
+        : null,
+      state.pdfPreviewLoading
+        ? m('.pdf-page-preview__status', 'Rendering page preview…')
+        : null,
+      state.pdfPreviewError
+        ? m(
+            '.pdf-page-preview__status.pdf-page-preview__status--error',
+            state.pdfPreviewError,
+          )
+        : null,
+    ],
+  );
+  return m(
+    '.pdf-preview-workspace',
+    {
+      class: options.compactPagination ? 'pdf-preview-workspace--compact' : '',
+    },
+    [
+      options.paginationPosition === 'after' ? null : pagination,
+      page,
+      options.showScaleControl
+        ? m('label.pdf-preview-scale', [
+            m(
+              'span',
+              `Original scale: ${Math.round(state.pdfPreviewScale * 100)}%`,
+            ),
+            m('input', {
+              type: 'range',
+              min: 75,
+              max: 200,
+              step: 25,
+              value: state.pdfPreviewScale * 100,
+              oninput: (event: Event) =>
+                controller.setPdfPreviewScale?.(
+                  Number((event.currentTarget as HTMLInputElement).value) / 100,
+                ),
+            }),
+          ])
+        : null,
+      options.paginationPosition === 'after' ? pagination : null,
+      options.showCleanupNote === false
+        ? null
+        : m(
+            'small.pdf-preview-note',
+            'This is the source page with crop bands overlaid. Selected repeated text is removed from generated output after full processing.',
+          ),
+    ],
+  );
 }
 
 function cropControl(
@@ -883,7 +939,7 @@ function preview(controller: AppController): m.Vnode {
     return m('.preview-panel', [
       previewActions(controller),
       epubConfiguration(controller),
-      epubLayoutPreview(controller),
+      outputPreviewWorkspace(controller, epubLayoutPreview(controller)),
       warningPanel(controller),
       previewActions(controller),
     ]);
@@ -915,45 +971,98 @@ function preview(controller: AppController): m.Vnode {
   const checkboxClass = canEdit ? 'col s4' : 'col s6';
   return m('.preview-panel', [
     previewActions(controller),
-    isMarkdown
-      ? m(
-          '.preview-mode',
-          m(RadioButtons<PreviewMode>, {
-            id: 'markdown-preview-mode',
-            options: modeOptions,
-            checkedId: state.previewMode,
-            className: 'row',
-            checkboxClass,
-            onchange: (mode) => {
-              state.previewMode = mode;
-            },
-          }),
-        )
+    isMarkdown || state.sourceFormat === 'pdf'
+      ? m('.preview-display-controls', [
+          isMarkdown
+            ? m(
+                '.preview-mode',
+                m(RadioButtons<PreviewMode>, {
+                  id: 'markdown-preview-mode',
+                  options: modeOptions,
+                  checkedId: state.previewMode,
+                  className: 'row',
+                  checkboxClass,
+                  onchange: (mode) => {
+                    state.previewMode = mode;
+                  },
+                }),
+              )
+            : null,
+          state.sourceFormat === 'pdf'
+            ? originalPreviewToggle(controller)
+            : null,
+        ])
       : null,
-    isMarkdown && state.previewMode === 'edit'
-      ? (() => {
-          if (state.markdownEdit === undefined) state.markdownEdit = source;
-          return m(MarkdownEditor, {
-            content: state.markdownEdit,
-            onContentChange: (newContent: string) => {
-              state.markdownEdit = newContent;
-            },
-            markdownToHtml: renderMarkdown,
-            placeholder: 'Edit markdown…',
-            theme: state.preferences.theme === 'dark' ? 'dark' : 'light',
-            toolbar: true,
-            showTabs: true,
-          });
-        })()
-      : isMarkdown && state.previewMode === 'source'
-        ? m('pre.markdown-source', source)
-        : m(
-            'article.document-preview',
-            m.trust(DOMPurify.sanitize(previewMarkup, previewSanitizeConfig())),
-          ),
+    outputPreviewWorkspace(
+      controller,
+      isMarkdown && state.previewMode === 'edit'
+        ? (() => {
+            if (state.markdownEdit === undefined) state.markdownEdit = source;
+            return m(MarkdownEditor, {
+              content: state.markdownEdit,
+              onContentChange: (newContent: string) => {
+                state.markdownEdit = newContent;
+              },
+              markdownToHtml: renderMarkdown,
+              placeholder: 'Edit markdown…',
+              theme: state.preferences.theme === 'dark' ? 'dark' : 'light',
+              toolbar: true,
+              showTabs: true,
+            });
+          })()
+        : isMarkdown && state.previewMode === 'source'
+          ? m('pre.markdown-source', markdownSourcePreview(source))
+          : m(
+              'article.document-preview',
+              m.trust(
+                DOMPurify.sanitize(previewMarkup, previewSanitizeConfig()),
+              ),
+            ),
+    ),
     warningPanel(controller),
     previewActions(controller),
   ]);
+}
+
+function outputPreviewWorkspace(
+  controller: AppController,
+  converted: m.Children,
+): m.Children {
+  const { state } = controller;
+  if (state.sourceFormat !== 'pdf') return converted;
+  const visible = state.pdfOriginalVisible === true;
+  const pageCount = state.pdfAnalysis?.pageCount ?? 1;
+  return m(
+    '.preview-comparison',
+    { class: visible ? 'preview-comparison--visible' : '' },
+    [
+      visible
+        ? m('section.preview-pane.preview-pane--original', [
+            m('h3', 'Original PDF'),
+            pdfSourcePreview(controller, 0, 0, pageCount, {
+              paginationPosition: 'after',
+              showCleanupNote: false,
+              showScaleControl: true,
+            }),
+          ])
+        : null,
+      m('section.preview-pane.preview-pane--converted', [
+        visible ? m('h3', 'Converted document') : null,
+        converted,
+      ]),
+    ],
+  );
+}
+
+function originalPreviewToggle(controller: AppController): m.Vnode {
+  const visible = controller.state.pdfOriginalVisible === true;
+  return m(
+    '.original-preview-toggle',
+    m(Button, {
+      label: visible ? 'Hide original' : 'Show original',
+      onclick: () => controller.setPdfOriginalVisible?.(!visible),
+    }),
+  );
 }
 
 export function outputPreviewSource(
@@ -965,6 +1074,13 @@ export function outputPreviewSource(
   const archive = unzipSync(new Uint8Array(output.data));
   const primary = archive[format === 'html' ? 'document.html' : 'document.md'];
   return primary ? strFromU8(primary) : '';
+}
+
+export function markdownSourcePreview(source: string): string {
+  return source.replace(
+    /data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/]+={0,2}/gi,
+    (dataUri) => `${dataUri.slice(0, dataUri.indexOf(',') + 1)}…`,
+  );
 }
 
 const epubFileOrder = (a: string, b: string): number => {

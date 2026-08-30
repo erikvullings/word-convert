@@ -8,6 +8,7 @@ import { strToU8, zipSync } from 'fflate';
 
 import {
   extractHtmlBody,
+  markdownSourcePreview,
   outputPreviewSource,
   renderApp,
   type AppController,
@@ -15,6 +16,16 @@ import {
 import { createInitialState } from './state.ts';
 
 describe('App', () => {
+  it('abbreviates image data URIs in the Markdown source preview', () => {
+    expect(
+      markdownSourcePreview(
+        'Before ![Diagram](data:image/png;base64,AAECAwQFBgcICQ==) [site](https://example.com) after',
+      ),
+    ).toBe(
+      'Before ![Diagram](data:image/png;base64,…) [site](https://example.com) after',
+    );
+  });
+
   it.each([
     ['html', 'document.html', '<h1>Packaged HTML</h1>'],
     ['markdown', 'document.md', '# Packaged Markdown'],
@@ -123,17 +134,126 @@ describe('App', () => {
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
     expect(rendered).toContain('PDF page cleanup');
-    expect(rendered).toContain('Source-page preview (optional)');
+    expect(rendered).not.toContain('Reload source-page preview');
+    expect(rendered).not.toContain('Load source-page preview');
+    expect(rendered).not.toContain('Source-page preview (optional)');
     expect(rendered).toContain('PDF page 3 preview');
-    expect(rendered).toContain('Preview PDF page 3');
+    expect(rendered).toContain(
+      '"pagination":{"page":2,"pageSize":1,"total":12}',
+    );
     expect(rendered).toContain('Pages to sample');
     expect(rendered).toContain('Currently scanned: 1, 4, 8, 12');
     expect(rendered).toContain('Top crop: 8%');
     expect(rendered).toContain('Bottom crop: 6%');
+    expect(rendered).toContain('pdf-preview-workspace--compact');
+    expect(rendered.indexOf('pdf-page-preview')).toBeLessThan(
+      rendered.indexOf('"pagination":{"page":2'),
+    );
+    expect(rendered.indexOf('"pagination":{"page":2')).toBeLessThan(
+      rendered.indexOf('pdf-crop-sliders'),
+    );
     expect(rendered).toContain(
       'Remove from output · header · odd pages · high confidence',
     );
     expect(rendered).toContain('Process all 12 pages and apply cleanup');
+  });
+
+  it('shows preview controls only when active and offers loading after full processing', () => {
+    const state = createInitialState('2026-08-30');
+    state.stage = 1;
+    state.status = 'ready';
+    state.sourceFormat = 'pdf';
+    state.pdfAnalysis = {
+      pageCount: 6,
+      analysedPages: [1, 4, 6],
+      crop: { top: 0, bottom: 0 },
+      scannedPages: [],
+      candidates: [],
+    };
+
+    const sample = JSON.stringify(renderApp(controllerFor(state)));
+    expect(sample).not.toContain('pdf-crop-layout');
+    expect(sample).not.toContain('Load source-page preview');
+
+    state.pdfAnalysis.analysedPages = [1, 2, 3, 4, 5, 6];
+    const processed = JSON.stringify(renderApp(controllerFor(state)));
+    expect(processed).not.toContain('pdf-crop-layout');
+    expect(processed).toContain('Load source-page preview');
+  });
+
+  it('offers an optional original PDF beside converted output', () => {
+    const state = createInitialState('2026-08-30');
+    state.stage = 2;
+    state.status = 'complete';
+    state.sourceFormat = 'pdf';
+    state.preferences.outputFormat = 'markdown';
+    state.previewMode = 'source';
+    state.model = editorModel();
+    state.pdfAnalysis = {
+      pageCount: 6,
+      analysedPages: [1, 2, 3, 4, 5, 6],
+      crop: { top: 0, bottom: 0 },
+      scannedPages: [],
+      candidates: [],
+    };
+    state.output = {
+      filename: 'report.md',
+      mediaType: 'text/markdown',
+      data: new TextEncoder().encode('# Report').buffer,
+    };
+
+    const hidden = JSON.stringify(renderApp(controllerFor(state)));
+    expect(hidden).toContain('Show original');
+    expect(hidden).toContain('workspace--preview');
+    expect(hidden).not.toContain('preview-comparison--visible');
+
+    state.pdfOriginalVisible = true;
+    state.pdfPreviewRequested = true;
+    const visible = JSON.stringify(renderApp(controllerFor(state)));
+    expect(visible).toContain('Hide original');
+    expect(visible).toContain('preview-comparison--visible');
+    expect(visible).toContain('Original PDF');
+    expect(visible).toContain('Converted document');
+    expect(visible).toContain('Original scale: 100%');
+    expect(visible).toContain('--pdf-preview-scale');
+    expect(visible.indexOf('markdown-preview-mode')).toBeLessThan(
+      visible.indexOf('Hide original'),
+    );
+    expect(visible.indexOf('Hide original')).toBeLessThan(
+      visible.indexOf('preview-comparison'),
+    );
+    expect(visible).not.toContain(
+      'This is the source page with crop bands overlaid.',
+    );
+    expect(visible.indexOf('pdf-page-preview')).toBeLessThan(
+      visible.indexOf('pdf-preview-scale'),
+    );
+    expect(visible.indexOf('pdf-preview-scale')).toBeLessThan(
+      visible.indexOf('"pagination":{"page":0'),
+    );
+  });
+
+  it('shows active PDF analysis progress in the loading status', () => {
+    const state = createInitialState('2026-08-30');
+    state.stage = 1;
+    state.status = 'analysing';
+    state.sourceFormat = 'pdf';
+    state.selectedFilename = 'report.pdf';
+    state.progress = {
+      phase: 'read',
+      completed: 2,
+      total: 5,
+      message: 'Reading PDF page 8.',
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('analysis-status');
+    expect(rendered).toContain('Reading PDF page 8.');
+    expect(rendered.match(/progress-status/g)).toHaveLength(1);
+    expect(rendered.indexOf('progress-status')).toBeLessThan(
+      rendered.indexOf('secondary-actions'),
+    );
   });
 
   it('shows the document title quietly and uses radio buttons for Markdown preview mode', () => {

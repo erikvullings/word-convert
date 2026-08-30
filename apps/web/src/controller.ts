@@ -44,6 +44,7 @@ export function createBrowserController(): AppController {
   });
   let sourceInput: ArrayBuffer | undefined;
   let sourceFilename: string | undefined;
+  let autoPreviewOperationId: string | undefined;
   let previewRenderer:
     import('./pdf-preview.ts').PdfPagePreviewRenderer | undefined;
   const releasePdfPreview = (): void => {
@@ -66,6 +67,7 @@ export function createBrowserController(): AppController {
     releasePdfPreview();
     state.pdfPreviewPage = pageNumber;
     state.pdfPreviewRequested = true;
+    state.pdfOriginalVisible = true;
     state.pdfPreviewLoading = true;
     delete state.pdfPreviewError;
     state.pdfPreviewOperationId = operationId('pdf-preview');
@@ -160,7 +162,19 @@ export function createBrowserController(): AppController {
   }
 
   worker.addEventListener('message', (event: MessageEvent<WorkerResponse>) => {
+    const shouldAutoPreview =
+      event.data.type === 'analysed' &&
+      event.data.operationId === autoPreviewOperationId;
     applyResponse(state, event.data);
+    if (shouldAutoPreview) {
+      autoPreviewOperationId = undefined;
+      requestPdfPage(1);
+    } else if (
+      event.data.operationId === autoPreviewOperationId &&
+      event.data.type === 'error'
+    ) {
+      autoPreviewOperationId = undefined;
+    }
     m.redraw();
   });
   worker.addEventListener('error', () => {
@@ -196,7 +210,9 @@ export function createBrowserController(): AppController {
       delete state.pdfAnalysis;
       disposePdfPreview();
       state.pdfPreviewPage = 1;
+      state.pdfPreviewScale = 1;
       delete state.pdfPreviewRequested;
+      delete state.pdfOriginalVisible;
       delete state.pdfPreviewError;
       delete state.pdfPreviewOperationId;
       state.selectedFilename = file.name;
@@ -207,6 +223,8 @@ export function createBrowserController(): AppController {
       state.stage = 1;
       state.status = 'analysing';
       state.operationId = operationId('analyse');
+      autoPreviewOperationId =
+        sourceFormat === 'pdf' ? state.operationId : undefined;
       void file.arrayBuffer().then((input) => {
         sourceInput = input;
         sourceFilename = file.name;
@@ -317,7 +335,9 @@ export function createBrowserController(): AppController {
         disposePdfPreview();
         state.pdfPreviewPage = 1;
         delete state.pdfPreviewRequested;
+        delete state.pdfOriginalVisible;
       }
+      autoPreviewOperationId = undefined;
       state.status = 'analysing';
       state.operationId = operationId('analyse');
       const input = sourceInput.slice(0);
@@ -346,8 +366,10 @@ export function createBrowserController(): AppController {
       disposePdfPreview();
       state.pdfPreviewPage = 1;
       delete state.pdfPreviewRequested;
+      delete state.pdfOriginalVisible;
       state.status = 'analysing';
       state.operationId = operationId('analyse-pdf-sample');
+      autoPreviewOperationId = state.operationId;
       const input = sourceInput.slice(0);
       worker.postMessage(
         {
@@ -369,6 +391,19 @@ export function createBrowserController(): AppController {
     },
     setPdfPreviewPage(pageNumber) {
       requestPdfPage(pageNumber);
+    },
+    setPdfPreviewScale(scale) {
+      state.pdfPreviewScale = Math.min(2, Math.max(0.75, scale));
+    },
+    setPdfOriginalVisible(visible) {
+      state.pdfOriginalVisible = visible;
+      if (
+        visible &&
+        !state.pdfPreview &&
+        !state.pdfPreviewLoading &&
+        !state.pdfPreviewError
+      )
+        requestPdfPage(state.pdfPreviewPage);
     },
     setPdfSamplePageCount(pageCount) {
       const maximum = state.pdfAnalysis?.pageCount ?? 50;

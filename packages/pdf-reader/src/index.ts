@@ -14,8 +14,13 @@ import {
   type StyleMapping,
 } from '@wordconvert/document-model';
 import { PdfReadError } from './error.ts';
-import { extractPdfWithPdfJs, type PdfReaderLimits } from './pdfjs.ts';
+import {
+  extractPdfWithPdfJs,
+  type PdfFigureRasterizer,
+  type PdfReaderLimits,
+} from './pdfjs.ts';
 export { configurePdfJsWorker } from './pdfjs.ts';
+export type { PdfFigureRasterizer } from './pdfjs.ts';
 
 export { PdfReadError } from './error.ts';
 
@@ -57,6 +62,7 @@ export interface RawPdfImage {
   pixelHeight: number;
   mediaType: 'image/png' | 'image/jpeg';
   data: Uint8Array;
+  source?: 'embedded' | 'rendered-figure';
 }
 
 export interface RawPdfPage {
@@ -143,6 +149,7 @@ export interface PdfAnalysisResult {
 export interface PdfReaderOptions extends PdfAnalysisOptions {
   limits?: Partial<PdfReaderLimits>;
   samplePageCount?: number;
+  figureRasterizer?: PdfFigureRasterizer;
 }
 
 export interface PdfReader {
@@ -177,6 +184,9 @@ export const pdfJsReader: PdfReader = {
       ...(options.onProgress ? { onProgress: options.onProgress } : {}),
       ...(options.samplePageCount !== undefined
         ? { samplePageCount: options.samplePageCount }
+        : {}),
+      ...(options.figureRasterizer
+        ? { figureRasterizer: options.figureRasterizer }
         : {}),
     });
   },
@@ -241,15 +251,39 @@ export async function analysePdf(
   options: PdfAnalysisOptions,
 ): Promise<PdfAnalysisResult> {
   const crop = validateCrop(options.crop);
-  const candidates = await detectFurniture(raw, options);
+  const linesByPage = new Map<number, PdfLine[]>();
+  const analysisSteps = raw.pages.length * 2 + 4;
+  for (const [index, page] of raw.pages.entries()) {
+    options.onProgress?.({
+      phase: 'analyse',
+      completed: index,
+      total: analysisSteps,
+      message: `Analysing PDF page ${page.number}.`,
+    });
+    linesByPage.set(page.number, await groupLines(page, options));
+  }
+  options.onProgress?.({
+    phase: 'analyse',
+    completed: raw.pages.length,
+    total: analysisSteps,
+    message: 'Detecting repeated page content.',
+  });
+  const candidates = await detectFurniture(raw, linesByPage, options);
   const removedCandidateIds = new Set(
     candidates.filter(({ removed }) => removed).map(({ id }) => id),
   );
   const candidateBySpan = await furnitureSpanIds(
     raw,
+    linesByPage,
     removedCandidateIds,
     options,
   );
+  options.onProgress?.({
+    phase: 'analyse',
+    completed: raw.pages.length + 1,
+    total: analysisSteps,
+    message: 'Applying PDF cleanup choices.',
+  });
   const croppedSpanIds = new Set<string>();
   const warnings: ConversionWarning[] = [];
   const scannedPages: number[] = [];
@@ -291,11 +325,29 @@ export async function analysePdf(
     });
 
   const lines: PdfLine[] = [];
-  for (const page of retainedPages) {
+  for (const [index, page] of retainedPages.entries()) {
+    options.onProgress?.({
+      phase: 'analyse',
+      completed: raw.pages.length + 2 + index,
+      total: analysisSteps,
+      message: `Ordering PDF page ${page.number}.`,
+    });
     await analysisCheckpoint(options);
     lines.push(...(await readingOrder(page, options)));
   }
+  options.onProgress?.({
+    phase: 'analyse',
+    completed: raw.pages.length * 2 + 2,
+    total: analysisSteps,
+    message: 'Analysing PDF styles.',
+  });
   const styles = await analyseStyles(lines, options.styleMappings, options);
+  options.onProgress?.({
+    phase: 'analyse',
+    completed: raw.pages.length * 2 + 3,
+    total: analysisSteps,
+    message: 'Building the document.',
+  });
   const blocks = await linesToBlocks(lines, styles, retainedPages, options);
   return {
     model: {
@@ -615,13 +667,35 @@ async function linesToBlocks(
   let processed = 0;
   for (const page of pages) {
     await analysisCheckpoint(options);
+    const rolesByMarkedContentId = taggedRoles(page.taggedStructure);
     const pageLines = lines.filter(
       ({ page: pageNumber }) => pageNumber === page.number,
     );
     const placements = imagePlacements(pageLines, page.images);
     if (pageLines.length === 0 && page.images.length === 0) continue;
-    if (contentPages++ > 0) blocks.push({ type: 'pageBreak' });
+    const previousBlock = blocks.at(-1);
+    const firstLine = pageLines[0];
+    const continuesPreviousParagraph =
+      contentPages > 0 &&
+      previousLine !== undefined &&
+      firstLine !== undefined &&
+      previousBlock?.type === 'paragraph' &&
+      !placements.has(0) &&
+      (mapping.get(styleId(firstLine)) ?? 'body') === 'body' &&
+      taggedRoleForLine(rolesByMarkedContentId, firstLine) === undefined &&
+      previousBlock.styleId === styleId(firstLine) &&
+      canMergeAcrossPage(previousLine, firstLine);
+    if (contentPages++ > 0 && !continuesPreviousParagraph)
+      blocks.push({ type: 'pageBreak' });
+    const previousPageLine = previousLine;
     previousLine = undefined;
+    const paragraphCandidates: Array<{
+      block: Extract<BlockNode, { type: 'paragraph' }>;
+      lastLine: PdfLine;
+    }> =
+      continuesPreviousParagraph && previousPageLine
+        ? [{ block: previousBlock, lastLine: previousPageLine }]
+        : [];
     for (let index = 0; index <= pageLines.length; index++) {
       for (const image of placements.get(index) ?? []) {
         blocks.push({ type: 'imageBlock', assetId: image.id });
@@ -634,30 +708,75 @@ async function linesToBlocks(
       const mapped = mapping.get(id) ?? 'body';
       if (mapped !== 'ignore') {
         const children = lineInlines(line, page.links);
-        const taggedRole = taggedRoleForLine(page.taggedStructure, line);
+        const taggedRole = taggedRoleForLine(rolesByMarkedContentId, line);
         const heading =
           /^H([1-6])$/i.exec(taggedRole ?? '') ??
           /^heading([1-6])$/.exec(mapped);
+        const headingLevel = heading
+          ? (Number(heading[1]) as 1 | 2 | 3 | 4 | 5 | 6)
+          : undefined;
         const previousBlock = blocks.at(-1);
         if (
-          !heading &&
+          headingLevel !== undefined &&
+          isContactLine(line.text) &&
           previousLine &&
-          previousBlock?.type === 'paragraph' &&
-          canMergeLines(previousLine, line) &&
-          previousBlock.styleId === id
+          previousBlock?.type === 'heading' &&
+          previousBlock.level === headingLevel &&
+          previousBlock.styleId === id &&
+          canMergeLines(previousLine, line)
+        ) {
+          const byline: Extract<BlockNode, { type: 'paragraph' }> = {
+            type: 'paragraph',
+            children: [
+              ...previousBlock.children,
+              { type: 'text', text: ' ' },
+              ...children,
+            ],
+            styleId: id,
+          };
+          blocks[blocks.length - 1] = byline;
+          paragraphCandidates.push({ block: byline, lastLine: line });
+        } else if (
+          headingLevel !== undefined &&
+          !isContactLine(line.text) &&
+          previousLine &&
+          previousBlock?.type === 'heading' &&
+          previousBlock.level === headingLevel &&
+          previousBlock.styleId === id &&
+          canMergeLines(previousLine, line)
         ) {
           previousBlock.children.push({ type: 'text', text: ' ' }, ...children);
-        } else {
-          blocks.push(
-            heading
-              ? {
-                  type: 'heading',
-                  level: Number(heading[1]) as 1 | 2 | 3 | 4 | 5 | 6,
-                  children,
-                  styleId: id,
-                }
-              : { type: 'paragraph', children, styleId: id },
+        } else if (headingLevel === undefined || isContactLine(line.text)) {
+          const candidate = paragraphCandidates.findLast(
+            ({ block, lastLine }) =>
+              block.styleId === id &&
+              (canMergeLines(lastLine, line) ||
+                (continuesPreviousParagraph &&
+                  index === 0 &&
+                  lastLine === previousPageLine)),
           );
+          if (candidate) {
+            candidate.block.children.push(
+              { type: 'text', text: ' ' },
+              ...children,
+            );
+            candidate.lastLine = line;
+          } else {
+            const paragraph: Extract<BlockNode, { type: 'paragraph' }> = {
+              type: 'paragraph',
+              children,
+              styleId: id,
+            };
+            blocks.push(paragraph);
+            paragraphCandidates.push({ block: paragraph, lastLine: line });
+          }
+        } else {
+          blocks.push({
+            type: 'heading',
+            level: headingLevel,
+            children,
+            styleId: id,
+          });
         }
       }
       previousLine = line;
@@ -741,39 +860,73 @@ function canMergeLines(previous: PdfLine, current: PdfLine): boolean {
   );
 }
 
+function canMergeAcrossPage(previous: PdfLine, current: PdfLine): boolean {
+  const continuation = current.text.trimStart();
+  return (
+    current.page === previous.page + 1 &&
+    Math.abs(previous.x - current.x) <= 0.04 &&
+    previous.top + previous.height >= 0.75 &&
+    previous.x + previous.width >= 0.82 &&
+    current.top <= 0.25 &&
+    !/[.!?][”’"')\]]?$/.test(previous.text.trimEnd()) &&
+    canStartPageContinuation(continuation)
+  );
+}
+
+function canStartPageContinuation(text: string): boolean {
+  if (/^\p{Ll}/u.test(text)) return true;
+  const firstWord = /^[“‘"'([{]*([\p{L}\p{M}\d-]+)/u.exec(text)?.[1];
+  if (!firstWord) return false;
+  const letters = [...firstWord].filter((character) =>
+    /\p{L}/u.test(character),
+  );
+  return (
+    letters.length >= 2 &&
+    letters.every(
+      (character) =>
+        character === character.toLocaleUpperCase() &&
+        character !== character.toLocaleLowerCase(),
+    )
+  );
+}
+
+function isContactLine(text: string): boolean {
+  return /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/.test(text);
+}
+
 function taggedRoleForLine(
-  root: RawPdfStructureNode | undefined,
+  rolesByMarkedContentId: ReadonlyMap<string, string>,
   line: PdfLine,
 ): string | undefined {
-  if (!root) return undefined;
   const ids = new Set(
     line.spans
       .map(({ markedContentId }) => markedContentId)
       .filter((id): id is string => Boolean(id)),
   );
   for (const id of ids) {
-    const role = taggedRole(root, id);
+    const role = rolesByMarkedContentId.get(id);
     if (role) return role;
   }
   return undefined;
 }
 
-function taggedRole(
-  node: RawPdfStructureNode,
-  markedContentId: string,
-  semanticRole?: string,
-): string | undefined {
-  const role = node.role === 'NonStruct' ? semanticRole : node.role;
-  if (node.markedContentId === markedContentId) return role;
-  for (const child of node.children) {
-    const found = taggedRole(child, markedContentId, role);
-    if (found) return found;
-  }
-  return undefined;
+function taggedRoles(
+  root: RawPdfStructureNode | undefined,
+): ReadonlyMap<string, string> {
+  const roles = new Map<string, string>();
+  const visit = (node: RawPdfStructureNode, semanticRole?: string): void => {
+    const role = node.role === 'NonStruct' ? semanticRole : node.role;
+    if (node.markedContentId && role && !roles.has(node.markedContentId))
+      roles.set(node.markedContentId, role);
+    for (const child of node.children) visit(child, role);
+  };
+  if (root) visit(root);
+  return roles;
 }
 
 async function detectFurniture(
   raw: RawPdfDocument,
+  linesByPage: ReadonlyMap<number, readonly PdfLine[]>,
   options: PdfAnalysisOptions,
 ): Promise<PdfFurnitureCandidate[]> {
   if (raw.pageCount < 4) return [];
@@ -788,7 +941,7 @@ async function detectFurniture(
   >();
   for (const page of raw.pages) {
     await analysisCheckpoint(options);
-    for (const line of await groupLines(page, options)) {
+    for (const line of linesByPage.get(page.number) ?? []) {
       const kind = furnitureKind(line);
       if (!kind || !line.text.trim()) continue;
       const normalized = normalizeFurniture(line.text);
@@ -841,13 +994,14 @@ async function detectFurniture(
 
 async function furnitureSpanIds(
   raw: RawPdfDocument,
+  linesByPage: ReadonlyMap<number, readonly PdfLine[]>,
   removedIds: ReadonlySet<string>,
   options: PdfAnalysisOptions,
 ): Promise<Set<string>> {
   const removed = new Set<string>();
   for (const page of raw.pages) {
     await analysisCheckpoint(options);
-    for (const line of await groupLines(page, options)) {
+    for (const line of linesByPage.get(page.number) ?? []) {
       const kind = furnitureKind(line);
       if (
         kind &&
@@ -955,17 +1109,18 @@ function metadata(
     value: entry,
     provenance,
   });
-  const firstLine = raw.pages
-    .flatMap(({ spans }) => spans)
-    .filter(({ text }) => text.trim())
-    .sort((left, right) => right.fontSize - left.fontSize)[0]
-    ?.text.trim();
+  const visibleTitle = inferVisibleTitle(raw.pages[0]);
   const filenameTitle = options.filename
     ?.split(/[\\/]/)
     .at(-1)
     ?.replace(/\.pdf$/i, '')
     .trim();
-  const title = raw.metadata.title?.trim() || firstLine || filenameTitle;
+  const metadataTitle = raw.metadata.title?.trim();
+  const trustedMetadataTitle =
+    metadataTitle && !isOfficeSourceFilename(metadataTitle)
+      ? metadataTitle
+      : undefined;
+  const title = trustedMetadataTitle || visibleTitle || filenameTitle;
   const author = raw.metadata.author?.trim();
   const authors: InferredValue<Person>[] = author
     ? [value({ name: author }, extracted('document-info:Author'))]
@@ -975,10 +1130,10 @@ function metadata(
       ? {
           title: value(
             title,
-            raw.metadata.title
+            trustedMetadataTitle
               ? extracted('document-info:Title')
               : inferred(
-                  'Selected the largest text near the start of the PDF.',
+                  'Selected contiguous largest text near the start of the PDF.',
                 ),
           ),
         }
@@ -1022,4 +1177,31 @@ function metadata(
       confidence: 'certain',
     }),
   };
+}
+
+function inferVisibleTitle(page: RawPdfPage | undefined): string | undefined {
+  const spans = page?.spans.filter(({ text }) => text.trim()) ?? [];
+  const largestFontSize = Math.max(...spans.map(({ fontSize }) => fontSize));
+  if (!Number.isFinite(largestFontSize)) return undefined;
+  const candidates = spans
+    .filter(({ fontSize }) => Math.abs(fontSize - largestFontSize) <= 0.1)
+    .sort((left, right) => left.top - right.top || left.x - right.x);
+  const titleSpans: RawPdfTextSpan[] = [];
+  for (const candidate of candidates) {
+    const previous = titleSpans.at(-1);
+    if (
+      previous &&
+      candidate.top - (previous.top + previous.height) >
+        Math.max(previous.height, candidate.height)
+    )
+      break;
+    titleSpans.push(candidate);
+  }
+  return titleSpans.map(({ text }) => text.trim()).join(' ') || undefined;
+}
+
+function isOfficeSourceFilename(title: string): boolean {
+  return /^(?:microsoft\s+)?(?:word|powerpoint|excel)\s*[-–—:]\s*.+\.(?:docx?|pptx?|xlsx?)$/i.test(
+    title,
+  );
 }

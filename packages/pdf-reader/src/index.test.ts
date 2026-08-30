@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 import {
@@ -59,6 +59,184 @@ function rawDocument(
 }
 
 describe('PDF layout analysis', () => {
+  it('infers a multiline visible title instead of using an Office source filename', async () => {
+    const raw = rawDocument(
+      [
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Accelerate Innovation with', 0.2, 0.1, {
+              fontSize: 28,
+              height: 0.03,
+            }),
+            span('TRIZ', 0.2, 0.14, { fontSize: 28, height: 0.03 }),
+            span('Article body', 0.2, 0.3),
+          ],
+          links: [],
+          images: [],
+        },
+      ],
+      { title: 'Microsoft Word - AccelerateInnovationWithTRIZ.doc' },
+    );
+
+    const result = await analysePdf(raw, {
+      conversionDate: '2026-08-29',
+      filename: 'article.pdf',
+    });
+
+    expect(result.model.metadata.title).toMatchObject({
+      value: 'Accelerate Innovation with TRIZ',
+      provenance: { method: 'inferred' },
+    });
+  });
+
+  it('merges adjacent lines mapped to the same heading', async () => {
+    const raw = rawDocument([
+      {
+        number: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        spans: [
+          span('Accelerate Innovation with', 0.2, 0.1, {
+            fontSize: 28,
+            height: 0.03,
+          }),
+          span('TRIZ', 0.2, 0.14, { fontSize: 28, height: 0.03 }),
+          span('Article body', 0.2, 0.3),
+        ],
+        links: [],
+        images: [],
+      },
+    ]);
+
+    const result = await analysePdf(raw, {
+      conversionDate: '2026-08-29',
+      styleMappings: { 'pdf-body-28-regular-roman': 'heading1' },
+    });
+    const headings = result.model.blocks.filter(
+      (block) => block.type === 'heading',
+    );
+
+    expect(headings).toHaveLength(1);
+    expect(headings[0]?.children).toEqual([
+      { type: 'text', text: 'Accelerate Innovation with' },
+      { type: 'text', text: ' ' },
+      { type: 'text', text: 'TRIZ' },
+    ]);
+  });
+
+  it('keeps heading-styled author and email lines as a byline paragraph', async () => {
+    const raw = rawDocument([
+      {
+        number: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        spans: [
+          span('Article title', 0.2, 0.1, {
+            fontSize: 28,
+            height: 0.03,
+          }),
+          span('Valeri Souchkov, 2007', 0.2, 0.2, {
+            fontSize: 14,
+            height: 0.017,
+          }),
+          span('valeri@example.com', 0.2, 0.23, {
+            fontSize: 14,
+            height: 0.017,
+          }),
+          span('Article body', 0.2, 0.3),
+        ],
+        links: [],
+        images: [],
+      },
+    ]);
+
+    const result = await analysePdf(raw, {
+      conversionDate: '2026-08-29',
+      styleMappings: {
+        'pdf-body-28-regular-roman': 'heading1',
+        'pdf-body-14-regular-roman': 'heading2',
+      },
+    });
+
+    expect(
+      result.model.blocks.map((block) => ({
+        type: block.type,
+        text:
+          block.type === 'heading' || block.type === 'paragraph'
+            ? block.children
+                .map((child) => (child.type === 'text' ? child.text : ''))
+                .join('')
+            : '',
+      })),
+    ).toEqual([
+      { type: 'heading', text: 'Article title' },
+      {
+        type: 'paragraph',
+        text: 'Valeri Souchkov, 2007 valeri@example.com',
+      },
+      { type: 'paragraph', text: 'Article body' },
+    ]);
+  });
+
+  it('merges text-box lines when parallel diagram labels interleave', async () => {
+    const raw = rawDocument([
+      {
+        number: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        spans: [
+          span('Left box first', 0.34, 0.6, {
+            width: 0.16,
+            height: 0.01,
+          }),
+          span('Right box first', 0.62, 0.605, {
+            width: 0.16,
+            height: 0.01,
+          }),
+          span('Left box second', 0.35, 0.615, {
+            width: 0.15,
+            height: 0.01,
+          }),
+          span('Right box second', 0.63, 0.62, {
+            width: 0.15,
+            height: 0.01,
+          }),
+          span('Centered diagram caption', 0.38, 0.65, {
+            width: 0.36,
+            height: 0.01,
+          }),
+        ],
+        links: [],
+        images: [],
+      },
+    ]);
+
+    const result = await analysePdf(raw, {
+      conversionDate: '2026-08-29',
+    });
+
+    expect(
+      result.model.blocks.map((block) =>
+        block.type === 'paragraph'
+          ? block.children
+              .map((child) => (child.type === 'text' ? child.text : ''))
+              .join('')
+          : '',
+      ),
+    ).toEqual([
+      'Left box first Left box second',
+      'Right box first Right box second',
+      'Centered diagram caption',
+    ]);
+  });
+
   it('reads a two-column page down the left column before the right column', async () => {
     const raw = rawDocument([
       {
@@ -199,6 +377,34 @@ describe('PDF layout analysis', () => {
       expect(raw.pageCount).toBe(6);
       expect(raw.pages.map(({ number }) => number)).toEqual([1, 4, 6]);
       expect(raw.pages.every(({ images }) => images.length === 0)).toBe(true);
+    });
+
+    it('reports progress across representative extraction and analysis', async () => {
+      const messages: string[] = [];
+
+      await pdfJsReader.read(await fixture('one-column-book.pdf'), {
+        conversionDate: '2026-08-29',
+        samplePageCount: 3,
+        onProgress: ({ message }) => {
+          if (message) messages.push(message);
+        },
+      });
+
+      expect(messages).toEqual(
+        expect.arrayContaining([
+          'Reading PDF page 1.',
+          'Reading PDF page 4.',
+          'Reading PDF page 6.',
+          'Analysing PDF page 1.',
+          'Analysing PDF page 4.',
+          'Analysing PDF page 6.',
+          'Detecting repeated page content.',
+          'Applying PDF cleanup choices.',
+          'Ordering PDF page 1.',
+          'Analysing PDF styles.',
+          'Building the document.',
+        ]),
+      );
     });
 
     it('preserves links, images, tagged structure, and scanned-page diagnostics', async () => {
@@ -517,6 +723,143 @@ describe('PDF layout analysis', () => {
     ]);
   });
 
+  it('merges a lowercase paragraph continuation across a page boundary', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span(
+              'Modern TRIZ offers techniques and generates new concepts in a systematic',
+              0.1,
+              0.92,
+              { width: 0.8 },
+            ),
+          ],
+          links: [],
+          images: [],
+        },
+        {
+          number: 2,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span(
+              'way. In addition, these techniques structure the innovation process.',
+              0.1,
+              0.08,
+              { width: 0.78 },
+            ),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks).toMatchObject([
+      {
+        type: 'paragraph',
+        children: [
+          {
+            text: 'Modern TRIZ offers techniques and generates new concepts in a systematic',
+          },
+          { text: ' ' },
+          {
+            text: 'way. In addition, these techniques structure the innovation process.',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('merges an all-caps first word across a page boundary', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span(
+              'The method is commonly known throughout the field as',
+              0.1,
+              0.92,
+              {
+                width: 0.8,
+              },
+            ),
+          ],
+          links: [],
+          images: [],
+        },
+        {
+          number: 2,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('TRIZ and remains widely used.', 0.1, 0.08, { width: 0.78 }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks.map(({ type }) => type)).toEqual(['paragraph']);
+  });
+
+  it.each([
+    [
+      'ends with sentence punctuation',
+      'A complete sentence.',
+      'another paragraph',
+    ],
+    [
+      'starts the next page with uppercase text',
+      'An incomplete thought',
+      'Another paragraph',
+    ],
+  ])('keeps page breaks when text %s', async (_case, ending, beginning) => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [span(ending, 0.1, 0.92, { width: 0.8 })],
+          links: [],
+          images: [],
+        },
+        {
+          number: 2,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [span(beginning, 0.1, 0.08, { width: 0.78 })],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks.map(({ type }) => type)).toEqual([
+      'paragraph',
+      'pageBreak',
+      'paragraph',
+    ]);
+  });
+
   it('uses tagged structure order ahead of geometric order', async () => {
     const result = await analysePdf(
       rawDocument([
@@ -731,6 +1074,86 @@ describe('PDF.js extraction helpers', () => {
       [1, 1],
       [1, 1],
     ]);
+  });
+
+  it('rasterizes a dense vector region instead of exposing component images', async () => {
+    const component = {
+      width: 4,
+      height: 4,
+      kind: 3,
+      data: new Uint8Array(4 * 4 * 4).fill(255),
+    };
+    const render = vi.fn(() => ({ promise: Promise.resolve() }));
+    const dispose = vi.fn();
+    const page = {
+      pageNumber: 1,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 100 * scale,
+        height: 100 * scale,
+      }),
+      render,
+      objs: {
+        get: (_id: string, callback: (value: unknown) => void) =>
+          callback(component),
+      },
+      getOperatorList: async () => ({
+        fnArray: [
+          OPS.constructPath,
+          OPS.constructPath,
+          OPS.constructPath,
+          OPS.constructPath,
+          OPS.save,
+          OPS.transform,
+          OPS.paintImageXObject,
+          OPS.restore,
+        ],
+        argsArray: [
+          [20, [], Float32Array.from([10, 10, 35, 35])],
+          [20, [], Float32Array.from([30, 10, 55, 35])],
+          [20, [], Float32Array.from([10, 30, 35, 55])],
+          [20, [], Float32Array.from([30, 30, 55, 55])],
+          undefined,
+          [20, 0, 0, 20, 20, 20],
+          ['component'],
+          undefined,
+        ],
+      }),
+    };
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 1,
+        maxTextItemsPerPage: 1,
+        maxImages: 10,
+        maxImagePixels: 1_000_000,
+        maxTotalImagePixels: 1_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose,
+        }),
+      },
+    );
+
+    expect(images).toEqual([
+      expect.objectContaining({
+        id: 'pdf-figure-1-0',
+        source: 'rendered-figure',
+        mediaType: 'image/png',
+      }),
+    ]);
+    expect(render).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it('limits aggregate repeated-image placements', async () => {
