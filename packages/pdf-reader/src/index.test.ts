@@ -848,6 +848,73 @@ describe('PDF layout analysis', () => {
     );
   });
 
+  it('converts flattened PDF bullet glyphs into a semantic list', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('', 0.15, 0.18, { width: 0.01 }),
+            span('Clarification', 0.18, 0.18, {
+              width: 0.12,
+              bold: true,
+            }),
+            span(': Is it clear what the tasking means?', 0.3, 0.18),
+            span('', 0.15, 0.2, { width: 0.01 }),
+            span('Widening: Does the tasking need to be broader?', 0.18, 0.2),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-31' },
+    );
+
+    expect(result.model.blocks).toMatchObject([
+      {
+        type: 'list',
+        ordered: false,
+        items: [
+          {
+            blocks: [
+              {
+                type: 'paragraph',
+                children: [
+                  {
+                    type: 'text',
+                    text: 'Clarification',
+                    marks: [{ type: 'bold' }],
+                  },
+                  {
+                    type: 'text',
+                    text: ': Is it clear what the tasking means?',
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            blocks: [
+              {
+                type: 'paragraph',
+                children: [
+                  {
+                    type: 'text',
+                    text: 'Widening: Does the tasking need to be broader?',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(JSON.stringify(result.model.blocks)).not.toContain('');
+  });
+
   it('drops detached small formula fragments from flowing prose', async () => {
     const result = await analysePdf(
       rawDocument([

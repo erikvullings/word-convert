@@ -348,8 +348,8 @@ export async function analysePdf(
     total: analysisSteps,
     message: 'Building the document.',
   });
-  const blocks = normalizePdfToc(
-    await linesToBlocks(lines, styles, retainedPages, options),
+  const blocks = normalizePdfLists(
+    normalizePdfToc(await linesToBlocks(lines, styles, retainedPages, options)),
   );
   return {
     model: {
@@ -770,6 +770,77 @@ function pdfAnchor(value: string): string {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '') || 'section'
   );
+}
+
+function normalizePdfLists(blocks: readonly BlockNode[]): BlockNode[] {
+  const normalized: BlockNode[] = [];
+  for (const block of blocks) {
+    const list = block.type === 'paragraph' ? bulletList(block) : undefined;
+    if (!list) {
+      normalized.push(block);
+      continue;
+    }
+    const previous = normalized.at(-1);
+    if (previous?.type === 'list' && !previous.ordered)
+      previous.items.push(...list.items);
+    else normalized.push(list);
+  }
+  return normalized;
+}
+
+function bulletList(
+  paragraph: Extract<BlockNode, { type: 'paragraph' }>,
+): Extract<BlockNode, { type: 'list' }> | undefined {
+  const items: InlineNode[][] = [];
+  let current: InlineNode[] | undefined;
+  for (const node of paragraph.children) {
+    if (node.type !== 'text') {
+      if (!current) return undefined;
+      current.push(node);
+      continue;
+    }
+    for (const part of node.text.split(/([•●◦▪])/u)) {
+      if (!part) continue;
+      if (/^[•●◦▪]$/u.test(part)) {
+        current = [];
+        items.push(current);
+      } else if (!current) {
+        if (part.trim()) return undefined;
+      } else {
+        current.push({ ...node, text: part });
+      }
+    }
+  }
+  const content = items.map(trimInlineWhitespace).filter((item) => item.length);
+  if (content.length === 0) return undefined;
+  return {
+    type: 'list',
+    ordered: false,
+    items: content.map((children) => ({
+      blocks: [
+        {
+          type: 'paragraph',
+          children,
+          ...(paragraph.styleId ? { styleId: paragraph.styleId } : {}),
+        },
+      ],
+    })),
+  };
+}
+
+function trimInlineWhitespace(nodes: InlineNode[]): InlineNode[] {
+  const output = [...nodes];
+  const first = output[0];
+  if (first?.type === 'text') {
+    first.text = first.text.replace(/^\s+/, '');
+    if (!first.text) output.shift();
+  }
+  const last = output.at(-1);
+  if (last?.type === 'text') {
+    last.text = last.text.replace(/\s+$/, '');
+    if (!last.text) output.pop();
+  }
+  return output;
 }
 
 async function linesToBlocks(

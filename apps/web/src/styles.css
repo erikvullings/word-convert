@@ -783,6 +783,23 @@ h1 {
   margin-block: 0 1.25em;
 }
 
+.document-preview ul,
+.md-editable-area ul {
+  list-style: disc outside;
+  padding-inline-start: 1.5em;
+}
+
+.document-preview ol,
+.md-editable-area ol {
+  list-style: decimal outside;
+  padding-inline-start: 1.75em;
+}
+
+.document-preview li,
+.md-editable-area li {
+  display: list-item;
+}
+
 .document-preview p > img {
   display: block;
   clear: both;
