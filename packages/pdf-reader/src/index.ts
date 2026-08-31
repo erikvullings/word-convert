@@ -348,7 +348,9 @@ export async function analysePdf(
     total: analysisSteps,
     message: 'Building the document.',
   });
-  const blocks = await linesToBlocks(lines, styles, retainedPages, options);
+  const blocks = normalizePdfToc(
+    await linesToBlocks(lines, styles, retainedPages, options),
+  );
   return {
     model: {
       schema: DOCUMENT_MODEL_SCHEMA,
@@ -679,6 +681,95 @@ function styleId(line: PdfLine): string {
     line.bold ? 'bold' : 'regular',
     line.italic ? 'italic' : 'roman',
   ].join('-');
+}
+
+interface PdfTocEntry {
+  label: string;
+}
+
+function normalizePdfToc(blocks: readonly BlockNode[]): BlockNode[] {
+  const tocBlocks = new Map<BlockNode, PdfTocEntry[]>();
+  for (const block of blocks) {
+    if (block.type !== 'paragraph' && block.type !== 'heading') continue;
+    const entries = parsePdfTocEntries(inlineText(block.children));
+    if (entries.length > 0) tocBlocks.set(block, entries);
+  }
+  if (tocBlocks.size === 0) return [...blocks];
+
+  const headingByLabel = new Map<
+    string,
+    Extract<BlockNode, { type: 'heading' }>
+  >();
+  const headingIds = new Map<string, number>();
+  for (const block of blocks) {
+    if (block.type !== 'heading' || tocBlocks.has(block)) continue;
+    const label = inlineText(block.children);
+    const base = pdfAnchor(label);
+    const count = (headingIds.get(base) ?? 0) + 1;
+    headingIds.set(base, count);
+    block.id = count === 1 ? base : `${base}-${count}`;
+    if (!headingByLabel.has(normalizeHeadingLabel(label)))
+      headingByLabel.set(normalizeHeadingLabel(label), block);
+  }
+
+  return blocks.flatMap((block) => {
+    const entries = tocBlocks.get(block);
+    if (!entries) return [block];
+    const styleId =
+      block.type === 'paragraph' || block.type === 'heading'
+        ? block.styleId
+        : undefined;
+    return entries.map<BlockNode>(({ label }) => {
+      const heading = headingByLabel.get(normalizeHeadingLabel(label));
+      const text: InlineNode = { type: 'text', text: label };
+      return {
+        type: 'paragraph',
+        children: heading?.id
+          ? [{ type: 'link', href: `#${heading.id}`, children: [text] }]
+          : [text],
+        ...(styleId ? { styleId } : {}),
+      };
+    });
+  });
+}
+
+function parsePdfTocEntries(value: string): PdfTocEntry[] {
+  const pattern =
+    /(\d+(?:\.\d+)*\.)\s+(.+?)\s*\.{2,}\s*(\d+)(?=\s+\d+(?:\.\d+)*\.\s+|$)/gu;
+  const entries: PdfTocEntry[] = [];
+  let cursor = 0;
+  for (const match of value.matchAll(pattern)) {
+    if (value.slice(cursor, match.index).trim()) return [];
+    entries.push({ label: `${match[1]} ${match[2]!.trim()}` });
+    cursor = match.index + match[0].length;
+  }
+  return entries.length > 0 && !value.slice(cursor).trim() ? entries : [];
+}
+
+function inlineText(nodes: readonly InlineNode[]): string {
+  return nodes
+    .map((node) =>
+      node.type === 'text'
+        ? node.text
+        : node.type === 'link'
+          ? inlineText(node.children)
+          : '',
+    )
+    .join('');
+}
+
+function normalizeHeadingLabel(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+}
+
+function pdfAnchor(value: string): string {
+  return (
+    value
+      .normalize('NFKD')
+      .toLocaleLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'section'
+  );
 }
 
 async function linesToBlocks(

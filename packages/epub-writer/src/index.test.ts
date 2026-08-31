@@ -158,6 +158,16 @@ describe('writeEpub', () => {
   it('splits only at top-level document-section boundaries and builds heading navigation', async () => {
     const input = model([
       { type: 'heading', level: 1, children: [{ type: 'text', text: 'Book' }] },
+      {
+        type: 'paragraph',
+        children: [
+          {
+            type: 'link',
+            href: '#detail',
+            children: [{ type: 'text', text: 'Detail' }],
+          },
+        ],
+      },
       { type: 'heading', level: 2, children: [{ type: 'text', text: 'One' }] },
       {
         type: 'list',
@@ -205,6 +215,9 @@ describe('writeEpub', () => {
     expect(nav).toContain('chapter-002.xhtml#one');
     expect(nav).toContain('chapter-002.xhtml#nested');
     expect(nav).toContain('chapter-003.xhtml#detail');
+    expect(
+      strFromU8(files['EPUB/chapter-001.xhtml'] ?? new Uint8Array()),
+    ).toContain('href="chapter-003.xhtml#detail"');
   });
 
   it('serializes model structures, local passive assets, notes, and metadata', async () => {

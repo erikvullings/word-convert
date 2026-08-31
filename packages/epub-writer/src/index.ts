@@ -51,6 +51,7 @@ interface RenderContext {
   assetPaths: ReadonlyMap<string, string>;
   headings: HeadingEntry[];
   headingIndex: number;
+  chapterPath: string;
   referencedNotes: string[];
   formulaMode: MathOutputMode;
 }
@@ -363,6 +364,7 @@ function chapterXhtml(
     assetPaths,
     headings,
     headingIndex: headings.findIndex(({ path }) => path === chapter.path),
+    chapterPath: chapter.path,
     referencedNotes: [],
     formulaMode,
   };
@@ -453,7 +455,7 @@ function renderInline(node: InlineNode, context: RenderContext): string {
       return applyMarks(escapeXml(node.text), node.marks ?? []);
     case 'link': {
       const content = renderInlines(node.children, context);
-      const href = safeHref(node.href);
+      const href = resolveEpubHref(node.href, context);
       return href
         ? `<a href="${escapeAttribute(href)}"${node.title ? ` title="${escapeAttribute(node.title)}"` : ''}>${content}</a>`
         : content;
@@ -473,6 +475,17 @@ function renderInline(node: InlineNode, context: RenderContext): string {
     case 'softBreak':
       return '\n';
   }
+}
+
+function resolveEpubHref(
+  href: string,
+  context: RenderContext,
+): string | undefined {
+  const safe = safeHref(href);
+  if (!safe?.startsWith('#')) return safe;
+  const target = context.headings.find(({ id }) => id === safe.slice(1));
+  if (!target || target.path === context.chapterPath) return safe;
+  return `${target.path.replace(/^EPUB\//, '')}${safe}`;
 }
 
 function applyMarks(value: string, marks: TextMark[]): string {

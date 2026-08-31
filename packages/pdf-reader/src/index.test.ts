@@ -773,6 +773,81 @@ describe('PDF layout analysis', () => {
     ]);
   });
 
+  it('cleans Word-style TOC leaders and links entries to matching sections', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Contents', 0.18, 0.1, { fontSize: 16 }),
+            span('1. Introduction ........................ 3', 0.18, 0.15),
+            span(
+              '1.1. General Principles ........ 4 1.2. Missing Section ........ 5',
+              0.18,
+              0.18,
+              { width: 0.7 },
+            ),
+          ],
+          links: [],
+          images: [],
+        },
+        {
+          number: 2,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('1. Introduction', 0.18, 0.1, { fontSize: 16 }),
+            span('Body.', 0.18, 0.15),
+            span('1.1. General Principles', 0.18, 0.2, { fontSize: 14 }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-31' },
+    );
+
+    expect(result.model.blocks.slice(1, 4)).toMatchObject([
+      {
+        type: 'paragraph',
+        children: [
+          {
+            type: 'link',
+            href: '#1-introduction',
+            children: [{ type: 'text', text: '1. Introduction' }],
+          },
+        ],
+      },
+      {
+        type: 'paragraph',
+        children: [
+          {
+            type: 'link',
+            href: '#1-1-general-principles',
+            children: [{ type: 'text', text: '1.1. General Principles' }],
+          },
+        ],
+      },
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: '1.2. Missing Section' }],
+      },
+    ]);
+    expect(JSON.stringify(result.model.blocks)).not.toMatch(
+      /\.{3,}|Section \.{2,} 5/,
+    );
+    expect(result.model.blocks).toContainEqual(
+      expect.objectContaining({
+        type: 'heading',
+        id: '1-introduction',
+      }),
+    );
+  });
+
   it('drops detached small formula fragments from flowing prose', async () => {
     const result = await analysePdf(
       rawDocument([
