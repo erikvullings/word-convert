@@ -76,6 +76,7 @@ describe('App', () => {
       loadPreset: () => undefined,
       setMetadata: () => undefined,
       setSubjects: () => undefined,
+      setAuthors: () => undefined,
       addAuthor: () => undefined,
       updateAuthor: () => undefined,
       removeAuthor: () => undefined,
@@ -91,6 +92,9 @@ describe('App', () => {
     expect(rendered).not.toContain('Current document');
     expect(rendered).toContain('All processing stays on this device');
     expect(rendered).toContain('Choose a DOCX or PDF document');
+    expect(rendered).toContain('Open a PDF from a URL');
+    expect(rendered).toContain('https://arxiv.org/abs/1706.03762');
+    expect(rendered).toContain('Some websites block browser access (CORS)');
     expect(rendered).toContain(
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     );
@@ -145,6 +149,8 @@ describe('App', () => {
     expect(rendered).toContain('Currently scanned: 1, 4, 8, 12');
     expect(rendered).toContain('Top crop: 8%');
     expect(rendered).toContain('Bottom crop: 6%');
+    expect(rendered).toContain('Original scale: 100%');
+    expect(rendered).toContain('"max":400');
     expect(rendered).toContain('pdf-preview-workspace--compact');
     expect(rendered.indexOf('pdf-page-preview')).toBeLessThan(
       rendered.indexOf('"pagination":{"page":2'),
@@ -307,6 +313,7 @@ describe('App', () => {
       loadPreset: () => undefined,
       setMetadata: () => undefined,
       setSubjects: () => undefined,
+      setAuthors: () => undefined,
       addAuthor: () => undefined,
       updateAuthor: () => undefined,
       removeAuthor: () => undefined,
@@ -418,6 +425,7 @@ describe('App', () => {
     state.stage = 2;
     state.status = 'ready';
     state.preferences.outputFormat = 'epub';
+    state.previewMode = 'package';
     state.model = editorModel();
     state.model.metadata.title = {
       value: 'Fixture',
@@ -450,6 +458,7 @@ describe('App', () => {
     const state = createInitialState('2026-07-16');
     state.stage = 2;
     state.preferences.outputFormat = 'epub';
+    state.previewMode = 'package';
     state.cover.source = 'generated';
     state.model = editorModel();
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
@@ -477,6 +486,7 @@ describe('App', () => {
     state.stage = 2;
     state.status = 'complete';
     state.preferences.outputFormat = 'epub';
+    state.previewMode = 'package';
     state.selectedEpubFile = 'EPUB/styles.css';
     state.model = editorModel();
     state.model.metadata.title = {
@@ -513,6 +523,51 @@ describe('App', () => {
     const epub = JSON.stringify(renderApp(controllerFor(state)));
     expect(epub).toContain('EPUB/nav.xhtml');
     expect(epub).toContain('body{font-family:serif;}');
+  });
+
+  it('offers content editing and package inspection for EPUB previews', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.sourceFormat = 'pdf';
+    state.preferences.outputFormat = 'epub';
+    state.previewMode = 'edit';
+    state.selectedEpubFile = 'EPUB/styles.css';
+    state.model = editorModel();
+    state.model.blocks = [
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Editable EPUB content' }],
+      },
+    ];
+    state.model.metadata.title = {
+      value: 'Fixture',
+      provenance: { source: 'test', method: 'user', confidence: 'certain' },
+    };
+    state.model.metadata.language = {
+      value: 'en',
+      provenance: { source: 'test', method: 'user', confidence: 'certain' },
+    };
+    state.model.metadata.identifier = {
+      value: 'urn:fixture',
+      provenance: { source: 'test', method: 'user', confidence: 'certain' },
+    };
+    state.output = {
+      filename: 'fixture.epub',
+      mediaType: 'application/epub+zip',
+      data: epubFixtureBuffer(),
+      files: ['EPUB/styles.css'],
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('epub-preview-mode');
+    expect(rendered).toContain('Rendered');
+    expect(rendered).toContain('Markdown');
+    expect(rendered).toContain('Edit');
+    expect(rendered).toContain('EPUB files');
+    expect(rendered).toContain('Editable EPUB content');
+    expect(rendered).toContain('Show original');
   });
 
   it('renders preview actions both above and below preview content', () => {
@@ -634,6 +689,7 @@ function controllerFor(
     loadPreset: () => undefined,
     setMetadata: () => undefined,
     setSubjects: () => undefined,
+    setAuthors: () => undefined,
     addAuthor: () => undefined,
     updateAuthor: () => undefined,
     removeAuthor: () => undefined,

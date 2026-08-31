@@ -34,6 +34,19 @@ function model(blocks: DocumentModel['blocks']): DocumentModel {
 }
 
 describe('writeMarkdown', () => {
+  it('keeps plain-text citation brackets readable', () => {
+    const input = model([
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Prior work [2, 19].' }],
+      },
+    ]);
+
+    expect(writeMarkdown(input, { conversionDate: '2026-07-15' })).toContain(
+      'Prior work [2, 19].',
+    );
+  });
+
   it('applies source, MathML, KaTeX, and disabled formula modes', () => {
     const input = model([{ type: 'equationBlock', equationId: 'eq' }]);
     input.equations.eq = {

@@ -5,6 +5,7 @@ import {
   exportStylePreset,
   importStylePreset,
   setMetadataField,
+  parseAuthors,
   updateAuthor,
 } from './editors.ts';
 import {
@@ -105,6 +106,22 @@ describe('style editor state', () => {
 });
 
 describe('metadata editor state', () => {
+  it('parses comma-separated and Markdown-linked author lists', () => {
+    expect(
+      parseAuthors(
+        '[Ashish Vaswani](https://arxiv.org/search/cs?searchtype=author&query=Vaswani,+A), Noam Shazeer, Niki Parmar',
+      ),
+    ).toEqual([
+      {
+        name: 'Ashish Vaswani',
+        identifier:
+          'https://arxiv.org/search/cs?searchtype=author&query=Vaswani,+A',
+      },
+      { name: 'Noam Shazeer' },
+      { name: 'Niki Parmar' },
+    ]);
+  });
+
   it('marks scalar and structured author edits as user-provided while preserving other metadata', () => {
     const titled = setMetadataField(model.metadata, 'title', 'Edited title');
     const edited = updateAuthor(titled, 0, {

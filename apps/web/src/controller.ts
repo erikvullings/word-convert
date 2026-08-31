@@ -7,7 +7,9 @@ import {
   addAuthor,
   exportStylePreset,
   importStylePreset,
+  parseAuthors,
   removeAuthor,
+  setAuthors,
   setMetadataField,
   setSubjects,
   updateAuthor,
@@ -33,6 +35,8 @@ import {
   titleTextWarning,
 } from '@wordconvert/cover-generator';
 import { deliverDownload } from './download/index.ts';
+import { withMarkdownContent } from './content-editor.ts';
+import { fetchRemotePdf } from './remote-pdf.ts';
 
 export function createBrowserController(): AppController {
   const state: AppState = createInitialState(
@@ -45,6 +49,8 @@ export function createBrowserController(): AppController {
   let sourceInput: ArrayBuffer | undefined;
   let sourceFilename: string | undefined;
   let autoPreviewOperationId: string | undefined;
+  let epubRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let remotePdfAbort: AbortController | undefined;
   let previewRenderer:
     import('./pdf-preview.ts').PdfPagePreviewRenderer | undefined;
   const releasePdfPreview = (): void => {
@@ -102,6 +108,8 @@ export function createBrowserController(): AppController {
   };
   const requestConvert = (): void => {
     if (!state.model) return;
+    if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
+    epubRefreshTimer = undefined;
     delete state.markdownEdit;
     state.status = 'converting';
     state.operationId = operationId('convert');
@@ -116,7 +124,11 @@ export function createBrowserController(): AppController {
     worker.postMessage({
       type: 'convert',
       operationId: state.operationId,
-      model: state.model,
+      model:
+        state.preferences.outputFormat === 'epub' &&
+        state.epubContentEdit !== undefined
+          ? withMarkdownContent(state.model, state.epubContentEdit)
+          : state.model,
       filename: sourceFilename ?? state.selectedFilename ?? 'document.docx',
       format: state.preferences.outputFormat,
       conversionDate: state.conversionDate,
@@ -188,11 +200,14 @@ export function createBrowserController(): AppController {
     m.redraw();
   });
 
-  return {
+  const controller: AppController = {
     state,
     selectFiles(files) {
       const file = files[0];
       if (!file) return;
+      remotePdfAbort?.abort();
+      remotePdfAbort = undefined;
+      delete state.remotePdfLoading;
       const validation = validateSourceFile(file);
       if (validation) {
         state.error = {
@@ -206,6 +221,9 @@ export function createBrowserController(): AppController {
       delete state.error;
       delete state.output;
       delete state.selectedEpubFile;
+      delete state.epubContentEdit;
+      if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
+      epubRefreshTimer = undefined;
       delete state.model;
       delete state.pdfAnalysis;
       disposePdfPreview();
@@ -248,11 +266,51 @@ export function createBrowserController(): AppController {
       });
     },
     cancel() {
+      remotePdfAbort?.abort();
+      remotePdfAbort = undefined;
+      delete state.remotePdfLoading;
       if (!state.operationId) return;
       worker.postMessage({
         type: 'cancel',
         operationId: state.operationId,
       } satisfies WorkerRequest);
+    },
+    setRemotePdfUrl(url) {
+      state.remotePdfUrl = url;
+      if (state.stage === 0) delete state.error;
+    },
+    loadRemotePdf() {
+      const url = state.remotePdfUrl.trim();
+      if (!url || state.remotePdfLoading) return;
+      remotePdfAbort?.abort();
+      const abort = new AbortController();
+      remotePdfAbort = abort;
+      state.remotePdfLoading = true;
+      delete state.error;
+      void fetchRemotePdf(url, fetch, abort.signal)
+        .then((file) => {
+          if (remotePdfAbort !== abort) return;
+          remotePdfAbort = undefined;
+          delete state.remotePdfLoading;
+          controller.selectFiles([file]);
+          m.redraw();
+        })
+        .catch((cause: unknown) => {
+          if (remotePdfAbort !== abort) return;
+          remotePdfAbort = undefined;
+          delete state.remotePdfLoading;
+          if (abort.signal.aborted) return;
+          state.error = {
+            code: 'invalid-input',
+            message:
+              cause instanceof Error
+                ? cause.message
+                : 'The remote PDF could not be loaded.',
+            recoverable: true,
+          };
+          state.status = 'error';
+          m.redraw();
+        });
     },
     convert() {
       requestConvert();
@@ -288,6 +346,8 @@ export function createBrowserController(): AppController {
       document.documentElement.dataset.theme = theme;
     },
     setOutputFormat(format) {
+      if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
+      epubRefreshTimer = undefined;
       state.preferences.outputFormat = format;
       persistPreferences(localStorage, state.preferences);
       delete state.output;
@@ -320,6 +380,24 @@ export function createBrowserController(): AppController {
       persistPreferences(localStorage, state.preferences);
       refreshEpubPreview();
     },
+    setEpubContent(content) {
+      state.epubContentEdit = content;
+      if (state.preferences.outputFormat !== 'epub' || state.stage !== 2)
+        return;
+      if (state.operationId && state.status === 'converting')
+        worker.postMessage({
+          type: 'cancel',
+          operationId: state.operationId,
+        } satisfies WorkerRequest);
+      state.operationId = operationId('epub-edit-pending');
+      state.status = 'converting';
+      delete state.output;
+      if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
+      epubRefreshTimer = setTimeout(() => {
+        epubRefreshTimer = undefined;
+        refreshEpubPreview();
+      }, 300);
+    },
     setStyleMapping(styleId: string, mapping: StyleMapping) {
       state.styleMappings = { ...state.styleMappings, [styleId]: mapping };
     },
@@ -331,6 +409,9 @@ export function createBrowserController(): AppController {
     },
     rerunAnalysis() {
       if (!sourceInput || !sourceFilename) return;
+      delete state.epubContentEdit;
+      if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
+      epubRefreshTimer = undefined;
       if (state.sourceFormat === 'pdf') {
         disposePdfPreview();
         state.pdfPreviewPage = 1;
@@ -363,6 +444,9 @@ export function createBrowserController(): AppController {
     rescanPdfSample() {
       if (!sourceInput || !sourceFilename || state.sourceFormat !== 'pdf')
         return;
+      delete state.epubContentEdit;
+      if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
+      epubRefreshTimer = undefined;
       disposePdfPreview();
       state.pdfPreviewPage = 1;
       delete state.pdfPreviewRequested;
@@ -393,7 +477,7 @@ export function createBrowserController(): AppController {
       requestPdfPage(pageNumber);
     },
     setPdfPreviewScale(scale) {
-      state.pdfPreviewScale = Math.min(2, Math.max(0.75, scale));
+      state.pdfPreviewScale = Math.min(4, Math.max(0.5, scale));
     },
     setPdfOriginalVisible(visible) {
       state.pdfOriginalVisible = visible;
@@ -469,6 +553,14 @@ export function createBrowserController(): AppController {
       state.model = {
         ...state.model,
         metadata: setSubjects(state.model.metadata, value.split(',')),
+      };
+      refreshEpubPreview();
+    },
+    setAuthors(value: string) {
+      if (!state.model) return;
+      state.model = {
+        ...state.model,
+        metadata: setAuthors(state.model.metadata, parseAuthors(value)),
       };
       refreshEpubPreview();
     },
@@ -572,6 +664,7 @@ export function createBrowserController(): AppController {
       refreshEpubPreview();
     },
   };
+  return controller;
 }
 
 function epubMetadataIssues(state: AppState): boolean {

@@ -24,7 +24,7 @@ export const WORKFLOW_STAGES = [
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type OutputFormat = 'html' | 'markdown' | 'epub';
-export type PreviewMode = 'rendered' | 'source' | 'edit';
+export type PreviewMode = 'rendered' | 'source' | 'edit' | 'package';
 export type SourceFormat = 'docx' | 'pdf';
 
 export interface PdfImportSettings {
@@ -67,6 +67,8 @@ export interface AppState {
   status: 'idle' | 'analysing' | 'ready' | 'converting' | 'complete' | 'error';
   conversionDate: string;
   selectedFilename?: string;
+  remotePdfUrl: string;
+  remotePdfLoading?: boolean;
   sourceFormat?: SourceFormat;
   operationId?: string;
   progress?: ConversionProgress;
@@ -84,6 +86,7 @@ export interface AppState {
   output?: DownloadOutput;
   selectedEpubFile?: string;
   markdownEdit?: string;
+  epubContentEdit?: string;
   error?: ConversionError;
   styleMappings: Record<string, StyleMapping>;
   presetText: string;
@@ -127,6 +130,7 @@ export function createInitialState(
     stage: 0,
     status: 'idle',
     conversionDate,
+    remotePdfUrl: '',
     styleMappings: {},
     presetText: '',
     previewMode: 'rendered',

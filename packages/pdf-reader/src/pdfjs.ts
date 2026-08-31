@@ -259,23 +259,13 @@ async function readPage(
   figureRasterizer?: PdfFigureRasterizer,
 ): Promise<RawPdfPage> {
   const viewport = page.getViewport({ scale: 1 });
-  const [text, annotations, structure, images] = await Promise.all([
+  const [text, annotations, structure] = await Promise.all([
     page.getTextContent({
       includeMarkedContent: true,
       disableNormalization: false,
     }),
     page.getAnnotations({ intent: 'display' }),
     page.getStructTree(),
-    includeImages
-      ? readImages(
-          page,
-          viewport.transform as Matrix,
-          limits,
-          cancellation,
-          imageBudget,
-          figureRasterizer,
-        )
-      : Promise.resolve([]),
   ]);
   throwIfCancelled(cancellation);
   if (text.items.length > limits.maxTextItemsPerPage)
@@ -299,6 +289,17 @@ async function readPage(
     viewport.transform as Matrix,
     pageNumber,
   );
+  const images = includeImages
+    ? await readImages(
+        page,
+        viewport.transform as Matrix,
+        limits,
+        cancellation,
+        imageBudget,
+        figureRasterizer,
+        spans,
+      )
+    : [];
   const figureRegions = images.filter(
     ({ source }) => source === 'rendered-figure',
   );
@@ -449,6 +450,7 @@ export async function readImages(
   cancellation?: CancellationSignal,
   imageBudget: PdfImageBudget = { images: 0, pixels: 0 },
   figureRasterizer?: PdfFigureRasterizer,
+  spans: readonly RawPdfTextSpan[] = [],
 ): Promise<RawPdfImage[]> {
   const operators = await page.getOperatorList();
   throwIfCancelled(cancellation);
@@ -571,7 +573,7 @@ export async function readImages(
     }
   }
   if (!figureRasterizer) return images;
-  const regions = figureRegions(vectorBounds);
+  const regions = figureRegions(vectorBounds, images, spans);
   const standaloneImages = images.filter(
     (image) => !regions.some((region) => intersects(image, region)),
   );
@@ -585,6 +587,7 @@ export async function readImages(
         imageBudget,
         figureRasterizer,
         cancellation,
+        images,
       ),
     );
   }
@@ -600,10 +603,20 @@ interface NormalizedBounds {
 
 function figureRegions(
   bounds: readonly NormalizedBounds[],
+  images: readonly RawPdfImage[] = [],
+  spans: readonly RawPdfTextSpan[] = [],
 ): NormalizedBounds[] {
-  const groups = bounds
-    .filter(({ width, height }) => width > 0 || height > 0)
-    .map((region) => ({ region, paths: 1 }));
+  const groups = [
+    ...bounds
+      .filter(({ width, height }) => width > 0 || height > 0)
+      .map((region) => ({ region, paths: 1, imageSeed: false })),
+    ...images
+      .filter(
+        ({ width, height }) =>
+          width >= 0.12 && height >= 0.06 && width * height <= 0.7,
+      )
+      .map((region) => ({ region, paths: 0, imageSeed: true })),
+  ];
   let merged = true;
   while (merged) {
     merged = false;
@@ -618,21 +631,75 @@ function figureRegions(
         if (!nearby(left.region, right.region, 0.015)) continue;
         left.region = unionBounds(left.region, right.region);
         left.paths += right.paths;
+        left.imageSeed ||= right.imageSeed;
         groups.splice(rightIndex, 1);
         merged = true;
         rightIndex--;
       }
     }
   }
-  return groups
+  const regions = groups
     .filter(
-      ({ region, paths }) =>
-        paths >= 4 &&
+      ({ region, paths, imageSeed }) =>
+        (imageSeed || paths >= 4) &&
         region.width >= 0.12 &&
         region.height >= 0.06 &&
         region.width * region.height <= 0.7,
     )
-    .map(({ region }) => padBounds(region, 0.008));
+    .map(({ region }) => region);
+  regions.push(...displayEquationRegions(spans));
+  return regions.map((region) =>
+    padBounds(expandToNearbyLabel(region, spans), 0.008),
+  );
+}
+
+function expandToNearbyLabel(
+  region: NormalizedBounds,
+  spans: readonly RawPdfTextSpan[],
+): NormalizedBounds {
+  const center = region.x + region.width / 2;
+  const labels = spans.filter((span) => {
+    const bottom = span.top + span.height;
+    const spanCenter = span.x + span.width / 2;
+    return (
+      span.text.trim().length >= 3 &&
+      span.text.trim().length <= 80 &&
+      !/[.!?]$/.test(span.text.trim()) &&
+      bottom <= region.top &&
+      region.top - bottom <= 0.04 &&
+      Math.abs(spanCenter - center) <= Math.max(region.width * 0.4, 0.04)
+    );
+  });
+  return labels.reduce<NormalizedBounds>(unionBounds, region);
+}
+
+function displayEquationRegions(
+  spans: readonly RawPdfTextSpan[],
+): NormalizedBounds[] {
+  return spans
+    .filter(
+      (span) =>
+        span.text.includes('=') && span.x >= 0.22 && span.text.length <= 80,
+    )
+    .flatMap((anchor) => {
+      const members = spans.filter(
+        (span) =>
+          span.top >= anchor.top - 0.02 &&
+          span.top <= anchor.top + 0.035 &&
+          span.x >= 0.15 &&
+          span.x + span.width <= 0.9,
+      );
+      if (members.length < 3) return [];
+      const region = members
+        .map<NormalizedBounds>(({ x, top, width, height }) => ({
+          x,
+          top,
+          width,
+          height,
+        }))
+        .reduce(unionBounds);
+      return region.width >= 0.15 ? [region] : [];
+    });
 }
 
 async function rasterizeFigure(
@@ -643,10 +710,25 @@ async function rasterizeFigure(
   imageBudget: PdfImageBudget,
   rasterizer: PdfFigureRasterizer,
   cancellation?: CancellationSignal,
+  sourceImages: readonly RawPdfImage[] = [],
 ): Promise<RawPdfImage> {
   const base = page.getViewport({ scale: 1 });
   const regionPixels = base.width * region.width * base.height * region.height;
-  const scale = Math.min(2, Math.sqrt(limits.maxImagePixels / regionPixels));
+  const sourceScale = sourceImages
+    .filter((image) => intersects(image, region))
+    .reduce(
+      (maximum, image) =>
+        Math.max(
+          maximum,
+          image.pixelWidth / (base.width * image.width),
+          image.pixelHeight / (base.height * image.height),
+        ),
+      2,
+    );
+  const scale = Math.min(
+    sourceScale,
+    Math.sqrt(limits.maxImagePixels / regionPixels),
+  );
   const viewport = page.getViewport({ scale });
   const pixelWidth = Math.max(1, Math.ceil(viewport.width * region.width));
   const pixelHeight = Math.max(1, Math.ceil(viewport.height * region.height));

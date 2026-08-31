@@ -493,7 +493,7 @@ async function groupLines(
   for (let index = 0; index < sorted.length; index++) {
     if (index % 1_000 === 0) await analysisCheckpoint(options);
     const span = sorted[index]!;
-    const threshold = Math.max(span.height, 0.008) * 0.55;
+    const threshold = Math.max(span.height, 0.008) * 0.75;
     let low = 0;
     let high = groups.length;
     while (low < high) {
@@ -592,7 +592,7 @@ async function analyseStyles(
   mappings: Readonly<Record<string, StyleMapping>> | undefined,
   options: PdfAnalysisOptions,
 ): Promise<AnalysedStyle[]> {
-  const bodySize = median(lines.map(({ fontSize }) => fontSize)) ?? 11;
+  const bodySize = bodyFontSize(lines);
   const grouped = new Map<string, PdfLine[]>();
   for (let index = 0; index < lines.length; index++) {
     if (index % 250 === 0) await analysisCheckpoint(options);
@@ -642,6 +642,35 @@ function inferredMapping(line: PdfLine, bodySize: number): StyleMapping {
   return 'body';
 }
 
+function bodyFontSize(lines: readonly PdfLine[]): number {
+  return (
+    median(
+      lines
+        .filter(({ text }) => text.trim().length >= 5)
+        .map(({ fontSize }) => fontSize),
+    ) ?? 11
+  );
+}
+
+function semanticHeadingLevel(
+  line: PdfLine,
+): 1 | 2 | 3 | 4 | 5 | 6 | undefined {
+  const text = line.text.trim();
+  if (/^abstract$/i.test(text)) return 1;
+  const numbered = /^(\d+(?:\.\d+)*)\.?\s+\p{Lu}/u.exec(text);
+  if (!numbered) return undefined;
+  return Math.min(6, numbered[1]!.split('.').length) as 1 | 2 | 3 | 4 | 5 | 6;
+}
+
+function isDetachedMathFragment(line: PdfLine, bodySize: number): boolean {
+  return (
+    line.fontSize <= bodySize * 0.8 &&
+    line.text.length <= 8 &&
+    /^[\d\p{L}\s+−=()]+$/u.test(line.text) &&
+    !/[\p{L}]{2,}/u.test(line.text)
+  );
+}
+
 function styleId(line: PdfLine): string {
   return [
     'pdf',
@@ -662,6 +691,7 @@ async function linesToBlocks(
     styles.map(({ id, proposedMapping }) => [id, proposedMapping]),
   );
   const blocks: BlockNode[] = [];
+  const bodySize = bodyFontSize(lines);
   let previousLine: PdfLine | undefined;
   let contentPages = 0;
   let processed = 0;
@@ -669,7 +699,8 @@ async function linesToBlocks(
     await analysisCheckpoint(options);
     const rolesByMarkedContentId = taggedRoles(page.taggedStructure);
     const pageLines = lines.filter(
-      ({ page: pageNumber }) => pageNumber === page.number,
+      (line) =>
+        line.page === page.number && !isDetachedMathFragment(line, bodySize),
     );
     const placements = imagePlacements(pageLines, page.images);
     if (pageLines.length === 0 && page.images.length === 0) continue;
@@ -714,7 +745,9 @@ async function linesToBlocks(
           /^heading([1-6])$/.exec(mapped);
         const headingLevel = heading
           ? (Number(heading[1]) as 1 | 2 | 3 | 4 | 5 | 6)
-          : undefined;
+          : mapped === 'body'
+            ? semanticHeadingLevel(line)
+            : undefined;
         const previousBlock = blocks.at(-1);
         if (
           headingLevel !== undefined &&
@@ -793,6 +826,14 @@ function imagePlacements(
   for (const image of [...images].sort(
     (left, right) => left.top - right.top || left.x - right.x,
   )) {
+    const captionIndex = lines.findIndex(
+      (line) =>
+        /^fig(?:ure)?\s+\d+[.:]/i.test(line.text.trim()) &&
+        line.top >= image.top + image.height - 0.015 &&
+        line.top <= image.top + image.height + 0.08 &&
+        line.x < image.x + image.width &&
+        line.x + line.width > image.x,
+    );
     const imageIsLeft = image.x + image.width / 2 < 0.5;
     const sameColumn = lines
       .map((line, index) => ({ line, index }))
@@ -805,12 +846,14 @@ function imagePlacements(
     const following = sameColumn.find(({ line }) => line.top >= image.top);
     const geometricIndex = lines.findIndex(({ top }) => top >= image.top);
     const index =
-      following?.index ??
-      (sameColumn.length > 0
-        ? sameColumn[sameColumn.length - 1]!.index + 1
-        : geometricIndex >= 0
-          ? geometricIndex
-          : lines.length);
+      captionIndex >= 0
+        ? captionIndex
+        : (following?.index ??
+          (sameColumn.length > 0
+            ? sameColumn[sameColumn.length - 1]!.index + 1
+            : geometricIndex >= 0
+              ? geometricIndex
+              : lines.length));
     const group = placements.get(index) ?? [];
     group.push(image);
     placements.set(index, group);
@@ -824,15 +867,21 @@ function lineInlines(
 ): InlineNode[] {
   const output: InlineNode[] = [];
   let previous: RawPdfTextSpan | undefined;
-  for (const span of line.spans) {
+  for (const [index, span] of line.spans.entries()) {
     if (
       previous &&
       span.x - (previous.x + previous.width) >
         Math.max(previous.height * 0.25, 0.003)
     )
       output.push({ type: 'text', text: ' ' });
+    const visualLeadIn =
+      index === 0 &&
+      line.spans.length > 1 &&
+      /^[\p{L}][^:]{0,40}:$/u.test(span.text.trim());
     const marks = [
-      ...(span.bold ? ([{ type: 'bold' as const }] as const) : []),
+      ...(span.bold || visualLeadIn
+        ? ([{ type: 'bold' as const }] as const)
+        : []),
       ...(span.italic ? ([{ type: 'italic' as const }] as const) : []),
     ];
     const text: InlineNode = {
@@ -1115,6 +1164,7 @@ function metadata(
     .at(-1)
     ?.replace(/\.pdf$/i, '')
     .trim();
+  const identifier = filenameIdentifier(options.filename);
   const metadataTitle = raw.metadata.title?.trim();
   const trustedMetadataTitle =
     metadataTitle && !isOfficeSourceFilename(metadataTitle)
@@ -1139,6 +1189,15 @@ function metadata(
         }
       : {}),
     authors,
+    ...(identifier
+      ? {
+          identifier: value(identifier, {
+            source: 'filename',
+            method: 'inferred',
+            confidence: 'low',
+          }),
+        }
+      : {}),
     ...(raw.metadata.language
       ? {
           language: value(raw.metadata.language, extracted('catalog:Lang')),
@@ -1177,6 +1236,20 @@ function metadata(
       confidence: 'certain',
     }),
   };
+}
+
+function filenameIdentifier(filename: string | undefined): string | undefined {
+  const base = filename
+    ?.split(/[\\/]/)
+    .at(-1)
+    ?.replace(/\.pdf$/i, '')
+    .trim();
+  if (!base) return undefined;
+  const slug = base
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  return `urn:wordconvert:${slug || 'document'}`;
 }
 
 function inferVisibleTitle(page: RawPdfPage | undefined): string | undefined {

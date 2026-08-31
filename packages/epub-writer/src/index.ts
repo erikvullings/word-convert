@@ -556,9 +556,22 @@ function slug(value: string): string {
 }
 
 function escapeXml(value: string): string {
-  return value.replace(/[&<>]/g, (character) =>
-    character === '&' ? '&amp;' : character === '<' ? '&lt;' : '&gt;',
-  );
+  return Array.from(value)
+    .map((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      const allowed =
+        codePoint === 0x09 ||
+        codePoint === 0x0a ||
+        codePoint === 0x0d ||
+        (codePoint >= 0x20 && codePoint <= 0xd7ff) ||
+        (codePoint >= 0xe000 && codePoint <= 0xfffd) ||
+        (codePoint >= 0x10000 && codePoint <= 0x10ffff);
+      return allowed ? character : '�';
+    })
+    .join('')
+    .replace(/[&<>]/g, (character) =>
+      character === '&' ? '&amp;' : character === '<' ? '&lt;' : '&gt;',
+    );
 }
 
 function escapeAttribute(value: string): string {

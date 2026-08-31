@@ -126,6 +126,28 @@ export function setSubjects(
   };
 }
 
+export function parseAuthors(value: string): Person[] {
+  return (value.match(/\[[^\]]+\]\(https?:\/\/[^\s)]+\)|[^,;\n]+/g) ?? [])
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const link = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(entry);
+      return link
+        ? { name: link[1]!.trim(), identifier: link[2]! }
+        : { name: entry };
+    });
+}
+
+export function setAuthors(
+  metadata: DocumentMetadata,
+  authors: readonly Person[],
+): DocumentMetadata {
+  return {
+    ...metadata,
+    authors: authors.map((author) => userValue(cleanPerson(author))),
+  };
+}
+
 export function updateAuthor(
   metadata: DocumentMetadata,
   index: number,

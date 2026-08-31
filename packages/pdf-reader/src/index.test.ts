@@ -93,6 +93,22 @@ describe('PDF layout analysis', () => {
     });
   });
 
+  it('generates a stable identifier from the PDF filename', async () => {
+    const result = await analysePdf(rawDocument([]), {
+      conversionDate: '2026-08-29',
+      filename: 'Accelerate Innovation with TRIZ.pdf',
+    });
+
+    expect(result.model.metadata.identifier).toMatchObject({
+      value: 'urn:wordconvert:accelerate-innovation-with-triz',
+      provenance: {
+        source: 'filename',
+        method: 'inferred',
+        confidence: 'low',
+      },
+    });
+  });
+
   it('merges adjacent lines mapped to the same heading', async () => {
     const raw = rawDocument([
       {
@@ -170,8 +186,8 @@ describe('PDF layout analysis', () => {
         text:
           block.type === 'heading' || block.type === 'paragraph'
             ? block.children
-                .map((child) => (child.type === 'text' ? child.text : ''))
-                .join('')
+              .map((child) => (child.type === 'text' ? child.text : ''))
+              .join('')
             : '',
       })),
     ).toEqual([
@@ -226,8 +242,8 @@ describe('PDF layout analysis', () => {
       result.model.blocks.map((block) =>
         block.type === 'paragraph'
           ? block.children
-              .map((child) => (child.type === 'text' ? child.text : ''))
-              .join('')
+            .map((child) => (child.type === 'text' ? child.text : ''))
+            .join('')
           : '',
       ),
     ).toEqual([
@@ -264,8 +280,8 @@ describe('PDF layout analysis', () => {
       result.model.blocks.map((block) =>
         block.type === 'paragraph'
           ? block.children
-              .map((child) => (child.type === 'text' ? child.text : ''))
-              .join('')
+            .map((child) => (child.type === 'text' ? child.text : ''))
+            .join('')
           : '',
       ),
     ).toEqual(['Left first', 'Left second', 'Right first', 'Right second']);
@@ -673,6 +689,156 @@ describe('PDF layout analysis', () => {
     ]);
   });
 
+  it('places a centered figure before its following caption', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Figure 1: Model architecture.', 0.34, 0.51, {
+              width: 0.31,
+            }),
+            span('Following explanation.', 0.18, 0.55, { width: 0.65 }),
+          ],
+          links: [],
+          images: [
+            {
+              id: 'figure-1',
+              x: 0.32,
+              top: 0.09,
+              width: 0.36,
+              height: 0.41,
+              pixelWidth: 100,
+              pixelHeight: 100,
+              mediaType: 'image/png',
+              data: Uint8Array.from([0]),
+            },
+          ],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks.map(({ type }) => type)).toEqual([
+      'imageBlock',
+      'paragraph',
+      'paragraph',
+    ]);
+  });
+
+  it('recognises academic section headings and bold lead-in labels', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Abstract', 0.4, 0.1, { fontSize: 12, width: 0.1 }),
+            span('Summary text.', 0.18, 0.14, { fontSize: 10 }),
+            span('1 Introduction', 0.18, 0.2, { fontSize: 12 }),
+            span('3.1 Encoder and Decoder Stacks', 0.18, 0.3, {
+              fontSize: 10,
+            }),
+            span('Encoder:', 0.18, 0.35, { fontSize: 10, width: 0.08 }),
+            span('The encoder is composed of layers.', 0.27, 0.35, {
+              fontSize: 10,
+              width: 0.4,
+            }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks).toMatchObject([
+      { type: 'heading', level: 1 },
+      { type: 'paragraph' },
+      { type: 'heading', level: 1 },
+      { type: 'heading', level: 2 },
+      {
+        type: 'paragraph',
+        children: [
+          { text: 'Encoder:', marks: [{ type: 'bold' }] },
+          { text: ' ' },
+          { text: 'The encoder is composed of layers.' },
+        ],
+      },
+    ]);
+  });
+
+  it('drops detached small formula fragments from flowing prose', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Body text.', 0.18, 0.1, { fontSize: 10 }),
+            span('1 n', 0.2, 0.2, { fontSize: 7, width: 0.03 }),
+            span('1 m', 0.7, 0.3, { fontSize: 7, width: 0.03 }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(JSON.stringify(result.model.blocks)).toContain('Body text.');
+    expect(JSON.stringify(result.model.blocks)).not.toMatch(/1 [nm]/);
+  });
+
+  it('keeps a lowered inline subscript with its surrounding text', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('dimension d', 0.18, 0.1, {
+              fontSize: 10,
+              height: 0.013,
+              width: 0.12,
+            }),
+            span('model', 0.3, 0.106, {
+              fontSize: 7,
+              height: 0.009,
+              width: 0.04,
+            }),
+            span('= 512.', 0.34, 0.1, {
+              fontSize: 10,
+              height: 0.013,
+              width: 0.06,
+            }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    const first = result.model.blocks[0];
+    expect(
+      first && 'children' in first
+        ? first.children
+          .map((child) => ('text' in child ? child.text : ''))
+          .join('')
+        : '',
+    ).toBe('dimension dmodel= 512.');
+  });
+
   it('uses tagged structure and whitespace to reconstruct semantic blocks', async () => {
     const result = await analysePdf(
       rawDocument([
@@ -953,9 +1119,9 @@ describe('PDF layout analysis', () => {
       spans: [
         ...(index % 2 === 0
           ? [
-              span('Repeated label', 0.05, 0.03, { width: 0.2 }),
-              span('Repeated label', 0.75, 0.03, { width: 0.2 }),
-            ]
+            span('Repeated label', 0.05, 0.03, { width: 0.2 }),
+            span('Repeated label', 0.75, 0.03, { width: 0.2 }),
+          ]
           : []),
         span(`Body ${index + 1}`, 0.1, 0.3),
       ],
@@ -1135,8 +1301,8 @@ describe('PDF.js extraction helpers', () => {
       undefined,
       undefined,
       {
-        CanvasFactory: class {},
-        FilterFactory: class {},
+        CanvasFactory: class { },
+        FilterFactory: class { },
         createSurface: (width, height) => ({
           canvas: { width, height },
           encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
@@ -1154,6 +1320,196 @@ describe('PDF.js extraction helpers', () => {
     ]);
     expect(render).toHaveBeenCalledOnce();
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('rasterizes a meaningful embedded image as a composed figure region', async () => {
+    const image = {
+      width: 600,
+      height: 800,
+      kind: 3,
+      data: new Uint8Array(600 * 800 * 4).fill(255),
+    };
+    const render = vi.fn(() => ({ promise: Promise.resolve() }));
+    const page = {
+      pageNumber: 3,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render,
+      objs: {
+        get: (_id: string, callback: (value: unknown) => void) =>
+          callback(image),
+      },
+      getOperatorList: async () => ({
+        fnArray: [OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore],
+        argsArray: [
+          undefined,
+          [240, 0, 0, 320, 180, 300],
+          ['figure'],
+          undefined,
+        ],
+      }),
+    };
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 1,
+        maxTextItemsPerPage: 1,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class { },
+        FilterFactory: class { },
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+    );
+
+    expect(images).toEqual([
+      expect.objectContaining({
+        id: 'pdf-figure-3-0',
+        source: 'rendered-figure',
+        mediaType: 'image/png',
+      }),
+    ]);
+    expect(render).toHaveBeenCalledOnce();
+  });
+
+  it('includes a short centered label above an embedded figure', async () => {
+    const image = {
+      width: 100,
+      height: 160,
+      kind: 3,
+      data: new Uint8Array(100 * 160 * 4).fill(255),
+    };
+    const page = {
+      pageNumber: 4,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render: vi.fn(() => ({ promise: Promise.resolve() })),
+      objs: {
+        get: (_id: string, callback: (value: unknown) => void) =>
+          callback(image),
+      },
+      getOperatorList: async () => ({
+        fnArray: [OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore],
+        argsArray: [
+          undefined,
+          [120, 0, 0, 160, 300, 560],
+          ['figure'],
+          undefined,
+        ],
+      }),
+    };
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 1,
+        maxTextItemsPerPage: 1,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class { },
+        FilterFactory: class { },
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      [
+        span('Multi-Head Attention', 0.5, 0.67, {
+          width: 0.2,
+          height: 0.013,
+          fontSize: 10,
+        }),
+      ],
+    );
+
+    expect(images[0]).toMatchObject({
+      source: 'rendered-figure',
+      top: expect.closeTo(0.662, 3),
+    });
+  });
+
+  it('rasterizes a centered display equation as a figure', async () => {
+    const page = {
+      pageNumber: 4,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render: vi.fn(() => ({ promise: Promise.resolve() })),
+      getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+    };
+    const spans = [
+      span('Attention(Q, K, V ) = softmax(', 0.35, 0.59, {
+        width: 0.25,
+        height: 0.013,
+        fontSize: 10,
+      }),
+      span('QK', 0.6, 0.582, { width: 0.03, fontSize: 10 }),
+      span('T', 0.63, 0.578, { width: 0.01, fontSize: 7 }),
+      span('√d', 0.6, 0.6, { width: 0.03, fontSize: 10 }),
+      span('k', 0.63, 0.61, { width: 0.01, fontSize: 7 }),
+      span(')V', 0.65, 0.59, { width: 0.03, fontSize: 10 }),
+      span('(1)', 0.8, 0.59, { width: 0.02, fontSize: 10 }),
+    ];
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 1,
+        maxTextItemsPerPage: 1,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class { },
+        FilterFactory: class { },
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      spans,
+    );
+
+    expect(images).toEqual([
+      expect.objectContaining({
+        id: 'pdf-figure-4-0',
+        source: 'rendered-figure',
+      }),
+    ]);
   });
 
   it('limits aggregate repeated-image placements', async () => {

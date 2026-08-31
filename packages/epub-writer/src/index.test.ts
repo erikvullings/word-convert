@@ -369,6 +369,31 @@ describe('writeEpub', () => {
     ).rejects.toThrow('language');
   });
 
+  it('replaces characters forbidden by XML 1.0 in metadata and content', async () => {
+    const input = model([
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Before\u0001after' }],
+      },
+    ]);
+    const files = unzipSync(
+      await writeEpub(input, {
+        conversionDate: '2026-07-15',
+        identifier: 'control-character',
+        title: 'Control\u0001character',
+        language: 'en',
+      }),
+    );
+    const publicationText = Object.entries(files)
+      .filter(([path]) => /\.(?:xhtml|opf|xml)$/.test(path))
+      .map(([, bytes]) => strFromU8(bytes))
+      .join('');
+
+    expect(publicationText).not.toContain('\u0001');
+    expect(publicationText).toContain('Before�after');
+    expect(publicationText).toContain('Control�character');
+  });
+
   it.skipIf(!epubcheckAvailable)('passes EPUBCheck', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'wordconvert-epub-'));
     const path = join(directory, 'fixture.epub');

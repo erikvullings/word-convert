@@ -38,6 +38,7 @@ import {
 } from './cover.ts';
 import { createCoverSvg } from '@wordconvert/cover-generator';
 import type { MathOutputMode } from '@wordconvert/math-converter';
+import { writeMarkdown } from '@wordconvert/markdown-writer';
 import { previewSanitizeConfig, warningDestination } from './preview/index.ts';
 import type { HtmlOutputMode, MarkdownOutputMode } from './output.ts';
 
@@ -53,6 +54,10 @@ const previewModeOptionsWithEdit = [
   ...previewModeOptions,
   { id: 'edit' as const, label: 'Edit' },
 ];
+const epubPreviewModeOptions = [
+  ...previewModeOptionsWithEdit,
+  { id: 'package' as const, label: 'EPUB files' },
+];
 
 export interface AppController {
   state: AppState;
@@ -61,11 +66,14 @@ export interface AppController {
   convert(): void;
   download(): void;
   setTheme(theme: ThemePreference): void;
+  setRemotePdfUrl?(url: string): void;
+  loadRemotePdf?(): void;
   setOutputFormat(format: 'html' | 'markdown' | 'epub'): void;
   setFormulaMode?(mode: MathOutputMode): void;
   setHtmlMode?(mode: HtmlOutputMode): void;
   setMarkdownMode?(mode: MarkdownOutputMode): void;
   setEpubIncludeCover?(include: boolean): void;
+  setEpubContent?(content: string): void;
   setStyleMapping(styleId: string, mapping: StyleMapping): void;
   acceptHighConfidence(): void;
   rerunAnalysis(): void;
@@ -84,6 +92,7 @@ export interface AppController {
   loadPreset(name: string): void;
   setMetadata(field: EditableMetadataField, value: string): void;
   setSubjects(value: string): void;
+  setAuthors(value: string): void;
   addAuthor(): void;
   updateAuthor(index: number, person: Person): void;
   removeAuthor(index: number): void;
@@ -150,7 +159,7 @@ export function renderApp(
             ? m('p.document-context', documentLabel(controller.state))
             : null,
           controller.state.stage === 0
-            ? filePicker(select, drop)
+            ? filePicker(controller, select, drop)
             : stageContent(controller),
           controller.state.error
             ? m('.error[role="alert"]', controller.state.error.message)
@@ -182,28 +191,70 @@ function documentLabel(state: AppState): string {
 }
 
 function filePicker(
+  controller: AppController,
   onchange: (event: Event) => void,
   ondrop: (event: DragEvent) => void,
 ): m.Vnode {
-  return m(
-    '.drop-zone',
-    {
-      ondragover: (event: DragEvent) => event.preventDefault(),
-      ondrop,
-    },
-    [
-      m(
-        'label.file-label[for="document-input"]',
-        'Choose a DOCX or PDF document',
-      ),
-      m('input#document-input', {
-        type: 'file',
-        accept: `${DOCX_MEDIA_TYPE},${PDF_MEDIA_TYPE},.docx,.pdf`,
-        onchange,
-      }),
-      m('p', 'or drag and drop a .docx or .pdf file here'),
-    ],
-  );
+  const state = controller.state;
+  return m('.source-picker', [
+    m(
+      '.drop-zone',
+      {
+        ondragover: (event: DragEvent) => event.preventDefault(),
+        ondrop,
+      },
+      [
+        m(
+          'label.file-label[for="document-input"]',
+          'Choose a DOCX or PDF document',
+        ),
+        m('input#document-input', {
+          type: 'file',
+          accept: `${DOCX_MEDIA_TYPE},${PDF_MEDIA_TYPE},.docx,.pdf`,
+          onchange,
+        }),
+        m('p', 'or drag and drop a .docx or .pdf file here'),
+      ],
+    ),
+    m(
+      'form.remote-pdf',
+      {
+        onsubmit: (event: SubmitEvent) => {
+          event.preventDefault();
+          controller.loadRemotePdf?.();
+        },
+      },
+      [
+        m('label[for="remote-pdf-url"]', 'Open a PDF from a URL'),
+        m('.remote-pdf-row', [
+          m('input#remote-pdf-url', {
+            type: 'url',
+            inputmode: 'url',
+            placeholder: 'https://arxiv.org/abs/1706.03762',
+            value: state.remotePdfUrl,
+            disabled: state.remotePdfLoading === true,
+            oninput: (event: Event) =>
+              controller.setRemotePdfUrl?.(
+                (event.currentTarget as HTMLInputElement).value,
+              ),
+          }),
+          m(
+            'button',
+            {
+              type: 'submit',
+              disabled:
+                state.remotePdfLoading === true || !state.remotePdfUrl.trim(),
+            },
+            state.remotePdfLoading ? 'Loading…' : 'Load PDF',
+          ),
+        ]),
+        m(
+          'p.remote-pdf-warning',
+          'The PDF is downloaded directly to this device. Some websites block browser access (CORS), so their links cannot be opened here. arXiv abstract links are converted automatically.',
+        ),
+      ],
+    ),
+  ]);
 }
 
 function stageContent(controller: AppController): m.Children {
@@ -366,6 +417,7 @@ function pdfImportEditor(controller: AppController): m.Vnode {
           m('.pdf-preview-slot', [
             pdfSourcePreview(controller, top, bottom, pageCount, {
               paginationPosition: 'after',
+              showScaleControl: true,
               compactPagination: true,
             }),
             m('.pdf-crop-controls', [
@@ -527,8 +579,8 @@ function pdfSourcePreview(
             ),
             m('input', {
               type: 'range',
-              min: 75,
-              max: 200,
+              min: 50,
+              max: 400,
               step: 25,
               value: state.pdfPreviewScale * 100,
               oninput: (event: Event) =>
@@ -935,14 +987,59 @@ function epubMetadataIssues(metadata?: DocumentMetadata): string[] {
 
 function preview(controller: AppController): m.Vnode {
   const state = controller.state;
-  if (state.preferences.outputFormat === 'epub')
+  if (state.preferences.outputFormat === 'epub') {
+    const source = epubContentSource(state);
+    const converted =
+      state.previewMode === 'edit'
+        ? m(MarkdownEditor, {
+            content: source,
+            onContentChange: (newContent: string) => {
+              state.epubContentEdit = newContent;
+              controller.setEpubContent?.(newContent);
+            },
+            markdownToHtml: renderMarkdown,
+            placeholder: 'Edit document content…',
+            theme: state.preferences.theme === 'dark' ? 'dark' : 'light',
+            toolbar: true,
+            showTabs: true,
+          })
+        : state.previewMode === 'source'
+          ? m('pre.markdown-source', markdownSourcePreview(source))
+          : state.previewMode === 'package'
+            ? epubLayoutPreview(controller)
+            : m(
+                'article.document-preview',
+                m.trust(
+                  DOMPurify.sanitize(
+                    renderMarkdown(source),
+                    previewSanitizeConfig(),
+                  ),
+                ),
+              );
     return m('.preview-panel', [
       previewActions(controller),
       epubConfiguration(controller),
-      outputPreviewWorkspace(controller, epubLayoutPreview(controller)),
+      m('.preview-display-controls', [
+        m(
+          '.preview-mode',
+          m(RadioButtons<PreviewMode>, {
+            id: 'epub-preview-mode',
+            options: epubPreviewModeOptions,
+            checkedId: state.previewMode,
+            className: 'row',
+            checkboxClass: 'col s3',
+            onchange: (mode) => {
+              state.previewMode = mode;
+            },
+          }),
+        ),
+        state.sourceFormat === 'pdf' ? originalPreviewToggle(controller) : null,
+      ]),
+      outputPreviewWorkspace(controller, converted),
       warningPanel(controller),
       previewActions(controller),
     ]);
+  }
 
   if (!state.output)
     return m('div', [
@@ -1022,6 +1119,21 @@ function preview(controller: AppController): m.Vnode {
     warningPanel(controller),
     previewActions(controller),
   ]);
+}
+
+function epubContentSource(state: AppState): string {
+  if (state.epubContentEdit !== undefined) return state.epubContentEdit;
+  if (!state.model) return '';
+  const metadata = { ...state.model.metadata };
+  delete metadata.title;
+  state.epubContentEdit = writeMarkdown(
+    { ...state.model, metadata },
+    {
+      conversionDate: state.conversionDate,
+      formulaMode: 'source',
+    },
+  );
+  return state.epubContentEdit;
 }
 
 function outputPreviewWorkspace(
@@ -1579,6 +1691,22 @@ function metadataEditor(controller: AppController): m.Vnode {
     ]),
     m('fieldset.authors', [
       m('legend', 'Authors'),
+      m('label', [
+        'Bulk authors (comma, semicolon, or newline separated)',
+        m('textarea', {
+          value: metadata.authors
+            .map(({ value }) =>
+              value.identifier
+                ? `[${value.name}](${value.identifier})`
+                : value.name,
+            )
+            .join(', '),
+          onchange: (event: Event) =>
+            controller.setAuthors(
+              (event.currentTarget as HTMLTextAreaElement).value,
+            ),
+        }),
+      ]),
       ...metadata.authors.map((author, index) =>
         authorEditor(controller, author.value, index, author),
       ),

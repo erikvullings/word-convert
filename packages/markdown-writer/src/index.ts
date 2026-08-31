@@ -376,7 +376,10 @@ function renderText(
 ): string {
   const content = marks.some((mark) => mark.type === 'code')
     ? inlineCode(value)
-    : escapeText(value);
+    : escapeText(value).replace(
+        /\\\[([0-9,;\-–—\s]+)\\\]/g,
+        (_match, citation: string) => `[${citation}]`,
+      );
   return applyMarks(content, marks, context);
 }
 
