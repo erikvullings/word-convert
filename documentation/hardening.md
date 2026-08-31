@@ -22,6 +22,7 @@ This document is the release checklist for security, privacy, performance, and b
 | Excessive PDF input | `maxInputBytes: 50 MiB`, `maxPages: 2,000`, `maxTextItems: 2,000,000`, and `maxTextItemsPerPage: 100,000` | PDF reader corpus and configurable-limit tests |
 | Excessive PDF raster images | `maxImagePixels: 40,000,000` per image, `maxImages: 10,000`, and `maxTotalImagePixels: 80,000,000` across placements | PDF reader configurable per-image and aggregate-limit tests |
 | PDF vector figure rendering | Detect connected path regions, render only bounded regions to passive PNG, and charge them to the existing image-count and pixel budgets | PDF reader figure-region and aggregate-limit tests; browser conversion check |
+| PDF layout model | Run the bundled Apache-2.0 Heron FP16 ONNX model on fixed 640×640 local page renders; accept only bounded, confident picture/table proposals and retain deterministic geometry fallback | Heron preprocessing/decoding tests and PDF proposal-fusion tests |
 | Remote PDF import | HTTPS only, omit credentials/referrer, enforce 50 MiB while streaming, validate response type and `%PDF-` signature, and keep URL/bytes out of persistence | Remote PDF normalization, validation, limit, and failure tests |
 | Encrypted or malformed PDF | Reject before semantic analysis with private structured errors | Password-protected and malformed PDF corpus fixtures |
 | PDF external loading | Supply exact bytes; disable range, streaming, auto-fetch, system-font, and external WASM loading | Worker privacy regression spies on `fetch` during DOCX and PDF analysis |
@@ -51,6 +52,22 @@ PDF source-page previews are loaded only on request and rasterized on an HTML ca
 Initial PDF cleanup analysis reads five deterministic representative pages by default, without extracting images. The user can increase and rescan that sample before the first full-document pass. Output choices remain unavailable until cleanup is applied to the complete document. Crop bands omit text only; images are retained even when they overlap a configured band.
 
 During the full-document pass, connected clusters of PDF vector paths and substantial embedded images seed bounded figure regions that PDF.js renders to passive PNG assets inside the conversion worker. Image-seeded renders preserve the effective source-image resolution up to the configured pixel budget, include overlaid PDF labels or drawing commands, and suppress duplicate text inside the rendered region. Tiny icons remain independent assets. Figure surfaces are capped by the existing per-image and aggregate pixel budgets and are released immediately after PNG encoding. This deliberately favors ebook fidelity and passive output over exporting active SVG or fragmented text assembled from untrusted PDF drawing commands.
+
+Full PDF conversion also renders each page to a fixed 640×640 RGBA surface and
+runs the bundled Docling Heron model through ONNX Runtime Web in the conversion
+worker. WebGPU is preferred when available, with a single-threaded WASM fallback.
+Only picture and table predictions with at least 0.5 confidence seed figure
+composition; coordinates are clipped to the page and remain subject to the
+existing image and pixel budgets. PDF image, vector, text, and caption evidence
+continues to refine detections, and deterministic geometry remains the fallback.
+Sample cleanup analysis does not load or execute the model.
+
+The FP16 model is approximately 82.5 MiB and the emitted ONNX WASM runtime is
+approximately 25 MiB. Both are same-origin, content-hashed build assets included
+in the service-worker precache, so model inference performs no remote request and
+remains available offline after installation. This increases initial PWA cache
+storage by approximately 108 MiB and should be re-measured when the model or ONNX
+Runtime version changes.
 
 Remote PDF import downloads only HTTPS resources using CORS with omitted credentials and no referrer. arXiv abstract URLs are normalized locally to their corresponding `/pdf/` URL. The response is capped at 50 MiB while streaming and must have a PDF-compatible media type and `%PDF-` signature before entering the existing file-analysis path. A remote host can still reject browser access through CORS; WordConvert does not proxy around that policy. Remote URLs and bytes are not persisted.
 

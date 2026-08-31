@@ -3,6 +3,7 @@ packages:
   - packages/*
 
 allowBuilds:
+  protobufjs: false
   simple-git-hooks: true
 
 minimumReleaseAgeExclude:

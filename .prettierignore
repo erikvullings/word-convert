@@ -1,4 +1,5 @@
 node_modules
+.venv
 dist
 coverage
 pnpm-lock.yaml

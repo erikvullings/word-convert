@@ -17,10 +17,17 @@ import { PdfReadError } from './error.ts';
 import {
   extractPdfWithPdfJs,
   type PdfFigureRasterizer,
+  type PdfLayoutDetector,
   type PdfReaderLimits,
 } from './pdfjs.ts';
 export { configurePdfJsWorker } from './pdfjs.ts';
-export type { PdfFigureRasterizer } from './pdfjs.ts';
+export type {
+  PdfFigureRasterizer,
+  PdfLayoutDetector,
+  PdfLayoutImage,
+  PdfLayoutLabel,
+  PdfLayoutRegion,
+} from './pdfjs.ts';
 
 export { PdfReadError } from './error.ts';
 
@@ -150,6 +157,7 @@ export interface PdfReaderOptions extends PdfAnalysisOptions {
   limits?: Partial<PdfReaderLimits>;
   samplePageCount?: number;
   figureRasterizer?: PdfFigureRasterizer;
+  layoutDetector?: PdfLayoutDetector;
 }
 
 export interface PdfReader {
@@ -187,6 +195,9 @@ export const pdfJsReader: PdfReader = {
         : {}),
       ...(options.figureRasterizer
         ? { figureRasterizer: options.figureRasterizer }
+        : {}),
+      ...(options.layoutDetector
+        ? { layoutDetector: options.layoutDetector }
         : {}),
     });
   },

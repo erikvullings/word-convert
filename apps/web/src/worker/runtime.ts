@@ -14,9 +14,11 @@ import {
 } from '@wordconvert/pdf-reader';
 import pdfJsWorkerSrc from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import { unzipSync } from 'fflate';
+import heronModelUrl from '../assets/heron/model_fp16.onnx?url';
 
 import type { WorkerRequest, WorkerSend } from './protocol.ts';
 import { createPdfFigureRasterizer } from './pdf-figure-rasterizer.ts';
+import { createHeronLayoutDetector } from './heron-layout-detector.ts';
 
 if (typeof Worker !== 'undefined') configurePdfJsWorker(pdfJsWorkerSrc);
 
@@ -27,6 +29,7 @@ export interface WorkerRuntime {
 
 export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
   const operations = new Map<string, CancellationSignal>();
+  const layoutDetector = createHeronLayoutDetector(heronModelUrl);
 
   return {
     activeOperationCount: () => operations.size,
@@ -72,6 +75,7 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                   ...readerOptions,
                   ...request.pdfOptions,
                   ...(figureRasterizer ? { figureRasterizer } : {}),
+                  ...(figureRasterizer ? { layoutDetector } : {}),
                 })
               : undefined;
           const model =

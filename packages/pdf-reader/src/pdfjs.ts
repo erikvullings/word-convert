@@ -46,6 +46,7 @@ export interface PdfExtractionOptions {
   cancellation?: CancellationSignal;
   onProgress?: (progress: ConversionProgress) => void;
   figureRasterizer?: PdfFigureRasterizer;
+  layoutDetector?: PdfLayoutDetector;
 }
 
 export interface PdfFigureSurface {
@@ -59,6 +60,48 @@ export interface PdfFigureRasterizer {
   CanvasFactory: new (options: { enableHWA?: boolean }) => object;
   FilterFactory: new (options: { docId: string }) => object;
   createSurface(width: number, height: number): PdfFigureSurface;
+}
+
+export type PdfLayoutLabel =
+  | 'caption'
+  | 'footnote'
+  | 'formula'
+  | 'list_item'
+  | 'page_footer'
+  | 'page_header'
+  | 'picture'
+  | 'section_header'
+  | 'table'
+  | 'text'
+  | 'title'
+  | 'document_index'
+  | 'code'
+  | 'checkbox_selected'
+  | 'checkbox_unselected'
+  | 'form'
+  | 'key_value_region';
+
+export interface PdfLayoutRegion {
+  label: PdfLayoutLabel;
+  confidence: number;
+  x: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface PdfLayoutImage {
+  width: number;
+  height: number;
+  rgba: Uint8ClampedArray;
+}
+
+export interface PdfLayoutDetector {
+  readonly inputSize: number;
+  detect(
+    image: PdfLayoutImage,
+    cancellation?: CancellationSignal,
+  ): Promise<readonly PdfLayoutRegion[]>;
 }
 
 interface PdfJsImage {
@@ -169,6 +212,7 @@ export async function extractPdfWithPdfJs(
           options.cancellation,
           !isSample,
           options.figureRasterizer,
+          options.layoutDetector,
         );
         textItems += extracted.spans.length;
         if (textItems > options.limits.maxTextItems)
@@ -258,6 +302,7 @@ async function readPage(
   cancellation?: CancellationSignal,
   includeImages = true,
   figureRasterizer?: PdfFigureRasterizer,
+  layoutDetector?: PdfLayoutDetector,
 ): Promise<RawPdfPage> {
   const viewport = page.getViewport({ scale: 1 });
   const [text, annotations, structure] = await Promise.all([
@@ -290,6 +335,15 @@ async function readPage(
     viewport.transform as Matrix,
     pageNumber,
   );
+  const layoutRegions =
+    includeImages && figureRasterizer && layoutDetector
+      ? await detectPageLayout(
+          page,
+          figureRasterizer,
+          layoutDetector,
+          cancellation,
+        )
+      : [];
   const images = includeImages
     ? await readImages(
         page,
@@ -299,6 +353,7 @@ async function readPage(
         imageBudget,
         figureRasterizer,
         spans,
+        layoutRegions,
       )
     : [];
   const figureRegions = images.filter(
@@ -452,6 +507,7 @@ export async function readImages(
   imageBudget: PdfImageBudget = { images: 0, pixels: 0 },
   figureRasterizer?: PdfFigureRasterizer,
   spans: readonly RawPdfTextSpan[] = [],
+  layoutRegions: readonly PdfLayoutRegion[] = [],
 ): Promise<RawPdfImage[]> {
   const operators = await page.getOperatorList();
   throwIfCancelled(cancellation);
@@ -574,7 +630,7 @@ export async function readImages(
     }
   }
   if (!figureRasterizer) return images;
-  const regions = figureRegions(vectorBounds, images, spans);
+  const regions = figureRegions(vectorBounds, images, spans, layoutRegions);
   const standaloneImages = images.filter(
     (image) => !regions.some((region) => intersects(image, region)),
   );
@@ -607,6 +663,7 @@ function figureRegions(
   bounds: readonly NormalizedBounds[],
   images: readonly RawPdfImage[] = [],
   spans: readonly RawPdfTextSpan[] = [],
+  layoutRegions: readonly PdfLayoutRegion[] = [],
 ): NormalizedBounds[] {
   const groups = [
     ...bounds
@@ -616,6 +673,15 @@ function figureRegions(
       .filter(
         ({ width, height }) =>
           width >= 0.12 && height >= 0.06 && width * height <= 0.7,
+      )
+      .map((region) => ({ region, paths: 0, imageSeed: true })),
+    ...layoutRegions
+      .filter(
+        ({ label, confidence, width, height }) =>
+          (label === 'picture' || label === 'table') &&
+          confidence >= 0.5 &&
+          width >= 0.05 &&
+          height >= 0.03,
       )
       .map((region) => ({ region, paths: 0, imageSeed: true })),
   ];
@@ -926,6 +992,47 @@ async function renderFigureSurface(
     ],
     background: '#ffffff',
   }).promise;
+}
+
+async function detectPageLayout(
+  page: PDFPageProxy,
+  rasterizer: PdfFigureRasterizer,
+  detector: PdfLayoutDetector,
+  cancellation?: CancellationSignal,
+): Promise<readonly PdfLayoutRegion[]> {
+  const size = detector.inputSize;
+  if (!Number.isInteger(size) || size < 1)
+    throw new PdfReadError(
+      'conversion-failed',
+      'The PDF layout detector has an invalid input size.',
+      { phase: 'read' },
+    );
+  const surface = rasterizer.createSurface(size, size);
+  try {
+    const viewport = page.getViewport({ scale: 1 });
+    await page.render({
+      canvas: surface.canvas as never,
+      viewport,
+      transform: [size / viewport.width, 0, 0, size / viewport.height, 0, 0],
+      background: '#ffffff',
+    }).promise;
+    throwIfCancelled(cancellation);
+    const rgba = surface.readRgba?.();
+    if (!rgba || rgba.length !== size * size * 4)
+      throw new PdfReadError(
+        'conversion-failed',
+        'The PDF layout detector could not read the rendered page.',
+        { phase: 'read' },
+      );
+    const regions = await detector.detect(
+      { width: size, height: size, rgba },
+      cancellation,
+    );
+    throwIfCancelled(cancellation);
+    return regions;
+  } finally {
+    surface.dispose();
+  }
 }
 
 function captionBandIsInsideArtwork(

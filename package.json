@@ -18,6 +18,7 @@
     "lint": "oxlint --deny-warnings .",
     "static:check": "node scripts/verify-static-build.mjs",
     "test": "vitest run",
+    "test:heron": "WORDCONVERT_TEST_HERON_MODEL=1 vitest run apps/web/src/worker/heron-layout-detector.model.test.ts",
     "test:watch": "vitest",
     "typecheck": "pnpm -r --if-present typecheck"
   },

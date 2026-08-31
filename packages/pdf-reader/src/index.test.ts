@@ -1890,6 +1890,66 @@ describe('PDF.js extraction helpers', () => {
     ]);
   });
 
+  it('rasterizes a table proposed by an external layout detector', async () => {
+    const render = vi.fn(() => ({ promise: Promise.resolve() }));
+    const page = {
+      pageNumber: 12,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render,
+      getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+    };
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 20,
+        maxTextItemsPerPage: 20,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          readRgba: () => new Uint8ClampedArray(width * height * 4).fill(255),
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      [],
+      [
+        {
+          label: 'table',
+          confidence: 0.93,
+          x: 0.1,
+          top: 0.2,
+          width: 0.8,
+          height: 0.5,
+        },
+      ],
+    );
+
+    expect(images).toEqual([
+      expect.objectContaining({
+        source: 'rendered-figure',
+        x: expect.closeTo(0.092, 3),
+        top: expect.closeTo(0.192, 3),
+        width: expect.closeTo(0.816, 3),
+        height: expect.closeTo(0.516, 3),
+      }),
+    ]);
+  });
+
   it('rasterizes a meaningful embedded image as a composed figure region', async () => {
     const image = {
       width: 600,

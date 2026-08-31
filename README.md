@@ -123,6 +123,14 @@ network. Source data and generated output stay in memory; local storage contains
 only preferences and validated style presets. A static host can serve the app
 without a conversion service.
 
+Full PDF conversion uses the bundled Docling Heron layout model to identify
+pictures and tables before combining those proposals with PDF.js image, vector,
+text, and caption evidence. The FP16 ONNX model and its WebGPU/WASM runtime are
+same-origin assets cached with the application for offline use. Sample cleanup
+analysis remains model-free. Regenerate the pinned model with
+`uv run --python 3.12 scripts/export-heron-onnx.py` and validate the browser
+runtime with `pnpm test:heron`.
+
 The default DOCX reader limits are 50 MiB compressed input, 200 MiB expanded
 content, 1,000 ZIP entries, a 100:1 per-entry compression ratio, and 25 MiB per
 image. PDF limits are 50 MiB input, 2,000 pages, 2,000,000 text items, and 40
