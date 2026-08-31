@@ -19,7 +19,7 @@ describe('OMML formula conversion', () => {
 
     expect(result.complete).toBe(true);
     expect(result.tex).toBe(
-      String.raw`\frac{α}{2}\sqrt[3]{x}A_{i}^{2}\begin{matrix}1 & 2 \\ 3 & ∞\end{matrix}`,
+      '\\frac{α}{2}\\sqrt[3]{x}A_{i}^{2}\\begin{matrix}1 & 2 \\\\ 3 & ∞\\end{matrix}',
     );
     expect(result.mathml).toContain('<mfrac><mi>α</mi><mn>2</mn></mfrac>');
     expect(result.mathml).toContain('<mroot><mi>x</mi><mn>3</mn></mroot>');

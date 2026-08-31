@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   DOCUMENT_MODEL_SCHEMA,
   DOCUMENT_MODEL_VERSION,
@@ -14,6 +14,14 @@ import {
   type OperationControlMessage,
   type TextWriter,
 } from './index.ts';
+
+type Equal<Left, Right> =
+  (<Value>() => Value extends Left ? 1 : 2) extends <
+    Value,
+  >() => Value extends Right ? 1 : 2
+    ? true
+    : false;
+type Assert<Condition extends true> = Condition;
 
 const model: DocumentModel = {
   schema: DOCUMENT_MODEL_SCHEMA,
@@ -107,10 +115,12 @@ describe('DocumentModel contracts', () => {
   });
 
   it('exposes reader and writer boundaries with typed arrays and plain data', () => {
-    expectTypeOf<DocxReader['read']>().parameter(0).toEqualTypeOf<Uint8Array>();
-    expectTypeOf<TextWriter['write']>().returns.toEqualTypeOf<string>();
-    expectTypeOf<BinaryWriter['write']>().returns.toEqualTypeOf<
-      Promise<Uint8Array>
-    >();
+    const contracts: [
+      Assert<Equal<Parameters<DocxReader['read']>[0], Uint8Array>>,
+      Assert<Equal<ReturnType<TextWriter['write']>, string>>,
+      Assert<Equal<ReturnType<BinaryWriter['write']>, Promise<Uint8Array>>>,
+    ] = [true, true, true];
+
+    expect(contracts).toEqual([true, true, true]);
   });
 });

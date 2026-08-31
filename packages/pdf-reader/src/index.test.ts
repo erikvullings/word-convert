@@ -186,8 +186,8 @@ describe('PDF layout analysis', () => {
         text:
           block.type === 'heading' || block.type === 'paragraph'
             ? block.children
-              .map((child) => (child.type === 'text' ? child.text : ''))
-              .join('')
+                .map((child) => (child.type === 'text' ? child.text : ''))
+                .join('')
             : '',
       })),
     ).toEqual([
@@ -242,8 +242,8 @@ describe('PDF layout analysis', () => {
       result.model.blocks.map((block) =>
         block.type === 'paragraph'
           ? block.children
-            .map((child) => (child.type === 'text' ? child.text : ''))
-            .join('')
+              .map((child) => (child.type === 'text' ? child.text : ''))
+              .join('')
           : '',
       ),
     ).toEqual([
@@ -280,8 +280,8 @@ describe('PDF layout analysis', () => {
       result.model.blocks.map((block) =>
         block.type === 'paragraph'
           ? block.children
-            .map((child) => (child.type === 'text' ? child.text : ''))
-            .join('')
+              .map((child) => (child.type === 'text' ? child.text : ''))
+              .join('')
           : '',
       ),
     ).toEqual(['Left first', 'Left second', 'Right first', 'Right second']);
@@ -833,8 +833,8 @@ describe('PDF layout analysis', () => {
     expect(
       first && 'children' in first
         ? first.children
-          .map((child) => ('text' in child ? child.text : ''))
-          .join('')
+            .map((child) => ('text' in child ? child.text : ''))
+            .join('')
         : '',
     ).toBe('dimension dmodel= 512.');
   });
@@ -1119,9 +1119,9 @@ describe('PDF layout analysis', () => {
       spans: [
         ...(index % 2 === 0
           ? [
-            span('Repeated label', 0.05, 0.03, { width: 0.2 }),
-            span('Repeated label', 0.75, 0.03, { width: 0.2 }),
-          ]
+              span('Repeated label', 0.05, 0.03, { width: 0.2 }),
+              span('Repeated label', 0.75, 0.03, { width: 0.2 }),
+            ]
           : []),
         span(`Body ${index + 1}`, 0.1, 0.3),
       ],
@@ -1301,8 +1301,8 @@ describe('PDF.js extraction helpers', () => {
       undefined,
       undefined,
       {
-        CanvasFactory: class { },
-        FilterFactory: class { },
+        CanvasFactory: class {},
+        FilterFactory: class {},
         createSurface: (width, height) => ({
           canvas: { width, height },
           encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
@@ -1367,8 +1367,8 @@ describe('PDF.js extraction helpers', () => {
       undefined,
       undefined,
       {
-        CanvasFactory: class { },
-        FilterFactory: class { },
+        CanvasFactory: class {},
+        FilterFactory: class {},
         createSurface: (width, height) => ({
           canvas: { width, height },
           encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
@@ -1431,8 +1431,8 @@ describe('PDF.js extraction helpers', () => {
       undefined,
       undefined,
       {
-        CanvasFactory: class { },
-        FilterFactory: class { },
+        CanvasFactory: class {},
+        FilterFactory: class {},
         createSurface: (width, height) => ({
           canvas: { width, height },
           encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
@@ -1493,8 +1493,8 @@ describe('PDF.js extraction helpers', () => {
       undefined,
       undefined,
       {
-        CanvasFactory: class { },
-        FilterFactory: class { },
+        CanvasFactory: class {},
+        FilterFactory: class {},
         createSurface: (width, height) => ({
           canvas: { width, height },
           encodePng: async () => Uint8Array.from([137, 80, 78, 71]),

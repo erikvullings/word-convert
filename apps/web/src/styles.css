@@ -71,7 +71,7 @@ textarea {
   gap: 2rem;
 }
 
-.app-header>div {
+.app-header > div {
   min-width: 0;
 }
 
@@ -199,7 +199,7 @@ h1 {
   clip-path: inset(50%);
 }
 
-.drop-zone input:focus+p,
+.drop-zone input:focus + p,
 .file-label:focus-within {
   outline: 3px solid var(--accent);
   outline-offset: 3px;
@@ -212,7 +212,7 @@ h1 {
   border-top: 1px solid var(--line);
 }
 
-.remote-pdf>label {
+.remote-pdf > label {
   font-weight: 700;
 }
 
@@ -334,7 +334,7 @@ h1 {
   display: none;
 }
 
-.preview-pane--original .pdf-page-preview+.datatable-pagination {
+.preview-pane--original .pdf-page-preview + .datatable-pagination {
   margin-top: 0.75rem;
   margin-bottom: 0;
 }
@@ -442,11 +442,13 @@ h1 {
   border-radius: 0.4rem;
 }
 
-.pdf-furniture-candidates .pdf-furniture-candidate>label {
+.pdf-furniture-candidates .pdf-furniture-candidate > label {
   display: block !important;
 }
 
-.pdf-furniture-candidates [type='checkbox']+.pdf-furniture-candidate__control {
+.pdf-furniture-candidates
+  [type='checkbox']
+  + .pdf-furniture-candidate__control {
   display: block;
   width: 100%;
   height: auto;
@@ -466,7 +468,6 @@ h1 {
 .format-card {
   display: flex;
   flex-direction: column;
-  height: 100%;
   gap: 0.45rem;
   padding: 1.2rem;
   border: 1px solid var(--line);
@@ -582,7 +583,7 @@ h1 {
   border-radius: 0.7rem;
 }
 
-.epub-config>*+* {
+.epub-config > * + * {
   margin-top: 0.8rem;
 }
 
@@ -689,7 +690,7 @@ h1 {
   min-width: 0;
 }
 
-.preview-pane>h3 {
+.preview-pane > h3 {
   margin-block: 0 0.6rem;
   font-size: 1rem;
 }
@@ -767,7 +768,7 @@ h1 {
   margin-block: 1.25em 0.5em;
 }
 
-.document-preview>*:first-child {
+.document-preview > *:first-child {
   margin-top: 0;
 }
 
@@ -782,7 +783,7 @@ h1 {
   margin-block: 0 1.25em;
 }
 
-.document-preview p>img {
+.document-preview p > img {
   display: block;
   clear: both;
   margin-block: 1.25em;
@@ -793,7 +794,7 @@ h1 {
   margin-inline: 0 !important;
 }
 
-.document-preview figure>img {
+.document-preview figure > img {
   display: block;
 }
 
@@ -883,9 +884,9 @@ h1 {
   justify-content: flex-start;
 }
 
-.epub-file-viewer>.document-preview,
-.epub-file-viewer>.markdown-source,
-.epub-file-viewer>p {
+.epub-file-viewer > .document-preview,
+.epub-file-viewer > .markdown-source,
+.epub-file-viewer > p {
   margin: 0;
 }
 
@@ -945,8 +946,10 @@ h1 {
 
 .style-review-card {
   display: grid;
-  grid-template-columns: minmax(10rem, 0.8fr) minmax(12rem, 1.2fr) minmax(13rem,
-      1fr);
+  grid-template-columns: minmax(10rem, 0.8fr) minmax(12rem, 1.2fr) minmax(
+      13rem,
+      1fr
+    );
   grid-template-areas:
     'identity evidence mapping'
     'proposal evidence formatting';
@@ -958,7 +961,7 @@ h1 {
   border-radius: 0.65rem;
 }
 
-.style-review-card>* {
+.style-review-card > * {
   min-width: 0;
 }
 
@@ -1048,9 +1051,9 @@ h1 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.metadata-editor>.help,
-.metadata-editor>.authors,
-.metadata-editor>button {
+.metadata-editor > .help,
+.metadata-editor > .authors,
+.metadata-editor > button {
   grid-column: 1 / -1;
 }
 
