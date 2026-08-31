@@ -37,6 +37,7 @@ import {
 import { deliverDownload } from './download/index.ts';
 import { withMarkdownContent } from './content-editor.ts';
 import { fetchRemotePdf } from './remote-pdf.ts';
+import { inferDocumentLanguage } from './language.ts';
 
 export function createBrowserController(): AppController {
   const state: AppState = createInitialState(
@@ -53,31 +54,32 @@ export function createBrowserController(): AppController {
   let remotePdfAbort: AbortController | undefined;
   let previewRenderer:
     import('./pdf-preview.ts').PdfPagePreviewRenderer | undefined;
+  let pendingPdfPreviewPage: number | undefined;
+  let pdfPreviewRendering = false;
   const releasePdfPreview = (): void => {
     if (state.pdfPreview) URL.revokeObjectURL(state.pdfPreview.url);
     delete state.pdfPreview;
   };
   const disposePdfPreview = (): void => {
+    pendingPdfPreviewPage = undefined;
+    state.pdfPreviewLoading = false;
+    delete state.pdfPreviewOperationId;
     releasePdfPreview();
     void previewRenderer?.dispose();
     previewRenderer = undefined;
   };
-  const requestPdfPage = (requestedPage: number): void => {
-    if (!sourceInput || state.sourceFormat !== 'pdf') return;
+  const renderPendingPdfPage = async (): Promise<void> => {
+    if (
+      pdfPreviewRendering ||
+      pendingPdfPreviewPage === undefined ||
+      !sourceInput
+    )
+      return;
+    const pageNumber = pendingPdfPreviewPage;
+    pendingPdfPreviewPage = undefined;
     const input = sourceInput;
-    const pageCount = state.pdfAnalysis?.pageCount ?? 1;
-    const pageNumber = Math.min(
-      pageCount,
-      Math.max(1, Math.round(requestedPage)),
-    );
-    releasePdfPreview();
-    state.pdfPreviewPage = pageNumber;
-    state.pdfPreviewRequested = true;
-    state.pdfOriginalVisible = true;
-    state.pdfPreviewLoading = true;
-    delete state.pdfPreviewError;
-    state.pdfPreviewOperationId = operationId('pdf-preview');
     const previewOperationId = state.pdfPreviewOperationId;
+    pdfPreviewRendering = true;
     void import('./pdf-preview.ts')
       .then(async ({ createPdfPagePreviewRenderer }) => {
         previewRenderer ??= createPdfPagePreviewRenderer();
@@ -104,7 +106,28 @@ export function createBrowserController(): AppController {
             : 'The PDF page preview could not be rendered.';
         delete state.pdfPreviewOperationId;
         m.redraw();
+      })
+      .finally(() => {
+        pdfPreviewRendering = false;
+        if (pendingPdfPreviewPage !== undefined) void renderPendingPdfPage();
       });
+  };
+  const requestPdfPage = (requestedPage: number): void => {
+    if (!sourceInput || state.sourceFormat !== 'pdf') return;
+    const pageCount = state.pdfAnalysis?.pageCount ?? 1;
+    const pageNumber = Math.min(
+      pageCount,
+      Math.max(1, Math.round(requestedPage)),
+    );
+    releasePdfPreview();
+    state.pdfPreviewPage = pageNumber;
+    state.pdfPreviewRequested = true;
+    state.pdfOriginalVisible = true;
+    state.pdfPreviewLoading = true;
+    delete state.pdfPreviewError;
+    state.pdfPreviewOperationId = operationId('pdf-preview');
+    pendingPdfPreviewPage = pageNumber;
+    void renderPendingPdfPage();
   };
   const requestConvert = (): void => {
     if (!state.model) return;
@@ -684,6 +707,7 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
   if (response.operationId !== state.operationId) return;
   if (response.type === 'progress') state.progress = response.progress;
   if (response.type === 'analysed') {
+    inferDocumentLanguage(response.model);
     state.model = response.model;
     if (response.pdfAnalysis) state.pdfAnalysis = response.pdfAnalysis;
     else delete state.pdfAnalysis;

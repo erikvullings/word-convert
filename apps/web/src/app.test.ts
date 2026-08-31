@@ -7,6 +7,7 @@ import {
 import { strToU8, zipSync } from 'fflate';
 
 import {
+  dateInputValue,
   extractHtmlBody,
   markdownSourcePreview,
   outputPreviewSource,
@@ -16,6 +17,12 @@ import {
 import { createInitialState } from './state.ts';
 
 describe('App', () => {
+  it('formats ISO timestamps for HTML date inputs', () => {
+    expect(dateInputValue('2025-01-08T15:35:53Z')).toBe('2025-01-08');
+    expect(dateInputValue('not-a-date')).toBe('');
+    expect(dateInputValue('2025-02-31')).toBe('');
+  });
+
   it('abbreviates image data URIs in the Markdown source preview', () => {
     expect(
       markdownSourcePreview(

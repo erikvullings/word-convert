@@ -1754,7 +1754,9 @@ function metadataField(
   type: string,
 ): m.Vnode {
   const inferred = controller.state.model?.metadata[field];
-  const value = inferred && 'value' in inferred ? String(inferred.value) : '';
+  const rawValue =
+    inferred && 'value' in inferred ? String(inferred.value) : '';
+  const value = type === 'date' ? dateInputValue(rawValue) : rawValue;
   const attributes = {
     value,
     oninput: (event: Event) =>
@@ -1770,6 +1772,16 @@ function metadataField(
       : m('input', { ...attributes, type }),
     provenance(inferred && 'provenance' in inferred ? inferred : undefined),
   ]);
+}
+
+export function dateInputValue(value: string): string {
+  const date = /^(\d{4}-\d{2}-\d{2})(?:T|$)/.exec(value)?.[1];
+  if (!date) return '';
+  const parsed = new Date(`${date}T00:00:00Z`);
+  return !Number.isNaN(parsed.valueOf()) &&
+    parsed.toISOString().startsWith(date)
+    ? date
+    : '';
 }
 
 function authorEditor(

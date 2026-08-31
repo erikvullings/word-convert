@@ -784,20 +784,35 @@ h1 {
 }
 
 .document-preview ul,
-.md-editable-area ul {
+.md-editable-area ul,
+.editor-wysiwyg ul {
   list-style: disc outside;
   padding-inline-start: 1.5em;
 }
 
 .document-preview ol,
-.md-editable-area ol {
+.md-editable-area ol,
+.editor-wysiwyg ol {
   list-style: decimal outside;
   padding-inline-start: 1.75em;
 }
 
 .document-preview li,
-.md-editable-area li {
+.md-editable-area li,
+.editor-wysiwyg li {
   display: list-item;
+}
+
+.document-preview ul > li,
+.md-editable-area ul > li,
+.editor-wysiwyg ul > li {
+  list-style-type: disc;
+}
+
+.document-preview ol > li,
+.md-editable-area ol > li,
+.editor-wysiwyg ol > li {
+  list-style-type: decimal;
 }
 
 .document-preview p > img {
