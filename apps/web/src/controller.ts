@@ -119,7 +119,6 @@ export function createBrowserController(): AppController {
       pageCount,
       Math.max(1, Math.round(requestedPage)),
     );
-    releasePdfPreview();
     state.pdfPreviewPage = pageNumber;
     state.pdfPreviewRequested = true;
     state.pdfOriginalVisible = true;
@@ -263,6 +262,13 @@ export function createBrowserController(): AppController {
       state.sourceFormat = sourceFormat;
       state.stage = 1;
       state.status = 'analysing';
+      state.progress = {
+        phase: 'inspect',
+        completed: 0,
+        total: 0,
+        message:
+          sourceFormat === 'pdf' ? 'Opening PDF…' : 'Opening Word document…',
+      };
       state.operationId = operationId('analyse');
       autoPreviewOperationId =
         sourceFormat === 'pdf' ? state.operationId : undefined;
@@ -498,6 +504,9 @@ export function createBrowserController(): AppController {
     },
     setPdfPreviewPage(pageNumber) {
       requestPdfPage(pageNumber);
+    },
+    retryPdfPreview() {
+      requestPdfPage(state.pdfPreviewPage);
     },
     setPdfPreviewScale(scale) {
       state.pdfPreviewScale = Math.min(4, Math.max(0.5, scale));

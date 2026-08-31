@@ -221,18 +221,28 @@ function renderTableCell(blocks: BlockNode[], context: RenderContext): string {
     .replace(/ {2}\n|\n+/g, '<br>');
 }
 
-function renderInlines(nodes: InlineNode[], context: RenderContext): string {
-  return nodes.map((node) => renderInline(node, context)).join('');
+function renderInlines(
+  nodes: InlineNode[],
+  context: RenderContext,
+  escapeBrackets = false,
+): string {
+  return nodes
+    .map((node) => renderInline(node, context, escapeBrackets))
+    .join('');
 }
 
-function renderInline(node: InlineNode, context: RenderContext): string {
+function renderInline(
+  node: InlineNode,
+  context: RenderContext,
+  escapeBrackets: boolean,
+): string {
   if (node.type === 'text')
-    return renderText(node.text, node.marks ?? [], context);
+    return renderText(node.text, node.marks ?? [], context, escapeBrackets);
   if (node.type === 'link') {
     const title = node.title
       ? ` "${node.title.replace(/["\\]/g, '\\$&')}"`
       : '';
-    const children = renderInlines(node.children, context);
+    const children = renderInlines(node.children, context, true);
     if (!safeHref(node.href)) {
       context.warn({
         code: 'markdown-unsafe-link',
@@ -285,7 +295,7 @@ function renderImage(
     return '';
   }
   const titlePart = title ? ` "${title.replace(/["\\]/g, '\\$&')}"` : '';
-  return `![${escapeText(alt ?? '')}](${url}${titlePart})`;
+  return `![${escapeText(alt ?? '', true)}](${url}${titlePart})`;
 }
 
 function renderEquation(
@@ -373,13 +383,11 @@ function renderText(
   value: string,
   marks: TextMark[],
   context: RenderContext,
+  escapeBrackets: boolean,
 ): string {
   const content = marks.some((mark) => mark.type === 'code')
     ? inlineCode(value)
-    : escapeText(value).replace(
-        /\\\[([0-9,;\-–—\s]+)\\\]/g,
-        (_match, citation: string) => `[${citation}]`,
-      );
+    : escapeText(value, escapeBrackets);
   return applyMarks(content, marks, context);
 }
 
@@ -399,8 +407,8 @@ function longestRun(value: string, character: string): number {
   return longest;
 }
 
-function escapeText(value: string): string {
-  return value.replace(/[\\`*_[\]<>#]/g, '\\$&');
+function escapeText(value: string, escapeBrackets = false): string {
+  return value.replace(escapeBrackets ? /[\\`*_[\]<>]/g : /[\\`*_<>]/g, '\\$&');
 }
 
 function escapeDestination(value: string): string {

@@ -12,7 +12,6 @@ import {
   FlatButton,
   InputCheckbox,
   LinearProgress,
-  PaginationControls,
   RadioButtons,
   Select,
 } from 'mithril-materialized';
@@ -79,6 +78,7 @@ export interface AppController {
   rerunAnalysis(): void;
   setPdfCrop?(edge: 'top' | 'bottom', value: number): void;
   setPdfPreviewPage?(pageNumber: number): void;
+  retryPdfPreview?(): void;
   setPdfPreviewScale?(scale: number): void;
   setPdfOriginalVisible?(visible: boolean): void;
   setPdfSamplePageCount?(pageCount: number): void;
@@ -287,7 +287,7 @@ function outputChooser(controller: AppController): m.Vnode {
         ? 'The cleanup sample is ready. Review it before processing the full document.'
         : 'Analysis is complete. Choose how you want to use the document.',
     ),
-    state.sourceFormat === 'pdf' ? pdfImportEditor(controller) : null,
+    requiresFullPdfAnalysis ? pdfImportEditor(controller) : null,
     requiresFullPdfAnalysis
       ? null
       : m(
@@ -361,56 +361,31 @@ function pdfImportEditor(controller: AppController): m.Vnode {
   const bottom = Math.round(state.pdfImport.cropBottom * 100);
   const pageCount = state.pdfAnalysis?.pageCount ?? 1;
   const analysedPages = state.pdfAnalysis?.analysedPages ?? [];
-  const isSample = analysedPages.length < pageCount;
   return m('section#pdf-import-settings.pdf-import-editor', [
     m('h3', 'PDF page cleanup'),
     m(
       'p',
-      isSample
-        ? `Only ${analysedPages.length} representative pages were scanned. Adjust the sample if needed, then process the full document once with your cleanup choices.`
-        : `Cleanup has been applied across all ${pageCount} pages.`,
+      `Only ${analysedPages.length} representative pages were scanned. Adjust the sample if needed, then process the full document once with your cleanup choices.`,
     ),
     m('.pdf-sample-controls', [
-      ...(isSample
-        ? [
-            m('label', [
-              'Pages to sample',
-              m('input', {
-                type: 'number',
-                min: Math.min(5, pageCount),
-                max: pageCount,
-                value: state.pdfImport.samplePageCount,
-                onchange: (event: Event) =>
-                  controller.setPdfSamplePageCount?.(
-                    Number((event.currentTarget as HTMLInputElement).value),
-                  ),
-              }),
-            ]),
-            m(FlatButton, {
-              label: 'Rescan representative pages',
-              onclick: () => controller.rescanPdfSample?.(),
-            }),
-          ]
-        : []),
-      ...(!isSample
-        ? [
-            m(FlatButton, {
-              label: state.pdfPreviewRequested
-                ? 'Reload source-page preview'
-                : 'Load source-page preview',
-              onclick: () =>
-                controller.setPdfPreviewPage?.(state.pdfPreviewPage),
-            }),
-          ]
-        : []),
-      ...(isSample
-        ? [
-            m(
-              'small',
-              `Currently scanned: ${analysedPages.join(', ') || 'none'}`,
+      m('label', [
+        'Pages to sample',
+        m('input', {
+          type: 'number',
+          min: Math.min(5, pageCount),
+          max: pageCount,
+          value: state.pdfImport.samplePageCount,
+          onchange: (event: Event) =>
+            controller.setPdfSamplePageCount?.(
+              Number((event.currentTarget as HTMLInputElement).value),
             ),
-          ]
-        : []),
+        }),
+      ]),
+      m(FlatButton, {
+        label: 'Rescan representative pages',
+        onclick: () => controller.rescanPdfSample?.(),
+      }),
+      m('small', `Currently scanned: ${analysedPages.join(', ') || 'none'}`),
     ]),
     state.pdfPreviewRequested
       ? m('.pdf-crop-layout', [
@@ -479,9 +454,7 @@ function pdfImportEditor(controller: AppController): m.Vnode {
     m(
       'button.secondary-button',
       { type: 'button', onclick: () => controller.rerunAnalysis() },
-      isSample
-        ? `Process all ${pageCount} pages and apply cleanup`
-        : `Reapply cleanup to all ${pageCount} pages`,
+      `Process all ${pageCount} pages and apply cleanup`,
     ),
   ]);
 }
@@ -500,22 +473,7 @@ function pdfSourcePreview(
 ): m.Vnode {
   const { state } = controller;
   if (!state.pdfPreviewRequested) return m('.pdf-preview-placeholder');
-  const pagination = m(PaginationControls, {
-    pagination: {
-      page: state.pdfPreviewPage - 1,
-      pageSize: 1,
-      total: pageCount,
-    },
-    onPaginationChange: (pagination) =>
-      controller.setPdfPreviewPage?.(pagination.page + 1),
-    i18n: {
-      showing: 'Showing',
-      to: 'to',
-      of: 'of',
-      entries: 'pages',
-      page: 'Page',
-    },
-  });
+  const pagination = pdfPaginationControls(controller, pageCount);
   const page = m(
     '.pdf-page-preview[aria-label="Source PDF page with excluded crop regions"]',
     options.showScaleControl
@@ -556,10 +514,17 @@ function pdfSourcePreview(
         ? m('.pdf-page-preview__status', 'Rendering page preview…')
         : null,
       state.pdfPreviewError
-        ? m(
-            '.pdf-page-preview__status.pdf-page-preview__status--error',
-            state.pdfPreviewError,
-          )
+        ? m('.pdf-page-preview__status.pdf-page-preview__status--error', [
+            m('span', state.pdfPreviewError),
+            m(
+              'button.secondary-button',
+              {
+                type: 'button',
+                onclick: () => controller.retryPdfPreview?.(),
+              },
+              'Retry preview',
+            ),
+          ])
         : null,
     ],
   );
@@ -599,6 +564,39 @@ function pdfSourcePreview(
           ),
     ],
   );
+}
+
+function pdfPaginationControls(
+  controller: AppController,
+  pageCount: number,
+): m.Vnode {
+  const page = controller.state.pdfPreviewPage;
+  const button = (
+    label: string,
+    symbol: string,
+    target: number,
+    disabled: boolean,
+  ) =>
+    m(
+      'button.btn-flat',
+      {
+        type: 'button',
+        disabled,
+        title: label,
+        'aria-label': label,
+        onclick: () => controller.setPdfPreviewPage?.(target),
+      },
+      symbol,
+    );
+  return m('.datatable-pagination.pdf-pagination', [
+    m('.pagination-controls', [
+      button('First page', '⏮', 1, page <= 1),
+      button('Previous page', '◀', page - 1, page <= 1),
+      m('span.page-info', `Page ${page} of ${pageCount}`),
+      button('Next page', '▶', page + 1, page >= pageCount),
+      button('Last page', '⏭', pageCount, page >= pageCount),
+    ]),
+  ]);
 }
 
 function cropControl(

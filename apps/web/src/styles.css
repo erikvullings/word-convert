@@ -324,14 +324,12 @@ h1 {
 
 .pdf-preview-workspace .datatable-pagination {
   margin-bottom: 0.75rem;
-}
-
-.pdf-preview-workspace--compact .datatable-pagination {
   justify-content: center;
+  background: transparent;
 }
 
-.pdf-preview-workspace--compact .pagination-info {
-  display: none;
+.pdf-preview-workspace .pagination-controls {
+  margin-inline: auto;
 }
 
 .preview-pane--original .pdf-page-preview + .datatable-pagination {
@@ -741,6 +739,64 @@ h1 {
   background: var(--page);
 }
 
+.md-wysiwyg-editor-wrapper,
+.md-editor-content-area {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.md-toolbar {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  gap: 3px;
+  padding: 5px 6px;
+  overflow-x: hidden;
+}
+
+.md-toolbar-button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  flex: 0 0 28px;
+  padding: 4px;
+}
+
+.md-toolbar-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.md-toolbar-separator {
+  margin-inline: 1px;
+}
+
+.md-editor-content-area {
+  height: min(65vh, 50rem);
+  overflow-x: hidden;
+}
+
+.md-editable-area,
+.md-markdown-editor-container,
+.editor-wysiwyg,
+.editor-textarea {
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+  scrollbar-color: var(--muted) transparent;
+}
+
+.md-editable-area img,
+.editor-wysiwyg img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+
 .document-preview {
   overflow-wrap: anywhere;
   color: var(--ink);
@@ -756,6 +812,7 @@ h1 {
 }
 
 .document-preview :is(img, svg, video, canvas, iframe) {
+  width: 100%;
   max-width: 100% !important;
   height: auto;
 }

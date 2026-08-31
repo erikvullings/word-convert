@@ -149,9 +149,8 @@ describe('App', () => {
     expect(rendered).not.toContain('Load source-page preview');
     expect(rendered).not.toContain('Source-page preview (optional)');
     expect(rendered).toContain('PDF page 3 preview');
-    expect(rendered).toContain(
-      '"pagination":{"page":2,"pageSize":1,"total":12}',
-    );
+    expect(rendered).toContain('Page 3 of 12');
+    expect(rendered).not.toContain('Showing 3 to 3 of 12 pages');
     expect(rendered).toContain('Pages to sample');
     expect(rendered).toContain('Currently scanned: 1, 4, 8, 12');
     expect(rendered).toContain('Top crop: 8%');
@@ -160,15 +159,49 @@ describe('App', () => {
     expect(rendered).toContain('"max":400');
     expect(rendered).toContain('pdf-preview-workspace--compact');
     expect(rendered.indexOf('pdf-page-preview')).toBeLessThan(
-      rendered.indexOf('"pagination":{"page":2'),
+      rendered.indexOf('Page 3 of 12'),
     );
-    expect(rendered.indexOf('"pagination":{"page":2')).toBeLessThan(
+    expect(rendered.indexOf('Page 3 of 12')).toBeLessThan(
       rendered.indexOf('pdf-crop-sliders'),
     );
     expect(rendered).toContain(
       'Remove from output · header · odd pages · high confidence',
     );
     expect(rendered).toContain('Process all 12 pages and apply cleanup');
+  });
+
+  it('retains the last PDF preview while loading and offers retry on failure', () => {
+    const state = createInitialState('2026-08-31');
+    state.stage = 1;
+    state.status = 'ready';
+    state.sourceFormat = 'pdf';
+    state.pdfAnalysis = {
+      pageCount: 12,
+      analysedPages: [1, 4, 8, 12],
+      crop: { top: 0, bottom: 0 },
+      scannedPages: [],
+      candidates: [],
+    };
+    state.pdfPreviewPage = 4;
+    state.pdfPreviewRequested = true;
+    state.pdfPreviewLoading = true;
+    state.pdfPreview = {
+      pageNumber: 3,
+      width: 900,
+      height: 1200,
+      url: 'blob:pdf-page-3',
+    };
+
+    const loading = JSON.stringify(renderApp(controllerFor(state)));
+    expect(loading).toContain('PDF page 3 preview');
+    expect(loading).toContain('Rendering page preview…');
+
+    state.pdfPreviewLoading = false;
+    state.pdfPreviewError = 'Preview render failed.';
+    const failed = JSON.stringify(renderApp(controllerFor(state)));
+    expect(failed).toContain('PDF page 3 preview');
+    expect(failed).toContain('Preview render failed.');
+    expect(failed).toContain('Retry preview');
   });
 
   it('shows preview controls only when active and offers loading after full processing', () => {
@@ -191,7 +224,9 @@ describe('App', () => {
     state.pdfAnalysis.analysedPages = [1, 2, 3, 4, 5, 6];
     const processed = JSON.stringify(renderApp(controllerFor(state)));
     expect(processed).not.toContain('pdf-crop-layout');
-    expect(processed).toContain('Load source-page preview');
+    expect(processed).not.toContain('PDF page cleanup');
+    expect(processed).not.toContain('Load source-page preview');
+    expect(processed).not.toContain('Detected page furniture');
   });
 
   it('offers an optional original PDF beside converted output', () => {
@@ -242,8 +277,9 @@ describe('App', () => {
       visible.indexOf('pdf-preview-scale'),
     );
     expect(visible.indexOf('pdf-preview-scale')).toBeLessThan(
-      visible.indexOf('"pagination":{"page":0'),
+      visible.indexOf('Page 1 of 6'),
     );
+    expect(visible).not.toContain('Showing 1 to 1 of 6 pages');
   });
 
   it('shows active PDF analysis progress in the loading status', () => {
@@ -253,16 +289,16 @@ describe('App', () => {
     state.sourceFormat = 'pdf';
     state.selectedFilename = 'report.pdf';
     state.progress = {
-      phase: 'read',
-      completed: 2,
-      total: 5,
-      message: 'Reading PDF page 8.',
+      phase: 'inspect',
+      completed: 0,
+      total: 0,
+      message: 'Opening PDF…',
     };
 
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
     expect(rendered).toContain('analysis-status');
-    expect(rendered).toContain('Reading PDF page 8.');
+    expect(rendered).toContain('Opening PDF…');
     expect(rendered.match(/progress-status/g)).toHaveLength(1);
     expect(rendered.indexOf('progress-status')).toBeLessThan(
       rendered.indexOf('secondary-actions'),

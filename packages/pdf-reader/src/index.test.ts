@@ -729,7 +729,7 @@ describe('PDF layout analysis', () => {
     ]);
   });
 
-  it('recognises academic section headings and bold lead-in labels', async () => {
+  it('recognises academic headings and preserves bold lead-in fonts', async () => {
     const result = await analysePdf(
       rawDocument([
         {
@@ -744,7 +744,11 @@ describe('PDF layout analysis', () => {
             span('3.1 Encoder and Decoder Stacks', 0.18, 0.3, {
               fontSize: 10,
             }),
-            span('Encoder:', 0.18, 0.35, { fontSize: 10, width: 0.08 }),
+            span('Encoder:', 0.18, 0.35, {
+              fontSize: 10,
+              width: 0.08,
+              bold: true,
+            }),
             span('The encoder is composed of layers.', 0.27, 0.35, {
               fontSize: 10,
               width: 0.4,
@@ -885,12 +889,12 @@ describe('PDF layout analysis', () => {
                 children: [
                   {
                     type: 'text',
-                    text: 'Clarification',
+                    text: 'Clarification:',
                     marks: [{ type: 'bold' }],
                   },
                   {
                     type: 'text',
-                    text: ': Is it clear what the tasking means?',
+                    text: ' Is it clear what the tasking means?',
                   },
                 ],
               },
@@ -913,6 +917,64 @@ describe('PDF layout analysis', () => {
       },
     ]);
     expect(JSON.stringify(result.model.blocks)).not.toContain('');
+  });
+
+  it('keeps numbered footnotes and sentence-like matrix explanations as paragraphs', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('2.2 Rich Picture Example', 0.18, 0.1, { fontSize: 12 }),
+            span('Representative body text one.', 0.1, 0.18),
+            span('Representative body text two.', 0.1, 0.23),
+            span('Representative body text three.', 0.1, 0.28),
+            span('Representative body text four.', 0.1, 0.33),
+            span('Representative body text five.', 0.1, 0.36),
+            span(
+              '2. FCR: Fire Control Radar DEPENDS ON POL: Fuel to function so the corresponding cell is annotated with R.',
+              0.1,
+              0.4,
+              { width: 0.8, fontSize: 20 },
+            ),
+            span(
+              '6. Comms: Communications 7. POL: Fuel 8. SHORAD: Short Range Air Defence',
+              0.1,
+              0.5,
+              { width: 0.8, fontSize: 20 },
+            ),
+            span('1 PWR 1 0 2 TTR 1 0 3 FCR 1 1 1', 0.1, 0.6, {
+              width: 0.8,
+              fontSize: 20,
+            }),
+            span(
+              '1 To better understand this component, see the ICEBERG model (section 2.6).',
+              0.1,
+              0.92,
+              { width: 0.8, fontSize: 20 },
+            ),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-31' },
+    );
+
+    const blockContaining = (text: string) =>
+      result.model.blocks.find((block) => JSON.stringify(block).includes(text));
+    expect(blockContaining('Rich Picture')).toMatchObject({ type: 'heading' });
+    expect(blockContaining('Fire Control Radar')).toMatchObject({
+      type: 'paragraph',
+    });
+    expect(blockContaining('Communications')).toMatchObject({
+      type: 'paragraph',
+    });
+    expect(blockContaining('PWR')).toMatchObject({ type: 'paragraph' });
+    expect(blockContaining('ICEBERG')).toMatchObject({ type: 'paragraph' });
   });
 
   it('drops detached small formula fragments from flowing prose', async () => {
@@ -1462,6 +1524,370 @@ describe('PDF.js extraction helpers', () => {
     ]);
     expect(render).toHaveBeenCalledOnce();
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('rasterizes a captioned figure reported as one vector path', async () => {
+    const render = vi.fn(() => ({ promise: Promise.resolve() }));
+    const page = {
+      pageNumber: 15,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render,
+      getOperatorList: async () => ({
+        fnArray: [OPS.constructPath],
+        argsArray: [
+          [
+            Int32Array.from([20]),
+            Float32Array.from([60, 160, 540, 600]),
+            Float32Array.from([60, 160, 540, 600]),
+          ],
+        ],
+      }),
+    };
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 1,
+        maxTextItemsPerPage: 1,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      [
+        span('(NU) Figure 06: SSIM Dependency Table', 0.3, 0.76, {
+          width: 0.4,
+        }),
+      ],
+    );
+
+    expect(images).toEqual([
+      expect.objectContaining({
+        id: 'pdf-figure-15-0',
+        source: 'rendered-figure',
+      }),
+    ]);
+    expect(render).toHaveBeenCalledOnce();
+  });
+
+  it('keeps an ordinary caption outside a recovered figure', async () => {
+    const render = vi.fn(() => ({ promise: Promise.resolve() }));
+    const page = {
+      pageNumber: 6,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render,
+      getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+    };
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 20,
+        maxTextItemsPerPage: 20,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          readRgba: () => new Uint8ClampedArray(width * height * 4).fill(255),
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      [
+        span('Introductory prose above the figure.', 0.1, 0.12, {
+          width: 0.8,
+          height: 0.03,
+        }),
+        span('1 PWR 2 TTR 3 FCR 4 EW 5 CSS', 0.15, 0.36, { width: 0.7 }),
+        span('Y↓ 10 9 8 7 6 5 4 3 2 1', 0.15, 0.42, { width: 0.7 }),
+        span('(NU) Figure 06: SSIM Dependency Table', 0.3, 0.78, {
+          width: 0.4,
+        }),
+        span('Source: Cranfield University', 0.35, 0.81, { width: 0.3 }),
+      ],
+    );
+
+    expect(images).toEqual([
+      expect.objectContaining({
+        id: 'pdf-figure-6-0',
+        source: 'rendered-figure',
+        top: expect.closeTo(0.153, 3),
+        height: expect.closeTo(0.625, 3),
+      }),
+    ]);
+    expect(render).toHaveBeenCalledTimes(2);
+  });
+
+  it('includes caption and credit when pixels show they are inside the artwork', async () => {
+    const render = vi.fn(() => ({ promise: Promise.resolve() }));
+    const page = {
+      pageNumber: 7,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render,
+      getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+    };
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 20,
+        maxTextItemsPerPage: 20,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          readRgba: () => new Uint8ClampedArray(width * height * 4).fill(160),
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      [
+        span('Introductory prose above the figure.', 0.1, 0.12, {
+          width: 0.8,
+          height: 0.03,
+        }),
+        span('Diagram content', 0.15, 0.36, { width: 0.7 }),
+        span('(NU) Figure 01: Production Stages', 0.3, 0.78, {
+          width: 0.4,
+        }),
+        span('Source: SHAPE J2T', 0.35, 0.81, { width: 0.3 }),
+      ],
+    );
+
+    expect(images).toEqual([
+      expect.objectContaining({
+        id: 'pdf-figure-7-0',
+        source: 'rendered-figure',
+        top: expect.closeTo(0.153, 3),
+        height: expect.closeTo(0.681, 3),
+      }),
+    ]);
+    expect(render).toHaveBeenCalledOnce();
+  });
+
+  it('recovers each captioned figure independently on a shared page', async () => {
+    const render = vi.fn(() => ({ promise: Promise.resolve() }));
+    const page = {
+      pageNumber: 8,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render,
+      getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+    };
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 20,
+        maxTextItemsPerPage: 20,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          readRgba: () => new Uint8ClampedArray(width * height * 4).fill(255),
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      [
+        span('Introductory prose.', 0.1, 0.05, { height: 0.02 }),
+        span('First table labels', 0.15, 0.14, { width: 0.7 }),
+        span('Figure 06: Dependency Table', 0.3, 0.35, { width: 0.4 }),
+        span('Source: University', 0.35, 0.38, { width: 0.3 }),
+        span('Rules prose between figures.', 0.1, 0.44, { width: 0.8 }),
+        span('Second table labels', 0.15, 0.56, { width: 0.7 }),
+        span('Figure 07: Dependency Rules', 0.3, 0.82, { width: 0.4 }),
+        span('Source: University', 0.35, 0.85, { width: 0.3 }),
+      ],
+    );
+
+    expect(images).toHaveLength(2);
+    expect(images[0]).toMatchObject({
+      top: expect.closeTo(0.073, 3),
+      height: expect.closeTo(0.275, 3),
+    });
+    expect(images[1]).toMatchObject({
+      top: expect.closeTo(0.463, 3),
+      height: expect.closeTo(0.355, 3),
+    });
+  });
+
+  it('recovers a near-full-page table without cutting at internal row gaps', async () => {
+    const render = vi.fn(() => ({ promise: Promise.resolve() }));
+    const page = {
+      pageNumber: 10,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render,
+      getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+    };
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 20,
+        maxTextItemsPerPage: 20,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          readRgba: () => new Uint8ClampedArray(width * height * 4).fill(255),
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      [
+        span('1 2 3 4 5 6 7 8 9 10', 0.08, 0.05, { width: 0.84 }),
+        span('1 PWR 1 0 0 0 0 0 0 0 0 0', 0.08, 0.14, { width: 0.84 }),
+        span('5 CSS 0 0 0 0 1 1 1 1 0 0', 0.08, 0.48, { width: 0.84 }),
+        span('Driving power 3 3 2 1 3 7 6 2 1 1', 0.08, 0.78, {
+          width: 0.84,
+        }),
+        span('Figure 10: SSIM Scoring Table', 0.3, 0.92, { width: 0.4 }),
+      ],
+    );
+
+    expect(images).toEqual([
+      expect.objectContaining({
+        top: expect.closeTo(0.04, 3),
+        height: expect.closeTo(0.878, 3),
+      }),
+    ]);
+  });
+
+  it('keeps tightly spaced narrative content above a diagram outside the figure', async () => {
+    const render = vi.fn(() => ({ promise: Promise.resolve() }));
+    const page = {
+      pageNumber: 11,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render,
+      getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+    };
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 20,
+        maxTextItemsPerPage: 20,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          readRgba: () => new Uint8ClampedArray(width * height * 4).fill(255),
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      [
+        span('3.1. Context Diagram', 0.1, 0.08, { width: 0.3 }),
+        span(
+          'Context diagrams explain relationships within the system.',
+          0.1,
+          0.14,
+          {
+            width: 0.8,
+          },
+        ),
+        span('A context diagram contains the following elements:', 0.1, 0.24, {
+          width: 0.75,
+        }),
+        span('• The innermost ring is under direct control.', 0.14, 0.31, {
+          width: 0.72,
+        }),
+        span('• The outer ring contains the wider environment.', 0.14, 0.37, {
+          width: 0.72,
+        }),
+        span('Wider environment', 0.34, 0.405, { width: 0.3 }),
+        span('Target system', 0.39, 0.58, { width: 0.22 }),
+        span('Figure 11: Context Diagram', 0.3, 0.86, { width: 0.4 }),
+      ],
+    );
+
+    expect(images).toEqual([
+      expect.objectContaining({
+        top: expect.closeTo(0.393, 3),
+        height: expect.closeTo(0.465, 3),
+      }),
+    ]);
   });
 
   it('rasterizes a meaningful embedded image as a composed figure region', async () => {

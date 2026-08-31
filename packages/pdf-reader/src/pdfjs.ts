@@ -50,6 +50,7 @@ export interface PdfExtractionOptions {
 
 export interface PdfFigureSurface {
   canvas: unknown;
+  readRgba?(): Uint8ClampedArray;
   encodePng(): Promise<Uint8Array>;
   dispose(): void;
 }
@@ -599,6 +600,7 @@ interface NormalizedBounds {
   top: number;
   width: number;
   height: number;
+  semanticBottom?: number;
 }
 
 function figureRegions(
@@ -641,16 +643,137 @@ function figureRegions(
   const regions = groups
     .filter(
       ({ region, paths, imageSeed }) =>
-        (imageSeed || paths >= 4) &&
+        (imageSeed || paths >= 4 || hasFollowingFigureCaption(region, spans)) &&
         region.width >= 0.12 &&
         region.height >= 0.06 &&
         region.width * region.height <= 0.7,
     )
     .map(({ region }) => region);
   regions.push(...displayEquationRegions(spans));
-  return regions.map((region) =>
-    padBounds(expandToNearbyLabel(region, spans), 0.008),
-  );
+  const inferred = captionFigureRegions(spans, regions);
+  return [
+    ...regions.map((region) =>
+      padBounds(expandToNearbyLabel(region, spans), 0.008),
+    ),
+    ...inferred.map((region) => padHorizontalBounds(region, 0.008)),
+  ];
+}
+
+function captionFigureRegions(
+  spans: readonly RawPdfTextSpan[],
+  existing: readonly NormalizedBounds[],
+): NormalizedBounds[] {
+  return spans
+    .filter((span) => isFigureCaption(span.text) && span.top >= 0.25)
+    .flatMap((caption) => {
+      if (
+        existing.some((region) => {
+          const bottom = region.top + region.height;
+          return (
+            bottom >= caption.top - 0.03 &&
+            bottom <= caption.top + 0.1 &&
+            region.x < caption.x + caption.width &&
+            region.x + region.width > caption.x
+          );
+        })
+      )
+        return [];
+      const previousCaption = spans
+        .filter((span) => isFigureCaption(span.text) && span.top < caption.top)
+        .sort((left, right) => right.top - left.top)[0];
+      const previousBoundary = previousCaption
+        ? spans
+            .filter(
+              (span) =>
+                isFigureCredit(span.text) &&
+                span.top >=
+                  previousCaption.top + previousCaption.height - 0.004 &&
+                span.top <= previousCaption.top + previousCaption.height + 0.04,
+            )
+            .reduce(
+              (bottom, span) => Math.max(bottom, span.top + span.height),
+              previousCaption.top + previousCaption.height,
+            )
+        : 0.04;
+      const beforeCaption = spans
+        .filter(
+          (span) =>
+            span !== caption &&
+            span.top + span.height <= caption.top &&
+            span.top >= previousBoundary,
+        )
+        .sort((left, right) => left.top - right.top);
+      if (beforeCaption.length === 0) return [];
+      const bands: Array<{ top: number; bottom: number; text: string[] }> = [];
+      for (const span of beforeCaption) {
+        const bottom = span.top + span.height;
+        const band = bands.at(-1);
+        if (band && span.top <= band.bottom + 0.006) {
+          band.bottom = Math.max(band.bottom, bottom);
+          band.text.push(span.text);
+        } else bands.push({ top: span.top, bottom, text: [span.text] });
+      }
+      let top =
+        bands.length === 1 ? bands[0]!.bottom + 0.003 : previousBoundary;
+      for (let index = 0; index + 1 < bands.length; index++) {
+        const current = bands[index]!;
+        if (isProseBand(current.text.join(' '))) top = current.bottom + 0.003;
+      }
+      const captionBottom = caption.top + caption.height;
+      const creditBottom = spans
+        .filter(
+          (span) =>
+            isFigureCredit(span.text) &&
+            span.top >= captionBottom - 0.004 &&
+            span.top <= captionBottom + 0.04,
+        )
+        .reduce(
+          (bottom, span) => Math.max(bottom, span.top + span.height),
+          captionBottom,
+        );
+      const height = creditBottom + 0.004 - top;
+      return height >= 0.08 && height <= 0.92
+        ? [
+            {
+              x: 0.05,
+              top,
+              width: 0.9,
+              height,
+              semanticBottom: caption.top - 0.002,
+            },
+          ]
+        : [];
+    });
+}
+
+function hasFollowingFigureCaption(
+  region: NormalizedBounds,
+  spans: readonly RawPdfTextSpan[],
+): boolean {
+  const bottom = region.top + region.height;
+  return spans.some((span) => {
+    const horizontalOverlap =
+      span.x < region.x + region.width && span.x + span.width > region.x;
+    return (
+      isFigureCaption(span.text) &&
+      span.top >= bottom - 0.015 &&
+      span.top <= bottom + 0.1 &&
+      horizontalOverlap
+    );
+  });
+}
+
+function isFigureCaption(text: string): boolean {
+  return /^(?:\([^)]+\)\s*)?fig(?:ure)?\s+\d+[.:]/i.test(text.trim());
+}
+
+function isFigureCredit(text: string): boolean {
+  return /^(?:source|credit|©)\s*[:.]?/i.test(text.trim());
+}
+
+function isProseBand(text: string): boolean {
+  const value = text.trim();
+  return value.split(/\s+/).length >= 2 && /[.!?)]$/.test(value);
 }
 
 function expandToNearbyLabel(
@@ -730,34 +853,49 @@ async function rasterizeFigure(
     Math.sqrt(limits.maxImagePixels / regionPixels),
   );
   const viewport = page.getViewport({ scale });
-  const pixelWidth = Math.max(1, Math.ceil(viewport.width * region.width));
-  const pixelHeight = Math.max(1, Math.ceil(viewport.height * region.height));
-  reserveImages(
-    { width: pixelWidth, height: pixelHeight },
-    1,
-    limits,
-    imageBudget,
-  );
-  const surface = rasterizer.createSurface(pixelWidth, pixelHeight);
+  let finalRegion = region;
+  let pixelWidth = Math.max(1, Math.ceil(viewport.width * region.width));
+  let pixelHeight = Math.max(1, Math.ceil(viewport.height * region.height));
+  let surface = rasterizer.createSurface(pixelWidth, pixelHeight);
   try {
-    const task = page.render({
-      canvas: surface.canvas as never,
-      viewport,
-      transform: [
+    await renderFigureSurface(page, viewport, region, surface);
+    if (
+      region.semanticBottom !== undefined &&
+      !captionBandIsInsideArtwork(
+        surface.readRgba?.(),
+        pixelWidth,
+        pixelHeight,
+        (region.semanticBottom - region.top) / region.height,
+      )
+    ) {
+      surface.dispose();
+      finalRegion = {
+        x: region.x,
+        top: region.top,
+        width: region.width,
+        height: region.semanticBottom - region.top,
+      };
+      pixelWidth = Math.max(1, Math.ceil(viewport.width * finalRegion.width));
+      pixelHeight = Math.max(
         1,
-        0,
-        0,
-        1,
-        -region.x * viewport.width,
-        -region.top * viewport.height,
-      ],
-      background: '#ffffff',
-    });
-    await task.promise;
+        Math.ceil(viewport.height * finalRegion.height),
+      );
+      surface = rasterizer.createSurface(pixelWidth, pixelHeight);
+      await renderFigureSurface(page, viewport, finalRegion, surface);
+    }
+    reserveImages(
+      { width: pixelWidth, height: pixelHeight },
+      1,
+      limits,
+      imageBudget,
+    );
     throwIfCancelled(cancellation);
     return {
       id: `pdf-figure-${page.pageNumber}-${index}`,
-      ...region,
+      x: finalRegion.x,
+      top: finalRegion.top,
+      width: finalRegion.width,
+      height: finalRegion.height,
       pixelWidth,
       pixelHeight,
       mediaType: 'image/png',
@@ -767,6 +905,65 @@ async function rasterizeFigure(
   } finally {
     surface.dispose();
   }
+}
+
+async function renderFigureSurface(
+  page: PDFPageProxy,
+  viewport: PageViewport,
+  region: NormalizedBounds,
+  surface: PdfFigureSurface,
+): Promise<void> {
+  await page.render({
+    canvas: surface.canvas as never,
+    viewport,
+    transform: [
+      1,
+      0,
+      0,
+      1,
+      -region.x * viewport.width,
+      -region.top * viewport.height,
+    ],
+    background: '#ffffff',
+  }).promise;
+}
+
+function captionBandIsInsideArtwork(
+  rgba: Uint8ClampedArray | undefined,
+  width: number,
+  height: number,
+  captionTopRatio: number,
+): boolean {
+  if (!rgba || rgba.length !== width * height * 4) return false;
+  const top = Math.max(
+    0,
+    Math.min(height - 1, Math.floor(height * captionTopRatio)),
+  );
+  const sideWidth = Math.max(1, Math.floor(width * 0.12));
+  const columns = [
+    ...Array.from({ length: sideWidth }, (_, x) => x),
+    ...Array.from({ length: sideWidth }, (_, x) => width - sideWidth + x),
+  ];
+  let nonWhite = 0;
+  let sampled = 0;
+  let strongestDarkColumn = 0;
+  for (const x of columns) {
+    let dark = 0;
+    for (let y = top; y < height; y++) {
+      const offset = (y * width + x) * 4;
+      const red = rgba[offset]!;
+      const green = rgba[offset + 1]!;
+      const blue = rgba[offset + 2]!;
+      if (red < 245 || green < 245 || blue < 245) nonWhite++;
+      if (red < 80 && green < 80 && blue < 80) dark++;
+      sampled++;
+    }
+    strongestDarkColumn = Math.max(
+      strongestDarkColumn,
+      dark / Math.max(1, height - top),
+    );
+  }
+  return nonWhite / sampled >= 0.12 || strongestDarkColumn >= 0.55;
 }
 
 async function appendImage(
@@ -1033,6 +1230,15 @@ function padBounds(
   const right = Math.min(1, bounds.x + bounds.width + padding);
   const bottom = Math.min(1, bounds.top + bounds.height + padding);
   return { x, top, width: right - x, height: bottom - top };
+}
+
+function padHorizontalBounds(
+  bounds: NormalizedBounds,
+  padding: number,
+): NormalizedBounds {
+  const x = Math.max(0, bounds.x - padding);
+  const right = Math.min(1, bounds.x + bounds.width + padding);
+  return { ...bounds, x, width: right - x };
 }
 
 function readStructure(value: unknown): RawPdfStructureNode {

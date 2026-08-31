@@ -638,6 +638,7 @@ async function analyseStyles(
 }
 
 function inferredMapping(line: PdfLine, bodySize: number): StyleMapping {
+  if (!isLikelyHeadingLine(line)) return 'body';
   if (line.fontSize >= bodySize * 1.7) return 'heading1';
   if (line.fontSize >= bodySize * 1.4) return 'heading2';
   if (line.fontSize >= bodySize * 1.2 && line.bold) return 'heading3';
@@ -659,9 +660,22 @@ function semanticHeadingLevel(
 ): 1 | 2 | 3 | 4 | 5 | 6 | undefined {
   const text = line.text.trim();
   if (/^abstract$/i.test(text)) return 1;
+  if (!isLikelyHeadingLine(line)) return undefined;
   const numbered = /^(\d+(?:\.\d+)*)\.?\s+\p{Lu}/u.exec(text);
   if (!numbered) return undefined;
   return Math.min(6, numbered[1]!.split('.').length) as 1 | 2 | 3 | 4 | 5 | 6;
+}
+
+function isLikelyHeadingLine(line: PdfLine): boolean {
+  const text = line.text.trim();
+  const numberedItems = text.match(/\b\d+\.\s+/g)?.length ?? 0;
+  const numericCells = text.match(/\b\d+\b/g)?.length ?? 0;
+  return (
+    line.top < 0.85 &&
+    text.split(/\s+/).length <= 12 &&
+    numberedItems < 2 &&
+    numericCells < 4
+  );
 }
 
 function isDetachedMathFragment(line: PdfLine, bodySize: number): boolean {
@@ -811,7 +825,10 @@ function bulletList(
       }
     }
   }
-  const content = items.map(trimInlineWhitespace).filter((item) => item.length);
+  const content = items
+    .map(trimInlineWhitespace)
+    .map(withBoldListLeadIn)
+    .filter((item) => item.length);
   if (content.length === 0) return undefined;
   return {
     type: 'list',
@@ -826,6 +843,58 @@ function bulletList(
       ],
     })),
   };
+}
+
+function withBoldListLeadIn(nodes: InlineNode[]): InlineNode[] {
+  if (nodes.some(({ type }) => type !== 'text')) return nodes;
+  const text = nodes
+    .map((node) => (node.type === 'text' ? node.text : ''))
+    .join('');
+  const match = /^[\p{L}\p{N}][^.!?\n]{0,49}:/u.exec(text);
+  if (!match) return nodes;
+  let inspected = 0;
+  const sourcePrefixIsBold = nodes.some((node) => {
+    if (node.type !== 'text' || inspected >= match[0].length) return false;
+    const overlapsPrefix = inspected < match[0].length;
+    inspected += node.text.length;
+    return (
+      overlapsPrefix && node.marks?.some(({ type }) => type === 'bold') === true
+    );
+  });
+  if (!sourcePrefixIsBold) return nodes;
+  let remaining = match[0].length;
+  const output: InlineNode[] = [];
+  for (const node of nodes) {
+    if (node.type !== 'text' || remaining <= 0) {
+      output.push(node);
+      continue;
+    }
+    const boldLength = Math.min(remaining, node.text.length);
+    const boldText = node.text.slice(0, boldLength);
+    const rest = node.text.slice(boldLength);
+    const marks = node.marks?.some(({ type }) => type === 'bold')
+      ? node.marks
+      : [...(node.marks ?? []), { type: 'bold' as const }];
+    if (boldText) output.push({ ...node, text: boldText, marks });
+    if (rest) output.push({ ...node, text: rest });
+    remaining -= boldLength;
+  }
+  return mergeAdjacentText(output);
+}
+
+function mergeAdjacentText(nodes: InlineNode[]): InlineNode[] {
+  const output: InlineNode[] = [];
+  for (const node of nodes) {
+    const previous = output.at(-1);
+    if (
+      node.type === 'text' &&
+      previous?.type === 'text' &&
+      JSON.stringify(node.marks ?? []) === JSON.stringify(previous.marks ?? [])
+    )
+      previous.text += node.text;
+    else output.push(node);
+  }
+  return output;
 }
 
 function trimInlineWhitespace(nodes: InlineNode[]): InlineNode[] {
@@ -851,6 +920,11 @@ async function linesToBlocks(
 ): Promise<BlockNode[]> {
   const mapping = new Map(
     styles.map(({ id, proposedMapping }) => [id, proposedMapping]),
+  );
+  const userMappedStyles = new Set(
+    styles
+      .filter(({ provenance }) => provenance.method === 'user')
+      .map(({ id }) => id),
   );
   const blocks: BlockNode[] = [];
   const bodySize = bodyFontSize(lines);
@@ -902,9 +976,14 @@ async function linesToBlocks(
       if (mapped !== 'ignore') {
         const children = lineInlines(line, page.links);
         const taggedRole = taggedRoleForLine(rolesByMarkedContentId, line);
+        const taggedHeading = /^H([1-6])$/i.exec(taggedRole ?? '');
+        const mappedHeading = /^heading([1-6])$/.exec(mapped);
         const heading =
-          /^H([1-6])$/i.exec(taggedRole ?? '') ??
-          /^heading([1-6])$/.exec(mapped);
+          taggedHeading ??
+          (mappedHeading &&
+          (userMappedStyles.has(id) || isLikelyHeadingLine(line))
+            ? mappedHeading
+            : null);
         const headingLevel = heading
           ? (Number(heading[1]) as 1 | 2 | 3 | 4 | 5 | 6)
           : mapped === 'body'
@@ -1029,21 +1108,15 @@ function lineInlines(
 ): InlineNode[] {
   const output: InlineNode[] = [];
   let previous: RawPdfTextSpan | undefined;
-  for (const [index, span] of line.spans.entries()) {
+  for (const span of line.spans) {
     if (
       previous &&
       span.x - (previous.x + previous.width) >
         Math.max(previous.height * 0.25, 0.003)
     )
       output.push({ type: 'text', text: ' ' });
-    const visualLeadIn =
-      index === 0 &&
-      line.spans.length > 1 &&
-      /^[\p{L}][^:]{0,40}:$/u.test(span.text.trim());
     const marks = [
-      ...(span.bold || visualLeadIn
-        ? ([{ type: 'bold' as const }] as const)
-        : []),
+      ...(span.bold ? ([{ type: 'bold' as const }] as const) : []),
       ...(span.italic ? ([{ type: 'italic' as const }] as const) : []),
     ];
     const text: InlineNode = {

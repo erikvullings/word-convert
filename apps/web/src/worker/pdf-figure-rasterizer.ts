@@ -9,6 +9,11 @@ export function createPdfFigureRasterizer(): PdfFigureRasterizer | undefined {
       const canvas = new OffscreenCanvas(width, height);
       return {
         canvas,
+        readRgba() {
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error('Canvas rendering is unavailable.');
+          return context.getImageData(0, 0, width, height).data;
+        },
         async encodePng() {
           const blob = await canvas.convertToBlob({ type: 'image/png' });
           return new Uint8Array(await blob.arrayBuffer());

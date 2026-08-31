@@ -102,7 +102,7 @@ describe('writeMarkdown', () => {
     };
 
     expect(writeMarkdown(input, { conversionDate: '2026-07-15' })).toBe(
-      '# Annual \\# report\n\n## Introduction\n',
+      '# Annual # report\n\n## Introduction\n',
     );
 
     input.blocks.unshift({
@@ -112,7 +112,7 @@ describe('writeMarkdown', () => {
     });
     expect(
       writeMarkdown(input, { conversionDate: '2026-07-15' }).match(
-        /Annual \\# report/g,
+        /Annual # report/g,
       ),
     ).toHaveLength(1);
   });
@@ -145,6 +145,20 @@ describe('writeMarkdown', () => {
     expect(markdown).toBe(
       '## Overview\n\n**Use \\*stars\\* **`and code`[the \\[site\\]](https://example.com/a_\\(b\\) "Details \\"here\\"")\n',
     );
+  });
+
+  it('keeps hash symbols and square brackets literal in PDF text', () => {
+    expect(
+      writeMarkdown(
+        model([
+          {
+            type: 'paragraph',
+            children: [{ type: 'text', text: '# label [reference]' }],
+          },
+        ]),
+        { conversionDate: '2026-08-31' },
+      ),
+    ).toContain('# label [reference]');
   });
 
   it('preserves supported formatting, quotes, code, and breaks', () => {
