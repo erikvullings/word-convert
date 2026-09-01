@@ -158,6 +158,8 @@ export interface ImageBlockNode {
   assetId: string;
   alt?: string;
   caption?: InlineNode[];
+  width?: number;
+  alignment?: 'left' | 'center' | 'right';
 }
 
 export interface ThematicBreakNode {

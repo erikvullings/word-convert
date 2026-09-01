@@ -61,7 +61,7 @@ const STYLES = [
   /* Base */
   'body{font-family:Georgia,"Times New Roman",Times,serif;font-size:1em;line-height:1.6;color:#1a1a1a;margin:0 auto;max-width:36em;padding:1.5em 1em;-epub-hyphens:auto;hyphens:auto}',
   /* Headings */
-  'h1,h2,h3,h4,h5,h6{font-family:inherit;font-weight:bold;line-height:1.25;margin-top:1.5em;margin-bottom:.5em;color:#111;-epub-hyphens:none;hyphens:none}',
+  'h1,h2,h3,h4,h5,h6{clear:both;font-family:inherit;font-weight:bold;line-height:1.25;margin-top:1.5em;margin-bottom:.5em;color:#111;-epub-hyphens:none;hyphens:none}',
   'h1{font-size:1.875em;page-break-before:always}',
   'h1:first-child{page-break-before:avoid}',
   'h2{font-size:1.5em}h3{font-size:1.25em}h4{font-size:1.125em}h5,h6{font-size:1em}',
@@ -72,6 +72,14 @@ const STYLES = [
   /* Images */
   'img{max-width:100%;height:auto;display:block;margin:1em auto}',
   'figure{margin:1.5em 0;text-align:center}',
+  '.image-block>img{width:100%;margin:0}',
+  '.image-center{margin-left:auto;margin-right:auto}',
+  '.image-left{float:left;margin:0 1.25em 1em 0}',
+  '.image-right{float:right;margin:0 0 1em 1.25em}',
+  ...Array.from(
+    { length: 20 },
+    (_, index) => `.image-width-${(index + 1) * 5}{width:${(index + 1) * 5}%}`,
+  ),
   'figcaption{font-size:.875em;color:#555;margin-top:.4em;font-style:italic}',
   /* Tables */
   'table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.9em}',
@@ -436,13 +444,29 @@ function renderBlock(block: BlockNode, context: RenderContext): string {
     case 'imageBlock': {
       const image = renderImage(block.assetId, block.alt, undefined, context);
       if (!image) return '';
-      return `<figure>${image}${block.caption ? `<figcaption>${renderInlines(block.caption, context)}</figcaption>` : ''}</figure>`;
+      return `<figure${imageBlockAttributes(block)}>${image}${block.caption ? `<figcaption>${renderInlines(block.caption, context)}</figcaption>` : ''}</figure>`;
     }
     case 'thematicBreak':
       return '<hr/>';
     case 'pageBreak':
       return '<div class="page-break" aria-hidden="true"></div>';
   }
+}
+
+function imageBlockAttributes(
+  block: Extract<BlockNode, { type: 'imageBlock' }>,
+): string {
+  const alignment = block.alignment;
+  if (
+    !Number.isFinite(block.width) ||
+    block.width === undefined ||
+    block.width <= 0 ||
+    block.width > 1 ||
+    (alignment !== 'left' && alignment !== 'center' && alignment !== 'right')
+  )
+    return '';
+  const percentage = Math.max(5, Math.round(block.width * 20) * 5);
+  return ` class="image-block image-${alignment} image-width-${percentage}"`;
 }
 
 function renderInlines(nodes: InlineNode[], context: RenderContext): string {

@@ -74,6 +74,7 @@ export interface AppState {
   progress?: ConversionProgress;
   model?: DocumentModel;
   pdfAnalysis?: PdfAnalysisSummary;
+  pdfLayoutStatus?: 'loading' | 'ready' | 'unavailable';
   pdfImport: PdfImportSettings;
   pdfPreviewPage: number;
   pdfPreviewScale: number;

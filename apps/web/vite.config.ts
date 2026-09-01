@@ -16,7 +16,13 @@ const pdfBrowserFixture = fileURLToPath(
 function serviceWorkerSource(
   bundle: Record<string, { fileName: string }>,
 ): string {
-  const files = Object.values(bundle).map((entry) => `./${entry.fileName}`);
+  const files = Object.values(bundle)
+    .map((entry) => `./${entry.fileName}`)
+    .filter(
+      (file) =>
+        !file.endsWith('.onnx') &&
+        !(file.includes('/ort-wasm-') && file.endsWith('.wasm')),
+    );
   files.push(
     './',
     './index.html',
@@ -82,6 +88,9 @@ export default defineConfig(({ command }) => ({
     (command === 'build' ? `/${repositoryName}/` : '/'),
   build: {
     target: 'es2022',
+  },
+  worker: {
+    format: 'es',
   },
   plugins: [
     {

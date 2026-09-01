@@ -687,6 +687,12 @@ describe('PDF layout analysis', () => {
       'imageBlock',
       'paragraph',
     ]);
+    expect(result.model.blocks[1]).toEqual({
+      type: 'imageBlock',
+      assetId: 'middle-image',
+      width: 0.2,
+      alignment: 'left',
+    });
   });
 
   it('places a centered figure before its following caption', async () => {
@@ -727,6 +733,48 @@ describe('PDF layout analysis', () => {
       'paragraph',
       'paragraph',
     ]);
+    expect(result.model.blocks[0]).toEqual({
+      type: 'imageBlock',
+      assetId: 'figure-1',
+      width: 0.36,
+      alignment: 'center',
+    });
+  });
+
+  it('expands near-page-width PDF images to the available output width', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [],
+          links: [],
+          images: [
+            {
+              id: 'wide-image',
+              x: 0.1,
+              top: 0.2,
+              width: 0.8,
+              height: 0.3,
+              pixelWidth: 800,
+              pixelHeight: 300,
+              mediaType: 'image/png',
+              data: Uint8Array.from([0]),
+            },
+          ],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks[0]).toEqual({
+      type: 'imageBlock',
+      assetId: 'wide-image',
+      width: 1,
+      alignment: 'center',
+    });
   });
 
   it('recognises academic headings and preserves bold lead-in fonts', async () => {
@@ -1926,7 +1974,7 @@ describe('PDF.js extraction helpers', () => {
           dispose: () => undefined,
         }),
       },
-      [],
+      [span('Regular body text above the table', 0.25, 0.16, { width: 0.5 })],
       [
         {
           label: 'table',
@@ -1942,10 +1990,152 @@ describe('PDF.js extraction helpers', () => {
     expect(images).toEqual([
       expect.objectContaining({
         source: 'rendered-figure',
-        x: expect.closeTo(0.092, 3),
-        top: expect.closeTo(0.192, 3),
-        width: expect.closeTo(0.816, 3),
-        height: expect.closeTo(0.516, 3),
+        x: expect.closeTo(0.1, 3),
+        top: expect.closeTo(0.2, 3),
+        width: expect.closeTo(0.8, 3),
+        height: expect.closeTo(0.5, 3),
+      }),
+    ]);
+  });
+
+  it('keeps the strongest overlapping Heron picture or table proposal above 0.6', async () => {
+    const render = vi.fn(() => ({ promise: Promise.resolve() }));
+    const page = {
+      pageNumber: 18,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render,
+      getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+    };
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 20,
+        maxTextItemsPerPage: 20,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          readRgba: () => new Uint8ClampedArray(width * height * 4).fill(255),
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      [],
+      [
+        {
+          label: 'table',
+          confidence: 0.63,
+          x: 0.12,
+          top: 0.3,
+          width: 0.76,
+          height: 0.4,
+        },
+        {
+          label: 'picture',
+          confidence: 0.62,
+          x: 0.02,
+          top: 0.29,
+          width: 0.96,
+          height: 0.42,
+        },
+      ],
+    );
+
+    expect(images).toEqual([
+      expect.objectContaining({
+        source: 'rendered-figure',
+        x: expect.closeTo(0.12, 3),
+        top: expect.closeTo(0.3, 3),
+        width: expect.closeTo(0.76, 3),
+        height: expect.closeTo(0.4, 3),
+      }),
+    ]);
+  });
+
+  it('prefers a learned figure proposal over overlapping broad vector geometry', async () => {
+    const render = vi.fn(() => ({ promise: Promise.resolve() }));
+    const page = {
+      pageNumber: 20,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render,
+      getOperatorList: async () => ({
+        fnArray: [OPS.constructPath],
+        argsArray: [
+          [
+            Int32Array.from([20]),
+            Float32Array.from([30, 40, 570, 760]),
+            Float32Array.from([30, 40, 570, 760]),
+          ],
+        ],
+      }),
+    };
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 20,
+        maxTextItemsPerPage: 20,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          readRgba: () => new Uint8ClampedArray(width * height * 4).fill(255),
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      [
+        span('Explanatory prose above the diagram.', 0.1, 0.23, {
+          width: 0.8,
+        }),
+        span('Figure 11: Context Map framework', 0.3, 0.83, { width: 0.4 }),
+      ],
+      [
+        {
+          label: 'picture',
+          confidence: 0.89,
+          x: 0.12,
+          top: 0.44,
+          width: 0.76,
+          height: 0.43,
+        },
+      ],
+    );
+
+    expect(images).toEqual([
+      expect.objectContaining({
+        source: 'rendered-figure',
+        x: expect.closeTo(0.12, 3),
+        top: expect.closeTo(0.44, 3),
+        width: expect.closeTo(0.76, 3),
+        height: expect.closeTo(0.43, 3),
       }),
     ]);
   });

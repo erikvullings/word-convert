@@ -22,6 +22,7 @@ export interface PdfWorkerOptions {
 }
 
 export type WorkerRequest =
+  | { type: 'prepare-pdf-layout'; operationId: string }
   | {
       type: 'analyse';
       operationId: string;
@@ -47,6 +48,11 @@ export type WorkerRequest =
 
 export type WorkerResponse =
   | { type: 'progress'; operationId: string; progress: ConversionProgress }
+  | {
+      type: 'pdf-layout-status';
+      operationId: string;
+      status: 'loading' | 'ready' | 'unavailable';
+    }
   | {
       type: 'analysed';
       operationId: string;

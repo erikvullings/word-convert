@@ -199,6 +199,8 @@ describe('writeHtml', () => {
         type: 'imageBlock',
         assetId: 'photo',
         alt: 'Photo',
+        width: 0.36,
+        alignment: 'center',
         caption: [{ type: 'text', text: 'Caption' }],
       },
       { type: 'thematicBreak' },
@@ -245,7 +247,9 @@ describe('writeHtml', () => {
     expect(html).toContain(
       '<span class="equation" role="math">x &lt; y</span>',
     );
-    expect(html).toContain('<figure><img');
+    expect(html).toContain(
+      '<figure class="image-block image-center image-width-35"><img',
+    );
     expect(html).toContain('<figcaption>Caption</figcaption>');
     expect(html).toContain('<hr>');
     expect(html).toContain('<div class="page-break" aria-hidden="true"></div>');

@@ -159,10 +159,10 @@ describe('App', () => {
     expect(rendered).toContain('"max":400');
     expect(rendered).toContain('pdf-preview-workspace--compact');
     expect(rendered.indexOf('pdf-page-preview')).toBeLessThan(
-      rendered.indexOf('Page 3 of 12'),
-    );
-    expect(rendered.indexOf('Page 3 of 12')).toBeLessThan(
       rendered.indexOf('pdf-crop-sliders'),
+    );
+    expect(rendered.indexOf('pdf-crop-sliders')).toBeLessThan(
+      rendered.indexOf('Page 3 of 12'),
     );
     expect(rendered).toContain(
       'Remove from output · header · odd pages · high confidence',
@@ -302,6 +302,32 @@ describe('App', () => {
     expect(rendered.match(/progress-status/g)).toHaveLength(1);
     expect(rendered.indexOf('progress-status')).toBeLessThan(
       rendered.indexOf('secondary-actions'),
+    );
+  });
+
+  it('shows background figure detection and places pagination under crop controls', () => {
+    const state = createInitialState('2026-09-01');
+    state.stage = 1;
+    state.status = 'ready';
+    state.sourceFormat = 'pdf';
+    state.pdfLayoutStatus = 'loading';
+    state.pdfPreviewRequested = true;
+    state.pdfAnalysis = {
+      pageCount: 44,
+      analysedPages: [1, 12, 23, 33, 44],
+      crop: { top: 0, bottom: 0 },
+      candidates: [],
+      scannedPages: [],
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('one-time model download on first use');
+    expect(rendered.indexOf('Crop bands remove text only')).toBeLessThan(
+      rendered.indexOf('Page 1 of 44'),
+    );
+    expect(rendered.indexOf('Page 1 of 44')).toBeLessThan(
+      rendered.indexOf('Automatically remove high-confidence'),
     );
   });
 

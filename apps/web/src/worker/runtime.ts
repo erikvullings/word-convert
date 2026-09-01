@@ -14,11 +14,9 @@ import {
 } from '@wordconvert/pdf-reader';
 import pdfJsWorkerSrc from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import { unzipSync } from 'fflate';
-import heronModelUrl from '../assets/heron/model_fp16.onnx?url';
 
 import type { WorkerRequest, WorkerSend } from './protocol.ts';
 import { createPdfFigureRasterizer } from './pdf-figure-rasterizer.ts';
-import { createHeronLayoutDetector } from './heron-layout-detector.ts';
 
 if (typeof Worker !== 'undefined') configurePdfJsWorker(pdfJsWorkerSrc);
 
@@ -29,7 +27,11 @@ export interface WorkerRuntime {
 
 export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
   const operations = new Map<string, CancellationSignal>();
-  const layoutDetector = createHeronLayoutDetector(heronModelUrl);
+  let layoutDetector:
+    | Promise<
+        import('./heron-layout-detector.ts').HeronLayoutDetector | undefined
+      >
+    | undefined;
 
   return {
     activeOperationCount: () => operations.size,
@@ -47,7 +49,21 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
       try {
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         if (signal.cancelled) throw cancelledError();
-        if (request.type === 'analyse') {
+        if (request.type === 'prepare-pdf-layout') {
+          send({
+            type: 'pdf-layout-status',
+            operationId: request.operationId,
+            status: 'loading',
+          });
+          const detector = await (layoutDetector ??= loadHeronLayoutDetector());
+          const ready = detector ? await detector.prepare() : false;
+          if (signal.cancelled) throw cancelledError();
+          send({
+            type: 'pdf-layout-status',
+            operationId: request.operationId,
+            status: ready ? 'ready' : 'unavailable',
+          });
+        } else if (request.type === 'analyse') {
           const readerOptions = {
             filename: request.filename,
             conversionDate: request.conversionDate,
@@ -69,13 +85,17 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
             request.pdfOptions?.samplePageCount === undefined
               ? createPdfFigureRasterizer()
               : undefined;
+          const detector = figureRasterizer
+            ? await (layoutDetector ??= loadHeronLayoutDetector())
+            : undefined;
+          if (signal.cancelled) throw cancelledError();
           const pdfResult =
             request.sourceFormat === 'pdf'
               ? await pdfJsReader.read(new Uint8Array(request.input), {
                   ...readerOptions,
                   ...request.pdfOptions,
                   ...(figureRasterizer ? { figureRasterizer } : {}),
-                  ...(figureRasterizer ? { layoutDetector } : {}),
+                  ...(detector ? { layoutDetector: detector } : {}),
                 })
               : undefined;
           const model =
@@ -167,6 +187,19 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
       }
     },
   };
+}
+
+async function loadHeronLayoutDetector() {
+  try {
+    const [{ default: modelUrl }, { createHeronLayoutDetector }] =
+      await Promise.all([
+        import('../assets/heron/model_fp16.onnx?url'),
+        import('./heron-layout-detector.ts'),
+      ]);
+    return createHeronLayoutDetector(modelUrl);
+  } catch {
+    return undefined;
+  }
 }
 
 function outputFilename(

@@ -12,6 +12,12 @@ Dates and timestamps are ISO 8601 strings, never `Date` instances. The caller su
 
 All nodes are plain objects selected by discriminant fields. Maps use string-keyed records. Package boundaries must not contain class instances, DOM nodes, errors, promises (except operation results), or platform handles.
 
+Block images may carry optional normalized `width` and `alignment` layout hints.
+PDF analysis derives them from page geometry: images covering at least 80% of
+the page width become full-width, while smaller images retain their relative
+width and are centered or aligned left/right. HTML and EPUB writers render
+these hints responsively; readers without source geometry may omit them.
+
 ## Binary and JSON conventions
 
 In memory and across structured-clone boundaries, binary fields are `Uint8Array`. Do not rely on a view's offset into a larger buffer: construct a `Uint8Array` containing exactly the asset or output bytes. A worker may transfer its underlying `ArrayBuffer` only when it gives up ownership.

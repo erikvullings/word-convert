@@ -44,18 +44,20 @@ export function createBrowserController(): AppController {
     new Date().toLocaleDateString('en-CA'),
     loadPreferences(localStorage),
   );
-  const worker = new Worker(new URL('./worker/index.ts', import.meta.url), {
+  let worker = new Worker(new URL('./worker/index.ts', import.meta.url), {
     type: 'module',
   });
   let sourceInput: ArrayBuffer | undefined;
   let sourceFilename: string | undefined;
   let autoPreviewOperationId: string | undefined;
+  let pdfLayoutOperationId: string | undefined;
   let epubRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let remotePdfAbort: AbortController | undefined;
   let previewRenderer:
     import('./pdf-preview.ts').PdfPagePreviewRenderer | undefined;
   let pendingPdfPreviewPage: number | undefined;
   let pdfPreviewRendering = false;
+  let disposed = false;
   const releasePdfPreview = (): void => {
     if (state.pdfPreview) URL.revokeObjectURL(state.pdfPreview.url);
     delete state.pdfPreview;
@@ -175,31 +177,57 @@ export function createBrowserController(): AppController {
     requestConvert();
   };
 
+  const handlePopState = (event: PopStateEvent): void => {
+    const stage =
+      typeof event.state?.stage === 'number' ? event.state.stage : 1;
+    state.review =
+      event.state?.review === 'styles' || event.state?.review === 'metadata'
+        ? event.state.review
+        : undefined;
+    if (stage === 1) {
+      state.stage = 1;
+      delete state.output;
+      delete state.markdownEdit;
+    } else {
+      state.stage = 2;
+    }
+    m.redraw();
+  };
   if (typeof window !== 'undefined') {
     window.addEventListener('beforeunload', disposePdfPreview, { once: true });
-    window.addEventListener('popstate', (event: PopStateEvent) => {
-      const stage =
-        typeof event.state?.stage === 'number' ? event.state.stage : 1;
-      state.review =
-        event.state?.review === 'styles' || event.state?.review === 'metadata'
-          ? event.state.review
-          : undefined;
-      if (stage === 1) {
-        state.stage = 1;
-        delete state.output;
-        delete state.markdownEdit;
-      } else {
-        state.stage = 2;
-      }
-      m.redraw();
-    });
+    window.addEventListener('popstate', handlePopState);
   }
 
-  worker.addEventListener('message', (event: MessageEvent<WorkerResponse>) => {
+  const handleWorkerMessage = (event: MessageEvent<WorkerResponse>): void => {
+    if (disposed) return;
+    if (
+      event.data.type === 'pdf-layout-status' &&
+      event.data.operationId === pdfLayoutOperationId
+    ) {
+      state.pdfLayoutStatus = event.data.status;
+      if (event.data.status !== 'loading') pdfLayoutOperationId = undefined;
+      m.redraw();
+      return;
+    }
     const shouldAutoPreview =
       event.data.type === 'analysed' &&
       event.data.operationId === autoPreviewOperationId;
     applyResponse(state, event.data);
+    if (
+      event.data.type === 'analysed' &&
+      event.data.pdfAnalysis &&
+      event.data.pdfAnalysis.analysedPages.length <
+        event.data.pdfAnalysis.pageCount &&
+      !pdfLayoutOperationId &&
+      state.pdfLayoutStatus !== 'ready'
+    ) {
+      pdfLayoutOperationId = operationId('prepare-pdf-layout');
+      state.pdfLayoutStatus = 'loading';
+      worker.postMessage({
+        type: 'prepare-pdf-layout',
+        operationId: pdfLayoutOperationId,
+      } satisfies WorkerRequest);
+    }
     if (shouldAutoPreview) {
       autoPreviewOperationId = undefined;
       requestPdfPage(1);
@@ -210,8 +238,9 @@ export function createBrowserController(): AppController {
       autoPreviewOperationId = undefined;
     }
     m.redraw();
-  });
-  worker.addEventListener('error', () => {
+  };
+  const handleWorkerError = (): void => {
+    if (disposed) return;
     state.error = {
       code: 'conversion-failed',
       message: 'The background conversion worker could not be started.',
@@ -220,13 +249,48 @@ export function createBrowserController(): AppController {
     state.status = 'error';
     delete state.progress;
     m.redraw();
-  });
+  };
+  const attachWorker = (target: Worker): void => {
+    target.addEventListener('message', handleWorkerMessage);
+    target.addEventListener('error', handleWorkerError);
+  };
+  const replaceWorker = (): void => {
+    // ONNX session creation can block the worker before it observes cancellation.
+    worker.terminate();
+    worker = new Worker(new URL('./worker/index.ts', import.meta.url), {
+      type: 'module',
+    });
+    attachWorker(worker);
+  };
+  attachWorker(worker);
 
   const controller: AppController = {
     state,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      remotePdfAbort?.abort();
+      remotePdfAbort = undefined;
+      if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
+      epubRefreshTimer = undefined;
+      disposePdfPreview();
+      worker.terminate();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('beforeunload', disposePdfPreview);
+        window.removeEventListener('popstate', handlePopState);
+      }
+    },
     selectFiles(files) {
       const file = files[0];
       if (!file) return;
+      if (
+        pdfLayoutOperationId ||
+        state.status === 'analysing' ||
+        state.status === 'converting'
+      ) {
+        replaceWorker();
+        pdfLayoutOperationId = undefined;
+      }
       remotePdfAbort?.abort();
       remotePdfAbort = undefined;
       delete state.remotePdfLoading;
@@ -248,6 +312,7 @@ export function createBrowserController(): AppController {
       epubRefreshTimer = undefined;
       delete state.model;
       delete state.pdfAnalysis;
+      delete state.pdfLayoutStatus;
       disposePdfPreview();
       state.pdfPreviewPage = 1;
       state.pdfPreviewScale = 1;
@@ -270,39 +335,67 @@ export function createBrowserController(): AppController {
           sourceFormat === 'pdf' ? 'Opening PDF…' : 'Opening Word document…',
       };
       state.operationId = operationId('analyse');
+      const analyseOperationId = state.operationId;
       autoPreviewOperationId =
-        sourceFormat === 'pdf' ? state.operationId : undefined;
-      void file.arrayBuffer().then((input) => {
-        sourceInput = input;
-        sourceFilename = file.name;
-        const request = {
-          type: 'analyse',
-          operationId: state.operationId ?? operationId('analyse'),
-          input: input.slice(0),
-          filename: file.name,
-          sourceFormat,
-          conversionDate: state.conversionDate,
-          ...(sourceFormat === 'pdf'
-            ? {
-                pdfOptions: pdfWorkerOptions(
-                  state,
-                  state.pdfImport.samplePageCount,
-                ),
-              }
-            : {}),
-        } satisfies WorkerRequest;
-        worker.postMessage(request, [request.input]);
-      });
+        sourceFormat === 'pdf' ? analyseOperationId : undefined;
+      void file
+        .arrayBuffer()
+        .then((input) => {
+          if (disposed || state.operationId !== analyseOperationId) return;
+          sourceInput = input;
+          sourceFilename = file.name;
+          const request = {
+            type: 'analyse',
+            operationId: analyseOperationId,
+            input: input.slice(0),
+            filename: file.name,
+            sourceFormat,
+            conversionDate: state.conversionDate,
+            ...(sourceFormat === 'pdf'
+              ? {
+                  pdfOptions: pdfWorkerOptions(
+                    state,
+                    state.pdfImport.samplePageCount,
+                  ),
+                }
+              : {}),
+          } satisfies WorkerRequest;
+          worker.postMessage(request, [request.input]);
+        })
+        .catch(() => {
+          if (disposed || state.operationId !== analyseOperationId) return;
+          state.error = {
+            code: 'invalid-input',
+            message: 'The selected file could not be read.',
+            recoverable: true,
+          };
+          state.status = 'error';
+          delete state.progress;
+          m.redraw();
+        });
     },
     cancel() {
       remotePdfAbort?.abort();
       remotePdfAbort = undefined;
       delete state.remotePdfLoading;
       if (!state.operationId) return;
+      const cancelledOperationId = state.operationId;
       worker.postMessage({
         type: 'cancel',
-        operationId: state.operationId,
+        operationId: cancelledOperationId,
       } satisfies WorkerRequest);
+      delete state.operationId;
+      delete state.progress;
+      if (state.model) {
+        state.status = 'ready';
+        state.stage = 1;
+      } else {
+        state.status = 'idle';
+        state.stage = 0;
+        delete state.selectedFilename;
+        delete state.sourceFormat;
+      }
+      m.redraw();
     },
     setRemotePdfUrl(url) {
       state.remotePdfUrl = url;

@@ -33,7 +33,11 @@ interface RenderContext {
   formulaMode: MathOutputMode;
 }
 
-const STYLES = `:root{color-scheme:light dark;--background:#fff;--foreground:#202124;--muted:#5f6368;--link:#0759b6}*{box-sizing:border-box}body{max-width:48rem;margin:0 auto;padding:2rem;font:18px/1.6 system-ui,sans-serif;background:var(--background);color:var(--foreground)}h1,h2,h3,h4,h5,h6{clear:both;line-height:1.2;margin-block:1.6em .6em}p,ul,ol,blockquote,figure,table,pre{margin-block:0 1.25em}img{max-width:100%;height:auto}p>img{display:block;clear:both;margin-block:1.25em}figure{clear:both;margin-inline:0}figure>img{display:block}figcaption{margin-top:.5em;color:var(--muted)}table{clear:both;border-collapse:collapse;width:100%}th,td{border:1px solid var(--muted);padding:.4rem;text-align:left;vertical-align:top}a{color:var(--link)}pre{clear:both;overflow:auto}.page-break{clear:both;break-after:page}.table-of-contents{clear:both}.table-of-contents ol{padding-left:1.5rem}@media (prefers-color-scheme: dark){:root{--background:#181a1b;--foreground:#eee;--muted:#aaa;--link:#8ab4f8}}@media print{body{max-width:none;padding:0;font-size:12pt}.table-of-contents{break-after:page}a{color:inherit;text-decoration:none}}`;
+const STYLES = `:root{color-scheme:light dark;--background:#fff;--foreground:#202124;--muted:#5f6368;--link:#0759b6}*{box-sizing:border-box}body{max-width:48rem;margin:0 auto;padding:2rem;font:18px/1.6 system-ui,sans-serif;background:var(--background);color:var(--foreground)}h1,h2,h3,h4,h5,h6{clear:both;line-height:1.2;margin-block:1.6em .6em}p,ul,ol,blockquote,figure,table,pre{margin-block:0 1.25em}img{max-width:100%;height:auto}p>img{display:block;clear:both;margin-block:1.25em}figure{clear:both;margin-inline:0}figure>img{display:block}.image-block>img{width:100%}.image-center{margin-inline:auto;text-align:center}.image-left{float:left;margin:0 1.25em 1em 0}.image-right{float:right;margin:0 0 1em 1.25em}figcaption{margin-top:.5em;color:var(--muted)}table{clear:both;border-collapse:collapse;width:100%}th,td{border:1px solid var(--muted);padding:.4rem;text-align:left;vertical-align:top}a{color:var(--link)}pre{clear:both;overflow:auto}.page-break{clear:both;break-after:page}.table-of-contents{clear:both}.table-of-contents ol{padding-left:1.5rem}@media (prefers-color-scheme: dark){:root{--background:#181a1b;--foreground:#eee;--muted:#aaa;--link:#8ab4f8}}@media print{body{max-width:none;padding:0;font-size:12pt}.table-of-contents{break-after:page}a{color:inherit;text-decoration:none}}`;
+const IMAGE_WIDTH_STYLES = Array.from(
+  { length: 20 },
+  (_, index) => `.image-width-${(index + 1) * 5}{width:${(index + 1) * 5}%}`,
+).join('');
 const SAFE_EMBEDDED_MEDIA = new Set([
   'image/avif',
   'image/gif',
@@ -66,7 +70,7 @@ export function writeHtml(
   const title = escapeHtml(model.metadata.title?.value ?? 'Untitled document');
   const language = sanitizeLanguage(model.metadata.language?.value ?? 'en');
   const metadata = renderMetadata(model);
-  return `<!doctype html><html lang="${language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="WordConvert">${metadata}<title>${title}</title><style>${embeddedFontCss(model)}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}</style></head><body>${fragment}</body></html>`;
+  return `<!doctype html><html lang="${language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="WordConvert">${metadata}<title>${title}</title><style>${embeddedFontCss(model)}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${IMAGE_WIDTH_STYLES}</style></head><body>${fragment}</body></html>`;
 }
 
 export async function writeHtmlZip(
@@ -91,7 +95,7 @@ export async function writeHtmlZip(
   const files: Zippable = {
     'document.html': strToU8(html),
     'styles.css': strToU8(
-      `${fontCss}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}`,
+      `${fontCss}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${IMAGE_WIDTH_STYLES}`,
     ),
   };
   for (const { asset, path } of registry.entries) files[path] = asset.data;
@@ -264,13 +268,29 @@ function renderBlock(block: BlockNode, context: RenderContext): string {
     case 'imageBlock': {
       const image = renderImage(block.assetId, block.alt, undefined, context);
       if (!image) return '';
-      return `<figure>${image}${block.caption ? `<figcaption>${renderInlines(block.caption, context)}</figcaption>` : ''}</figure>`;
+      return `<figure${imageBlockAttributes(block)}>${image}${block.caption ? `<figcaption>${renderInlines(block.caption, context)}</figcaption>` : ''}</figure>`;
     }
     case 'thematicBreak':
       return '<hr>';
     case 'pageBreak':
       return '<div class="page-break" aria-hidden="true"></div>';
   }
+}
+
+function imageBlockAttributes(
+  block: Extract<BlockNode, { type: 'imageBlock' }>,
+): string {
+  const alignment = block.alignment;
+  if (
+    !Number.isFinite(block.width) ||
+    block.width === undefined ||
+    block.width <= 0 ||
+    block.width > 1 ||
+    (alignment !== 'left' && alignment !== 'center' && alignment !== 'right')
+  )
+    return '';
+  const percentage = Math.max(5, Math.round(block.width * 20) * 5);
+  return ` class="image-block image-${alignment} image-width-${percentage}"`;
 }
 
 function renderInlines(nodes: InlineNode[], context: RenderContext): string {

@@ -33,6 +33,28 @@ async function pdfBuffer(): Promise<ArrayBuffer> {
 }
 
 describe('worker runtime', () => {
+  it('reports background PDF layout preparation status', async () => {
+    const sent: WorkerResponse[] = [];
+    const runtime = createWorkerRuntime((message) => sent.push(message));
+
+    await runtime.handle({
+      type: 'prepare-pdf-layout',
+      operationId: 'prepare-layout',
+    });
+
+    expect(sent[0]).toEqual({
+      type: 'pdf-layout-status',
+      operationId: 'prepare-layout',
+      status: 'loading',
+    });
+    expect(sent.at(-1)).toMatchObject({
+      type: 'pdf-layout-status',
+      operationId: 'prepare-layout',
+      status: expect.stringMatching(/^(?:ready|unavailable)$/),
+    });
+    expect(runtime.activeOperationCount()).toBe(0);
+  });
+
   it('does not log document data or make network requests during analysis', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

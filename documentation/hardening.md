@@ -56,18 +56,30 @@ During the full-document pass, connected clusters of PDF vector paths and substa
 Full PDF conversion also renders each page to a fixed 640×640 RGBA surface and
 runs the bundled Docling Heron model through ONNX Runtime Web in the conversion
 worker. WebGPU is preferred when available, with a single-threaded WASM fallback.
-Only picture and table predictions with at least 0.5 confidence seed figure
+Picture and table predictions with at least 0.6 confidence seed figure
 composition; coordinates are clipped to the page and remain subject to the
-existing image and pixel budgets. PDF image, vector, text, and caption evidence
-continues to refine detections, and deterministic geometry remains the fallback.
-Sample cleanup analysis does not load or execute the model.
+existing image and pixel budgets. Confidence-ordered overlap suppression keeps
+the strongest learned proposal where picture and table predictions duplicate
+the same visual region. Learned regions take precedence over overlapping
+deterministic image, vector, and caption regions so heuristic geometry cannot
+widen them into surrounding prose. Learned crops preserve the detected bounds
+without adding safety margins, avoiding capture of adjacent text lines.
+Deterministic geometry remains the fallback where no accepted learned region
+overlaps. Sample cleanup analysis does not execute the model.
 
 The FP16 model is approximately 82.5 MiB and the emitted ONNX WASM runtime is
-approximately 25 MiB. Both are same-origin, content-hashed build assets included
-in the service-worker precache, so model inference performs no remote request and
-remains available offline after installation. This increases initial PWA cache
-storage by approximately 108 MiB and should be re-measured when the model or ONNX
-Runtime version changes.
+approximately 25 MiB. Both are same-origin, content-hashed build assets. After
+the initial PDF cleanup sample, the application prepares the model and runtime
+in the background while the user reviews crop settings. The service worker
+caches them after that request rather than downloading approximately 108 MiB
+during installation. Model inference therefore makes no third-party request and
+remains available offline after its first successful use; users who do not open
+PDFs avoid the model download entirely. Preparation removes the one-time download
+and session setup from the subsequent full-document wait, but full processing
+still classifies every page locally. Per-page inference remains the dominant cost
+for long PDFs and should not be presented as part of the one-time setup. This
+runtime and cache budget should be re-measured when the model or ONNX Runtime
+version changes.
 
 Remote PDF import downloads only HTTPS resources using CORS with omitted credentials and no referrer. arXiv abstract URLs are normalized locally to their corresponding `/pdf/` URL. The response is capped at 50 MiB while streaming and must have a PDF-compatible media type and `%PDF-` signature before entering the existing file-analysis path. A remote host can still reject browser access through CORS; WordConvert does not proxy around that policy. Remote URLs and bytes are not persisted.
 

@@ -60,6 +60,7 @@ const epubPreviewModeOptions = [
 
 export interface AppController {
   state: AppState;
+  dispose?(): void;
   selectFiles(files: FileList | File[]): void;
   cancel(): void;
   convert(): void;
@@ -367,6 +368,16 @@ function pdfImportEditor(controller: AppController): m.Vnode {
       'p',
       `Only ${analysedPages.length} representative pages were scanned. Adjust the sample if needed, then process the full document once with your cleanup choices.`,
     ),
+    state.pdfLayoutStatus
+      ? m(
+          'p.pdf-layout-status[aria-live="polite"]',
+          state.pdfLayoutStatus === 'loading'
+            ? 'Preparing figure detection in the background (one-time model download on first use). You can review crop settings while this finishes.'
+            : state.pdfLayoutStatus === 'ready'
+              ? 'Figure detection is ready. Full processing will classify each page locally.'
+              : 'Figure detection is unavailable; deterministic PDF geometry will be used.',
+        )
+      : null,
     m('.pdf-sample-controls', [
       m('label', [
         'Pages to sample',
@@ -391,7 +402,7 @@ function pdfImportEditor(controller: AppController): m.Vnode {
       ? m('.pdf-crop-layout', [
           m('.pdf-preview-slot', [
             pdfSourcePreview(controller, top, bottom, pageCount, {
-              paginationPosition: 'after',
+              paginationPosition: 'none',
               showScaleControl: true,
               compactPagination: true,
             }),
@@ -404,6 +415,7 @@ function pdfImportEditor(controller: AppController): m.Vnode {
                 'small',
                 'Crop bands remove text only. Images are always retained.',
               ),
+              pdfPaginationControls(controller, pageCount),
               m('label', [
                 m('input', {
                   type: 'checkbox',
@@ -465,7 +477,7 @@ function pdfSourcePreview(
   bottom: number,
   pageCount: number,
   options: {
-    paginationPosition?: 'before' | 'after';
+    paginationPosition?: 'before' | 'after' | 'none';
     showCleanupNote?: boolean;
     showScaleControl?: boolean;
     compactPagination?: boolean;
@@ -534,7 +546,10 @@ function pdfSourcePreview(
       class: options.compactPagination ? 'pdf-preview-workspace--compact' : '',
     },
     [
-      options.paginationPosition === 'after' ? null : pagination,
+      options.paginationPosition === 'after' ||
+      options.paginationPosition === 'none'
+        ? null
+        : pagination,
       page,
       options.showScaleControl
         ? m('label.pdf-preview-scale', [

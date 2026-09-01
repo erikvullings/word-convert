@@ -668,22 +668,29 @@ function figureRegions(
   const groups = [
     ...bounds
       .filter(({ width, height }) => width > 0 || height > 0)
-      .map((region) => ({ region, paths: 1, imageSeed: false })),
+      .map((region) => ({
+        region,
+        paths: 1,
+        imageSeed: false,
+        learnedSeed: false,
+      })),
     ...images
       .filter(
         ({ width, height }) =>
           width >= 0.12 && height >= 0.06 && width * height <= 0.7,
       )
-      .map((region) => ({ region, paths: 0, imageSeed: true })),
-    ...layoutRegions
-      .filter(
-        ({ label, confidence, width, height }) =>
-          (label === 'picture' || label === 'table') &&
-          confidence >= 0.5 &&
-          width >= 0.05 &&
-          height >= 0.03,
-      )
-      .map((region) => ({ region, paths: 0, imageSeed: true })),
+      .map((region) => ({
+        region,
+        paths: 0,
+        imageSeed: true,
+        learnedSeed: false,
+      })),
+    ...visualLayoutRegions(layoutRegions).map((region) => ({
+      region,
+      paths: 0,
+      imageSeed: true,
+      learnedSeed: true,
+    })),
   ];
   let merged = true;
   while (merged) {
@@ -696,17 +703,19 @@ function figureRegions(
       ) {
         const left = groups[leftIndex]!;
         const right = groups[rightIndex]!;
+        if (left.learnedSeed || right.learnedSeed) continue;
         if (!nearby(left.region, right.region, 0.015)) continue;
         left.region = unionBounds(left.region, right.region);
         left.paths += right.paths;
         left.imageSeed ||= right.imageSeed;
+        left.learnedSeed ||= right.learnedSeed;
         groups.splice(rightIndex, 1);
         merged = true;
         rightIndex--;
       }
     }
   }
-  const regions = groups
+  const candidateRegions = groups
     .filter(
       ({ region, paths, imageSeed }) =>
         (imageSeed || paths >= 4 || hasFollowingFigureCaption(region, spans)) &&
@@ -714,15 +723,56 @@ function figureRegions(
         region.height >= 0.06 &&
         region.width * region.height <= 0.7,
     )
-    .map(({ region }) => region);
-  regions.push(...displayEquationRegions(spans));
-  const inferred = captionFigureRegions(spans, regions);
+    .map(({ region, learnedSeed }) => ({ region, learnedSeed }));
+  const learnedRegions = candidateRegions.filter(
+    ({ learnedSeed }) => learnedSeed,
+  );
+  const regions = candidateRegions.filter(
+    ({ region, learnedSeed }) =>
+      learnedSeed ||
+      !learnedRegions.some((learned) => nearby(region, learned.region, 0.015)),
+  );
+  regions.push(
+    ...displayEquationRegions(spans).map((region) => ({
+      region,
+      learnedSeed: false,
+    })),
+  );
+  const inferred = captionFigureRegions(
+    spans,
+    regions.map(({ region }) => region),
+  );
   return [
-    ...regions.map((region) =>
-      padBounds(expandToNearbyLabel(region, spans), 0.008),
+    ...regions.map(({ region, learnedSeed }) =>
+      learnedSeed
+        ? region
+        : padBounds(expandToNearbyLabel(region, spans), 0.008),
     ),
     ...inferred.map((region) => padHorizontalBounds(region, 0.008)),
   ];
+}
+
+function visualLayoutRegions(
+  regions: readonly PdfLayoutRegion[],
+): PdfLayoutRegion[] {
+  return [...regions]
+    .filter(
+      ({ label, confidence, width, height }) =>
+        (label === 'picture' || label === 'table') &&
+        confidence >= 0.6 &&
+        width >= 0.05 &&
+        height >= 0.03,
+    )
+    .sort((left, right) => right.confidence - left.confidence)
+    .reduce<PdfLayoutRegion[]>((accepted, candidate) => {
+      if (
+        !accepted.some(
+          (region) => intersectionOverUnion(region, candidate) >= 0.6,
+        )
+      )
+        accepted.push(candidate);
+      return accepted;
+    }, []);
 }
 
 function captionFigureRegions(
@@ -1315,6 +1365,26 @@ function nearby(
     left.top + left.height + gap < right.top ||
     right.top + right.height + gap < left.top
   );
+}
+
+function intersectionOverUnion(
+  left: NormalizedBounds,
+  right: NormalizedBounds,
+): number {
+  const intersectionWidth = Math.max(
+    0,
+    Math.min(left.x + left.width, right.x + right.width) -
+      Math.max(left.x, right.x),
+  );
+  const intersectionHeight = Math.max(
+    0,
+    Math.min(left.top + left.height, right.top + right.height) -
+      Math.max(left.top, right.top),
+  );
+  const intersectionArea = intersectionWidth * intersectionHeight;
+  const unionArea =
+    left.width * left.height + right.width * right.height - intersectionArea;
+  return unionArea > 0 ? intersectionArea / unionArea : 0;
 }
 
 function unionBounds(

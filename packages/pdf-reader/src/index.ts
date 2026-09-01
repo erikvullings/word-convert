@@ -976,7 +976,7 @@ async function linesToBlocks(
         : [];
     for (let index = 0; index <= pageLines.length; index++) {
       for (const image of placements.get(index) ?? []) {
-        blocks.push({ type: 'imageBlock', assetId: image.id });
+        blocks.push(imageBlock(image));
         previousLine = undefined;
       }
       const line = pageLines[index];
@@ -1068,6 +1068,20 @@ async function linesToBlocks(
     }
   }
   return blocks;
+}
+
+function imageBlock(
+  image: RawPdfImage,
+): Extract<BlockNode, { type: 'imageBlock' }> {
+  const width = image.width >= 0.8 ? 1 : image.width;
+  const center = image.x + image.width / 2;
+  const alignment =
+    width === 1 || Math.abs(center - 0.5) <= 0.08
+      ? 'center'
+      : center < 0.5
+        ? 'left'
+        : 'right';
+  return { type: 'imageBlock', assetId: image.id, width, alignment };
 }
 
 function imagePlacements(

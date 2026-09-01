@@ -16,6 +16,13 @@ if (root === null) {
 const controller = createBrowserController();
 m.mount(root, App(controller));
 
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    controller.dispose?.();
+    m.mount(root, null);
+  });
+}
+
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, {

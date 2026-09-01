@@ -27,20 +27,36 @@ const HERON_LABELS = [
   'key_value_region',
 ] as const satisfies readonly PdfLayoutLabel[];
 
+export interface HeronLayoutDetector extends PdfLayoutDetector {
+  prepare(): Promise<boolean>;
+}
+
 export function createHeronLayoutDetector(
   model: string | Uint8Array,
-): PdfLayoutDetector {
+): HeronLayoutDetector {
   let session: Promise<ort.InferenceSession> | undefined;
   let disabled = false;
   return {
     inputSize: HERON_INPUT_SIZE,
+    async prepare() {
+      if (disabled) return false;
+      try {
+        session ??= createSession(model);
+        await session;
+        return true;
+      } catch {
+        disabled = true;
+        return false;
+      }
+    },
     async detect(image, cancellation) {
       if (image.width !== HERON_INPUT_SIZE || image.height !== HERON_INPUT_SIZE)
         throw new Error('Heron requires a 640 by 640 page image.');
       if (disabled || cancellation?.cancelled) return [];
       try {
-        session ??= createSession(model);
-        const inferenceSession = await session;
+        if (!(await this.prepare())) return [];
+        const inferenceSession = session ? await session : undefined;
+        if (!inferenceSession) return [];
         if (cancellation?.cancelled) return [];
         const input = rgbaToHeronInput(image.rgba, image.width, image.height);
         const result = await inferenceSession.run({

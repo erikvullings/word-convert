@@ -18,5 +18,6 @@ uv run --python 3.12 scripts/export-heron-onnx.py
 
 The exporter pins its Python dependencies and upstream revision, validates the
 ONNX graph, and executes one inference pass before reporting success. The model
-is bundled as a hashed Vite asset and precached by the generated service worker.
+is bundled as a hashed Vite asset and cached by the service worker after its
+first use rather than during installation.
 The Apache-2.0 terms are included in `LICENSES/Apache-2.0.txt`.

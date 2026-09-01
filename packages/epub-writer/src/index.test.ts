@@ -250,6 +250,8 @@ describe('writeEpub', () => {
       {
         type: 'imageBlock',
         assetId: 'photo',
+        width: 0.28,
+        alignment: 'right',
         caption: [{ type: 'text', text: 'Caption' }],
       },
       { type: 'pageBreak' },
@@ -302,6 +304,9 @@ describe('writeEpub', () => {
     expect(Object.keys(files)).toContain('EPUB/fonts/font-001.woff2');
     expect(chapter).toContain('<strong>Bold</strong>');
     expect(chapter).toContain('src="images/image-001.png"');
+    expect(chapter).toContain(
+      '<figure class="image-block image-right image-width-30"><img',
+    );
     expect(chapter).toContain('<th><pre><code>&lt;x&gt;</code></pre></th>');
     expect(chapter).toContain('epub:type="footnote"');
     expect(chapter).toContain('<figcaption>Caption</figcaption>');
