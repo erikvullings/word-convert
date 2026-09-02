@@ -6,3 +6,4 @@ pnpm-lock.yaml
 *.md
 tests/fixtures/docx/*.manifest.json
 tests/fixtures/docx/corpus.json
+apps/web/src/assets/formula-ocr/tokenizer.json

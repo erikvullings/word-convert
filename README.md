@@ -131,10 +131,20 @@ analysis remains model-free. Regenerate the pinned model with
 `uv run --python 3.12 scripts/export-heron-onnx.py` and validate the browser
 runtime with `pnpm test:heron`.
 
+Complex PDF formulas use a separately lazy-loaded RapidLatexOCR ONNX model only
+after deterministic text reconstruction is insufficient. Formula crops and
+inference remain inside the conversion worker; the three pinned models are
+same-origin assets cached after first use. Install or verify them with
+`pnpm assets:formula-ocr` and check the real ONNX graphs with
+`pnpm test:formula-ocr`.
+
 The default DOCX reader limits are 50 MiB compressed input, 200 MiB expanded
 content, 1,000 ZIP entries, a 100:1 per-entry compression ratio, and 25 MiB per
 image. PDF limits are 50 MiB input, 2,000 pages, 2,000,000 text items, and 40
 megapixels per extracted image.
+Formula analysis is capped at 100 candidates per page, 1,000 per document,
+4 megapixels per crop, 40 megapixels of total temporary crops, and 512 decoder
+tokens per formula.
 Unsafe XML, paths, links, HTML, SVG, and remote resources are rejected or
 sanitized. Raising these typed limits increases memory exposure. See the
 [hardening checklist](documentation/hardening.md) for the complete threat matrix,

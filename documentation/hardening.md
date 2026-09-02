@@ -23,6 +23,7 @@ This document is the release checklist for security, privacy, performance, and b
 | Excessive PDF raster images | `maxImagePixels: 40,000,000` per image, `maxImages: 10,000`, and `maxTotalImagePixels: 80,000,000` across placements | PDF reader configurable per-image and aggregate-limit tests |
 | PDF vector figure rendering | Detect connected path regions, render only bounded regions to passive PNG, and charge them to the existing image-count and pixel budgets | PDF reader figure-region and aggregate-limit tests; browser conversion check |
 | PDF layout model | Run the bundled Apache-2.0 Heron FP16 ONNX model on fixed 640×640 local page renders; accept only bounded, confident picture/table proposals and retain deterministic geometry fallback | Heron preprocessing/decoding tests and PDF proposal-fusion tests |
+| PDF formula recognition | At most 100 candidates per page and 1,000 per document; 4 MP per temporary crop, 40 MP total, and 512 decoder tokens; strict safe KaTeX validation; preserve source on every failure | Formula candidate, real-crop, fake-session adapter, cancellation, and opt-in real-model tests |
 | Remote PDF import | HTTPS only, omit credentials/referrer, enforce 50 MiB while streaming, validate response type and `%PDF-` signature, and keep URL/bytes out of persistence | Remote PDF normalization, validation, limit, and failure tests |
 | Encrypted or malformed PDF | Reject before semantic analysis with private structured errors | Password-protected and malformed PDF corpus fixtures |
 | PDF external loading | Supply exact bytes; disable range, streaming, auto-fetch, system-font, and external WASM loading | Worker privacy regression spies on `fetch` during DOCX and PDF analysis |
@@ -66,6 +67,25 @@ widen them into surrounding prose. Learned crops preserve the detected bounds
 without adding safety margins, avoiding capture of adjacent text lines.
 Deterministic geometry remains the fallback where no accepted learned region
 overlaps. Sample cleanup analysis does not execute the model.
+
+Complex formula candidates that deterministic text reconstruction cannot handle
+are rendered at up to 3× logical resolution on a white temporary worker canvas.
+Crops are page-bounded, charged to configurable per-crop and aggregate pixel
+limits, copied to RGBA, and disposed before inference. A pinned RapidLatexOCR
+resizer, encoder, and autoregressive decoder run with WebGPU preferred and
+single-threaded WASM fallback. Decoder generation is capped at 512 tokens and
+checks cancellation between steps. Strict safe KaTeX parsing validates output;
+detector evidence, decoder diagnostics, parse success, and prose contamination
+produce a discrete review band. Failures preserve the source PDF text and add a
+reviewable warning.
+
+The three formula graphs total approximately 171 MiB. They and the tokenizer are
+imported only on the first complex formula during full processing, emitted as
+same-origin content-hashed assets, and excluded from install-time precaching.
+The service worker caches successful same-origin responses after first use.
+Ordinary PDFs, deterministic formulas, and representative cleanup scans do not
+load the formula model. The pinned revision, sizes, and hashes are recorded in
+the asset manifest and verified by `pnpm assets:formula-ocr`.
 
 Standalone equations with fragmented fraction geometry are rendered to tightly
 bounded passive PNG assets under the existing image-count and pixel budgets.

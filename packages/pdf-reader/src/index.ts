@@ -226,6 +226,13 @@ export const pdfJsReader: PdfReader = {
       ...(options.layoutDetector
         ? { layoutDetector: options.layoutDetector }
         : {}),
+      ...(options.formulaRecognizer
+        ? { formulaRecognizer: options.formulaRecognizer }
+        : {}),
+      formulaLimits: {
+        ...DEFAULT_PDF_FORMULA_LIMITS,
+        ...options.formulaLimits,
+      },
     });
   },
   async read(input, options) {
@@ -429,7 +436,6 @@ export async function analysePdf(
     });
   const semanticCandidates: PdfFormulaCandidate[] = [];
   const equations: DocumentModel['equations'] = {};
-  let recognizedCropPixels = 0;
   for (const candidate of formulaCandidates) {
     await analysisCheckpoint(options);
     const decision = options.formulaDecisions?.[candidate.id];
@@ -437,70 +443,26 @@ export async function analysePdf(
     let tex = decision?.tex ?? candidate.tex;
     let recognitionMethod: 'pdf-text' | 'pdf-geometry' | 'pdf-onnx' | 'user' =
       decision?.tex ? 'user' : 'pdf-text';
-    if (!tex && options.formulaRecognizer) {
-      const page = retainedPages.find(
-        ({ number }) => number === candidate.page,
-      );
-      const pixelWidth = Math.max(
-        1,
-        Math.ceil((page?.width ?? 1) * candidate.bounds.width * 2),
-      );
-      const pixelHeight = Math.max(
-        1,
-        Math.ceil((page?.height ?? 1) * candidate.bounds.height * 2),
-      );
-      const pixels = pixelWidth * pixelHeight;
-      if (
-        pixels > formulaLimits.maxCropPixels ||
-        recognizedCropPixels + pixels > formulaLimits.maxTotalCropPixels
-      ) {
-        warnings.push(formulaWarning('pdf-formula-limit-exceeded', candidate));
-        continue;
-      }
-      recognizedCropPixels += pixels;
-      try {
-        const recognized = await options.formulaRecognizer.recognize(
-          {
-            width: pixelWidth,
-            height: pixelHeight,
-            rgba: new Uint8ClampedArray(pixels * 4),
-          },
-          options.cancellation ? { cancellation: options.cancellation } : {},
-        );
-        tex = recognized.tex.trim() || undefined;
-        recognitionMethod = 'pdf-onnx';
-        if (
-          recognized.diagnostics?.tokens !== undefined &&
-          recognized.diagnostics.tokens > formulaLimits.maxRecognitionTokens
-        ) {
-          warnings.push(
-            formulaWarning('pdf-formula-limit-exceeded', candidate),
-          );
-          continue;
-        }
-        if (!tex) {
-          warnings.push(formulaWarning('pdf-formula-invalid-tex', candidate));
-          continue;
-        }
-        if (!isStructurallyValidTex(tex)) {
-          warnings.push(formulaWarning('pdf-formula-invalid-tex', candidate));
-          continue;
-        }
-      } catch {
-        warnings.push(
-          formulaWarning('pdf-formula-recognition-failed', candidate),
-        );
-        continue;
-      }
+    if (!tex && candidate.recognition) {
+      tex = candidate.recognition.tex.trim() || undefined;
+      recognitionMethod = 'pdf-onnx';
     }
     if (!tex) {
-      warnings.push(
-        formulaWarning('pdf-formula-recognition-unavailable', candidate),
-      );
+      const failureCode =
+        candidate.recognitionFailure === 'failed'
+          ? 'pdf-formula-recognition-failed'
+          : candidate.recognitionFailure === 'invalid-tex'
+            ? 'pdf-formula-invalid-tex'
+            : candidate.recognitionFailure === 'limit-exceeded'
+              ? 'pdf-formula-limit-exceeded'
+              : 'pdf-formula-recognition-unavailable';
+      warnings.push(formulaWarning(failureCode, candidate));
       continue;
     }
     const display =
       decision?.display ?? (candidate.kind === 'display' ? 'block' : 'inline');
+    const reviewConfidence =
+      candidate.recognition?.reviewConfidence ?? candidate.confidence;
     equations[candidate.id] = {
       id: candidate.id,
       source: { format: 'tex', value: tex },
@@ -510,13 +472,13 @@ export async function analysePdf(
       recognition: {
         method: recognitionMethod,
         confidence:
-          candidate.confidence === 'high'
+          reviewConfidence === 'high'
             ? 0.9
-            : candidate.confidence === 'medium'
+            : reviewConfidence === 'medium'
               ? 0.65
               : 0.35,
-        ...(recognitionMethod === 'pdf-onnx' && options.formulaRecognizer
-          ? { model: options.formulaRecognizer.implementation }
+        ...(recognitionMethod === 'pdf-onnx' && candidate.recognition
+          ? { model: candidate.recognition.model }
           : {}),
       },
       location: {
@@ -530,8 +492,7 @@ export async function analysePdf(
           ? 'edited'
           : decision?.accepted
             ? 'accepted'
-            : candidate.confidence === 'high' &&
-                recognitionMethod === 'pdf-text'
+            : reviewConfidence === 'high' && recognitionMethod === 'pdf-text'
               ? 'accepted'
               : 'unreviewed',
         ...(decision?.tex && candidate.tex
@@ -540,7 +501,7 @@ export async function analysePdf(
       },
     };
     semanticCandidates.push({ ...candidate, tex });
-    if (candidate.confidence !== 'high')
+    if (reviewConfidence !== 'high')
       warnings.push(formulaWarning('pdf-formula-low-confidence', candidate));
   }
   options.onProgress?.({
@@ -623,15 +584,6 @@ function formulaWarning(
     message: messages[code],
     details: { equationId: candidate.id, page: candidate.page },
   };
-}
-
-function isStructurallyValidTex(tex: string): boolean {
-  let braces = 0;
-  for (const character of tex) {
-    if (character === '{') braces++;
-    else if (character === '}' && --braces < 0) return false;
-  }
-  return braces === 0 && !tex.includes('\0');
 }
 
 function validateCrop(

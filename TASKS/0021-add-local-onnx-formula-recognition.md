@@ -1,6 +1,6 @@
 # 0021 Add local ONNX formula recognition
 
-Status: open
+Status: done
 Priority: high
 Subsystem: conversion
 Depends on: 0020
@@ -65,3 +65,17 @@ candidate that deterministic reconstruction cannot handle.
 - 2026-09-02 GitHub Copilot: Created from phase 2 of the PDF formula
   specification. RapidLatexOCR is the initial target; TexTeller remains behind
   the same interface and is tracked separately in `0025`.
+- 2026-09-02 GitHub Copilot: Started implementation. Verified the pinned
+  `inYourOwnBrowser/rapid-latex-ocr-onnx` mirror at revision
+  `0d0a23977b50433b07cdf95513ed7b7e45d3a761`; its three ONNX LFS hashes match
+  the specification sizes. RapidAI/RapidLaTeXOCR and pix2tex both use MIT.
+  Integration correction: recognition must run against an actual PDF.js crop
+  during extraction and carry its result into analysis; the phase-1 blank fake
+  image is only a test seam and must not reach the production adapter.
+- 2026-09-02 GitHub Copilot: Completed worker-local RapidLatexOCR recognition
+  with real bounded PDF.js crops, byte-level tokenizer decoding, strict KaTeX
+  validation, discrete review confidence, lazy WebGPU/WASM sessions, source-
+  preserving warnings, pinned same-origin assets, and explicit asset/model
+  verification commands. Validation passed 254 repository tests, strict type
+  checks, lint, formatting, production/static build checks, and bounded real
+  inference through all three ONNX graphs.

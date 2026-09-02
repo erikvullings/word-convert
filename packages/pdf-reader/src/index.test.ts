@@ -11,7 +11,7 @@ import {
   type RawPdfDocument,
   type RawPdfTextSpan,
 } from './index.ts';
-import { readImages, readSpans } from './pdfjs.ts';
+import { readImages, readSpans, recognizeFormulaCandidates } from './pdfjs.ts';
 
 async function fixture(name: string): Promise<Uint8Array> {
   return new Uint8Array(
@@ -60,6 +60,91 @@ function rawDocument(
 }
 
 describe('PDF layout analysis', () => {
+  it('recognizes complex formulas from bounded rendered pixels and disposes the crop', async () => {
+    const formula = span('x = √y', 0.22, 0.3, { width: 0.1 });
+    const candidate = createFormulaCandidates({
+      page: 1,
+      spans: [formula],
+    })[0]!;
+    const dispose = vi.fn();
+    const render = vi.fn(() => ({ promise: Promise.resolve() }));
+    const recognize = vi.fn(
+      async (image: {
+        width: number;
+        height: number;
+        rgba: Uint8ClampedArray;
+      }) => {
+        expect(dispose).toHaveBeenCalledOnce();
+        expect(image.width * image.height).toBeLessThanOrEqual(20_000);
+        expect(image.rgba[0]).toBe(160);
+        return { tex: '\\sqrt{y}', diagnostics: { tokens: 4 } };
+      },
+    );
+
+    const recognized = await recognizeFormulaCandidates(
+      {
+        getViewport: ({ scale }: { scale: number }) => ({
+          width: 600 * scale,
+          height: 800 * scale,
+        }),
+        render,
+      } as never,
+      [candidate],
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          readRgba: () => new Uint8ClampedArray(width * height * 4).fill(160),
+          encodePng: async () => new Uint8Array(),
+          dispose,
+        }),
+      },
+      { implementation: 'test-model', recognize },
+      {
+        maxCandidatesPerPage: 10,
+        maxCandidatesTotal: 10,
+        maxCropPixels: 20_000,
+        maxTotalCropPixels: 20_000,
+        maxRecognitionTokens: 10,
+      },
+    );
+
+    expect(render).toHaveBeenCalledOnce();
+    expect(recognize).toHaveBeenCalledOnce();
+    expect(recognized[0]?.recognition).toMatchObject({
+      tex: '\\sqrt{y}',
+      model: 'test-model',
+      reviewConfidence: expect.stringMatching(/^(?:low|medium|high)$/),
+    });
+  });
+
+  it('does not invoke recognition for deterministic formula candidates', async () => {
+    const formula = span('x = 5', 0.45, 0.3, { width: 0.1 });
+    const candidate = createFormulaCandidates({
+      page: 1,
+      spans: [formula],
+    })[0]!;
+    const recognize = vi.fn();
+
+    const recognized = await recognizeFormulaCandidates(
+      {} as never,
+      [candidate],
+      {} as never,
+      { implementation: 'test-model', recognize },
+      {
+        maxCandidatesPerPage: 10,
+        maxCandidatesTotal: 10,
+        maxCropPixels: 20_000,
+        maxTotalCropPixels: 20_000,
+        maxRecognitionTokens: 10,
+      },
+    );
+
+    expect(recognize).not.toHaveBeenCalled();
+    expect(recognized).toEqual([candidate]);
+  });
+
   it('constructs a semantic equation from simple PDF text geometry', async () => {
     const result = await analysePdf(
       rawDocument([
@@ -151,6 +236,7 @@ describe('PDF layout analysis', () => {
   });
 
   it('retains complex source text and warns when an injected recognizer fails', async () => {
+    const formula = span('x = √y', 0.22, 0.3, { width: 0.1 });
     const result = await analysePdf(
       rawDocument([
         {
@@ -158,20 +244,18 @@ describe('PDF layout analysis', () => {
           width: 600,
           height: 800,
           rotation: 0,
-          spans: [span('x = √y', 0.22, 0.3, { width: 0.1 })],
+          spans: [formula],
           links: [],
           images: [],
+          formulaCandidates: [
+            {
+              ...createFormulaCandidates({ page: 1, spans: [formula] })[0]!,
+              recognitionFailure: 'failed',
+            },
+          ],
         },
       ]),
-      {
-        conversionDate: '2026-09-02',
-        formulaRecognizer: {
-          implementation: 'test',
-          recognize: async () => {
-            throw new Error('recognizer unavailable');
-          },
-        },
-      },
+      { conversionDate: '2026-09-02' },
     );
 
     expect(result.model.equations).toEqual({});
@@ -185,6 +269,7 @@ describe('PDF layout analysis', () => {
   });
 
   it('retains source text when recognition exceeds the token limit', async () => {
+    const formula = span('x = √y', 0.22, 0.3, { width: 0.1 });
     const result = await analysePdf(
       rawDocument([
         {
@@ -192,21 +277,19 @@ describe('PDF layout analysis', () => {
           width: 600,
           height: 800,
           rotation: 0,
-          spans: [span('x = √y', 0.22, 0.3, { width: 0.1 })],
+          spans: [formula],
           links: [],
           images: [],
+          formulaCandidates: [
+            {
+              ...createFormulaCandidates({ page: 1, spans: [formula] })[0]!,
+              recognitionFailure: 'limit-exceeded',
+            },
+          ],
         },
       ]),
       {
         conversionDate: '2026-09-02',
-        formulaLimits: { maxRecognitionTokens: 2 },
-        formulaRecognizer: {
-          implementation: 'test',
-          recognize: async () => ({
-            tex: '\\sqrt{y}',
-            diagnostics: { tokens: 3 },
-          }),
-        },
       },
     );
 
@@ -220,6 +303,7 @@ describe('PDF layout analysis', () => {
   });
 
   it('retains source text when recognition returns malformed TeX', async () => {
+    const formula = span('x = √y', 0.22, 0.3, { width: 0.1 });
     const result = await analysePdf(
       rawDocument([
         {
@@ -227,17 +311,19 @@ describe('PDF layout analysis', () => {
           width: 600,
           height: 800,
           rotation: 0,
-          spans: [span('x = √y', 0.22, 0.3, { width: 0.1 })],
+          spans: [formula],
           links: [],
           images: [],
+          formulaCandidates: [
+            {
+              ...createFormulaCandidates({ page: 1, spans: [formula] })[0]!,
+              recognitionFailure: 'invalid-tex',
+            },
+          ],
         },
       ]),
       {
         conversionDate: '2026-09-02',
-        formulaRecognizer: {
-          implementation: 'test',
-          recognize: async () => ({ tex: '\\frac{x{y}' }),
-        },
       },
     );
 

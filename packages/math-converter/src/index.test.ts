@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import { convertOmml, renderFormula, type NormalizedMath } from './index.ts';
+import {
+  convertOmml,
+  isValidTex,
+  renderFormula,
+  type NormalizedMath,
+} from './index.ts';
 
 const wrap = (body: string) =>
   `<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${body}</m:oMath>`;
 const run = (text: string) => `<m:r><m:t>${text}</m:t></m:r>`;
 
 describe('OMML formula conversion', () => {
+  it('validates recognized TeX with strict safe KaTeX settings', () => {
+    expect(isValidTex('x^2 + \\frac{1}{y}')).toBe(true);
+    expect(isValidTex('\\frac{x{y}')).toBe(false);
+  });
   it('normalizes and serializes fractions, roots, scripts, matrices, and Unicode symbols', () => {
     const source = wrap(
       `<m:f><m:num>${run('α')}</m:num><m:den>${run('2')}</m:den></m:f>` +

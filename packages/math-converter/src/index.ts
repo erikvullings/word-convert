@@ -93,6 +93,21 @@ function renderTexSafely(tex: string, display: boolean): string {
   }
 }
 
+export function isValidTex(tex: string): boolean {
+  try {
+    katex.renderToString(tex, {
+      displayMode: false,
+      output: 'htmlAndMathml',
+      throwOnError: true,
+      strict: 'error',
+      trust: false,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 interface XmlElement {
   name: string;
   children: Array<XmlElement | string>;

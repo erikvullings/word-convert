@@ -1,0 +1,30 @@
+{
+  "name": "RapidLatexOCR ONNX",
+  "mirror": "inYourOwnBrowser/rapid-latex-ocr-onnx",
+  "revision": "0d0a23977b50433b07cdf95513ed7b7e45d3a761",
+  "canonicalUpstream": "RapidAI/RapidLaTeXOCR",
+  "originalProject": "lukas-blecher/LaTeX-OCR",
+  "license": "MIT",
+  "files": [
+    {
+      "path": "image_resizer.onnx",
+      "size": 38967751,
+      "sha256": "e0b075c39700f64d50400f39c8fc186bbb3b5d84d31864008313f376603aca9d"
+    },
+    {
+      "path": "encoder.onnx",
+      "size": 89008136,
+      "sha256": "01bf5dc25539ca0cd5b1bd29296ea495977a6ba5f629dc4178277809d26e5e7d"
+    },
+    {
+      "path": "decoder.onnx",
+      "size": 50952726,
+      "sha256": "bd695497bf1b22279b7626f5916c79226e1e244c84355f8da7edfd2d921d0072"
+    },
+    {
+      "path": "tokenizer.json",
+      "size": 24174,
+      "sha256": "1dc27b18d6a518d0d5ff3f4bb7bd98521fe80ad39e5b2a246d4109f1bb9d5019"
+    }
+  ]
+}

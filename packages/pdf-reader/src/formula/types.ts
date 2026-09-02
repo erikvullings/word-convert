@@ -43,6 +43,12 @@ export interface PdfFormulaCandidate {
   sources: PdfFormulaSource[];
   tex?: string;
   requiresRecognition: boolean;
+  recognition?: PdfFormulaRecognition & {
+    model: string;
+    reviewConfidence: PdfFormulaConfidence;
+  };
+  recognitionFailure?:
+    'unavailable' | 'failed' | 'invalid-tex' | 'limit-exceeded';
 }
 
 export interface PdfFormulaImage {

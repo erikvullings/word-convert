@@ -22,6 +22,7 @@ distributed in its browser bundle.
 | PDF.js (`pdfjs-dist`) | 6.2.108 | Apache-2.0 | Mozilla Foundation and PDF.js contributors | <https://github.com/mozilla/pdf.js> |
 | slimdown-js | 1.4.0 | MIT | Copyright (c) 2019 Erik Vullings | <https://github.com/erikvullings/slimdown-js> |
 | Docling Heron model | revision `8f39ad3` | Apache-2.0 | IBM Research and Docling contributors | <https://huggingface.co/docling-project/docling-layout-heron> |
+| RapidLatexOCR ONNX model | revision `0d0a23977b50433b07cdf95513ed7b7e45d3a761` | MIT | RapidAI, pix2tex, and model contributors | <https://huggingface.co/inYourOwnBrowser/rapid-latex-ocr-onnx> |
 
 DOMPurify is used under the Apache License 2.0 option. PDF.js, FlatBuffers, long,
 and the Docling Heron model are also used under Apache License 2.0. The reviewed
@@ -50,6 +51,11 @@ notices from the table above under these common terms:
 > CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 KaTeX's bundled fonts are covered by the KaTeX distribution licence.
+
+The RapidLatexOCR model files are unmodified copies from the named mirror. The
+mirror metadata declares MIT but its referenced licence file is absent at the
+pinned revision; the MIT licences of canonical upstream RapidAI/RapidLaTeXOCR
+and original `lukas-blecher/LaTeX-OCR` were reviewed as redistribution evidence.
 
 `guid-typescript` retains its ISC permission and warranty disclaimer. Its terms
 permit use, copying, modification, and distribution provided the copyright and
