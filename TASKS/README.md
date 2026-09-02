@@ -32,3 +32,21 @@
 ## Format expansion
 
 - [x] 0018 Add PDF import support
+
+## PDF formula recognition
+
+The production path is sequential: deterministic reader semantics first, then
+local model inference, review decisions, and browser hardening.
+
+- [x] 0019 Plan PDF formula recognition
+- [ ] 0020 Detect and reconstruct PDF formulas
+- [ ] 0021 Add local ONNX formula recognition *(needs 0020)*
+- [ ] 0022 Build formula review workflow *(needs 0021)*
+- [ ] 0023 Harden and tune PDF formula OCR *(needs 0022)*
+
+## Formula follow-ups
+
+These improvements are intentionally outside the initial production path.
+
+- [ ] 0024 Add manual PDF formula selection *(needs 0022)*
+- [ ] 0025 Benchmark alternative formula recognizers *(needs 0021)*
