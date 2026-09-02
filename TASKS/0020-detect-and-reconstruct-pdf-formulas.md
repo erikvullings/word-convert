@@ -1,6 +1,6 @@
 # 0020 Detect and reconstruct PDF formulas
 
-Status: open
+Status: done
 Priority: high
 Subsystem: conversion
 Depends on: 0019
@@ -74,3 +74,25 @@ introducing browser model assets or review UI.
   specification. First step is to inspect current display-equation extraction in
   `packages/pdf-reader/src/pdfjs.ts`, write focused failing tests for the formula
   domain, then make the smallest candidate-pipeline integration.
+- 2026-09-02 GitHub Copilot: Started implementation. Initial hypothesis: move
+  current region detection behind a public formula-domain candidate API while
+  preserving rendered-equation behavior, then integrate semantic equation
+  construction and fake recognition in narrow tested slices.
+- 2026-09-02 GitHub Copilot: Completed the deterministic formula domain in
+  `packages/pdf-reader/src/formula/`, including named scoring thresholds, math
+  font normalization, symbol/script features, simple TeX reconstruction,
+  page-bounded fusion, stable page/order IDs, Heron and tagged-structure
+  evidence, and browser-independent recognition/decision/limit contracts.
+  `packages/pdf-reader/src/pdfjs.ts` now preserves normalized baseline/ascent/
+  descent and carries Heron candidates separately from figure regions.
+  `packages/pdf-reader/src/index.ts` builds generic inline/block equations,
+  applies repeatable accept/edit/reject decisions, invokes only complex fake
+  recognizers, retains source text on every failure/limit path, and emits
+  targeted warnings. `packages/document-model/src/index.ts` now carries generic
+  display, recognition, PDF location, and review provenance. Review found and
+  fixed display equations being emitted as inline nodes, aggregate crop/token
+  limit gaps, and a centering calculation defect. Real raster crop pixels,
+  KaTeX validation, and ONNX runtime/model assets remain correctly owned by
+  `0021`; fixture-based threshold tuning remains `0023`. Verified 66 focused
+  PDF tests, 96 affected pipeline tests, all 245 repository tests, full type
+  checking, lint, formatting, and production build.

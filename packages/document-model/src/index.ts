@@ -194,6 +194,26 @@ export interface Equation {
   tex?: string;
   mathml?: string;
   conversionComplete: boolean;
+  display?: 'inline' | 'block';
+  recognition?: {
+    method: 'omml' | 'pdf-text' | 'pdf-geometry' | 'pdf-onnx' | 'user';
+    confidence?: number;
+    model?: string;
+  };
+  location?: {
+    kind: 'pdf';
+    page: number;
+    x: number;
+    top: number;
+    width: number;
+    height: number;
+    spanIds?: string[];
+    previewAssetId?: string;
+  };
+  review?: {
+    status: 'unreviewed' | 'accepted' | 'edited' | 'rejected';
+    originalTex?: string;
+  };
 }
 
 export interface Note {

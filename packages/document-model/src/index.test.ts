@@ -50,7 +50,24 @@ const model: DocumentModel = {
     equation1: {
       id: 'equation1',
       source: { format: 'omml', value: '<m:oMath />' },
+      tex: 'x^2',
       conversionComplete: false,
+      display: 'inline',
+      recognition: {
+        method: 'pdf-geometry',
+        confidence: 0.7,
+        model: 'test-recognizer',
+      },
+      location: {
+        kind: 'pdf',
+        page: 2,
+        x: 0.2,
+        top: 0.3,
+        width: 0.1,
+        height: 0.02,
+        spanIds: ['pdf-span-2-4'],
+      },
+      review: { status: 'edited', originalTex: 'x2' },
     },
   },
   notes: {

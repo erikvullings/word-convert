@@ -6,6 +6,7 @@ import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 import {
   analysePdf,
+  createFormulaCandidates,
   pdfJsReader,
   type RawPdfDocument,
   type RawPdfTextSpan,
@@ -59,6 +60,222 @@ function rawDocument(
 }
 
 describe('PDF layout analysis', () => {
+  it('constructs a semantic equation from simple PDF text geometry', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Before', 0.1, 0.3, { width: 0.08 }),
+            span('x = 5', 0.22, 0.3, { width: 0.1 }),
+            span('after.', 0.36, 0.3, { width: 0.08 }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-09-02' },
+    );
+
+    expect(result.model.equations['pdf-equation-p1-001']).toMatchObject({
+      tex: 'x = 5',
+      display: 'inline',
+      recognition: { method: 'pdf-text' },
+      location: { kind: 'pdf', page: 1 },
+    });
+    expect(result.model.blocks).toEqual([
+      expect.objectContaining({
+        type: 'paragraph',
+        children: [
+          expect.objectContaining({ type: 'text', text: 'Before' }),
+          { type: 'equation', equationId: 'pdf-equation-p1-001' },
+          expect.objectContaining({ type: 'text', text: 'after.' }),
+        ],
+      }),
+    ]);
+  });
+
+  it('restores source text when a deterministic formula decision rejects a candidate', async () => {
+    const page = {
+      number: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      spans: [span('x = 5', 0.22, 0.3, { width: 0.1 })],
+      links: [],
+      images: [],
+    };
+    const result = await analysePdf(rawDocument([page]), {
+      conversionDate: '2026-09-02',
+      formulaDecisions: {
+        'pdf-equation-p1-001': {
+          equationId: 'pdf-equation-p1-001',
+          decision: 'text',
+        },
+      },
+    });
+
+    expect(result.model.equations).toEqual({});
+    expect(result.model.blocks[0]).toMatchObject({
+      type: 'paragraph',
+      children: [expect.objectContaining({ type: 'text', text: 'x = 5' })],
+    });
+  });
+
+  it('constructs a block node for an isolated centered formula', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [span('x = 5', 0.45, 0.3, { width: 0.1 })],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-09-02' },
+    );
+
+    expect(result.model.blocks).toContainEqual({
+      type: 'equationBlock',
+      equationId: 'pdf-equation-p1-001',
+    });
+    expect(result.model.equations['pdf-equation-p1-001']?.display).toBe(
+      'block',
+    );
+  });
+
+  it('retains complex source text and warns when an injected recognizer fails', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [span('x = √y', 0.22, 0.3, { width: 0.1 })],
+          links: [],
+          images: [],
+        },
+      ]),
+      {
+        conversionDate: '2026-09-02',
+        formulaRecognizer: {
+          implementation: 'test',
+          recognize: async () => {
+            throw new Error('recognizer unavailable');
+          },
+        },
+      },
+    );
+
+    expect(result.model.equations).toEqual({});
+    expect(result.model.blocks[0]).toMatchObject({
+      type: 'paragraph',
+      children: [expect.objectContaining({ type: 'text', text: 'x = √y' })],
+    });
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({ code: 'pdf-formula-recognition-failed' }),
+    );
+  });
+
+  it('retains source text when recognition exceeds the token limit', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [span('x = √y', 0.22, 0.3, { width: 0.1 })],
+          links: [],
+          images: [],
+        },
+      ]),
+      {
+        conversionDate: '2026-09-02',
+        formulaLimits: { maxRecognitionTokens: 2 },
+        formulaRecognizer: {
+          implementation: 'test',
+          recognize: async () => ({
+            tex: '\\sqrt{y}',
+            diagnostics: { tokens: 3 },
+          }),
+        },
+      },
+    );
+
+    expect(result.model.equations).toEqual({});
+    expect(result.model.blocks[0]).toMatchObject({
+      children: [expect.objectContaining({ text: 'x = √y' })],
+    });
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({ code: 'pdf-formula-limit-exceeded' }),
+    );
+  });
+
+  it('retains source text when recognition returns malformed TeX', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [span('x = √y', 0.22, 0.3, { width: 0.1 })],
+          links: [],
+          images: [],
+        },
+      ]),
+      {
+        conversionDate: '2026-09-02',
+        formulaRecognizer: {
+          implementation: 'test',
+          recognize: async () => ({ tex: '\\frac{x{y}' }),
+        },
+      },
+    );
+
+    expect(result.model.equations).toEqual({});
+    expect(result.model.blocks[0]).toMatchObject({
+      children: [expect.objectContaining({ text: 'x = √y' })],
+    });
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({ code: 'pdf-formula-invalid-tex' }),
+    );
+  });
+
+  it('preserves extracted Heron evidence through deterministic analysis', async () => {
+    const formula = span('x = 5', 0.45, 0.3, { width: 0.1 });
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [formula],
+          links: [],
+          images: [],
+          formulaCandidates: [
+            {
+              ...createFormulaCandidates({ page: 1, spans: [formula] })[0]!,
+              sources: ['heron', 'geometry', 'symbols'],
+            },
+          ],
+        },
+      ]),
+      { conversionDate: '2026-09-02' },
+    );
+
+    expect(result.analysis.formulaCandidates?.[0]?.sources).toContain('heron');
+  });
+
   it('infers a multiline visible title instead of using an Office source filename', async () => {
     const raw = rawDocument(
       [
@@ -1414,7 +1631,7 @@ describe('PDF.js extraction helpers', () => {
             hasEOL: false,
           },
         ],
-        styles: { f1: { fontFamily: 'Times' } },
+        styles: { f1: { fontFamily: 'Times', ascent: 0.8, descent: -0.2 } },
         lang: null,
       } as never,
       [],
@@ -1428,6 +1645,9 @@ describe('PDF.js extraction helpers', () => {
       top: 0.1,
       width: 0.1,
       height: 0.2,
+      baseline: 0.1,
+      ascent: 0.04,
+      descent: -0.01,
     });
   });
 

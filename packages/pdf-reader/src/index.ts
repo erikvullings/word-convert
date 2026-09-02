@@ -15,6 +15,13 @@ import {
 } from '@wordconvert/document-model';
 import { PdfReadError } from './error.ts';
 import {
+  createFormulaCandidates,
+  type PdfFormulaCandidate,
+  type PdfFormulaDecision,
+  type PdfFormulaLimits,
+  type PdfFormulaRecognizer,
+} from './formula/index.ts';
+import {
   extractPdfWithPdfJs,
   type PdfFigureRasterizer,
   type PdfLayoutDetector,
@@ -28,6 +35,7 @@ export type {
   PdfLayoutLabel,
   PdfLayoutRegion,
 } from './pdfjs.ts';
+export * from './formula/index.ts';
 
 export { PdfReadError } from './error.ts';
 
@@ -40,6 +48,12 @@ export interface RawPdfTextSpan {
   top: number;
   width: number;
   height: number;
+  /** Page-relative transform-derived text baseline after page rotation. */
+  baseline?: number;
+  /** Page-relative font ascent when supplied by PDF.js. */
+  ascent?: number;
+  /** Page-relative font descent when supplied by PDF.js. */
+  descent?: number;
   fontId: string;
   fontFamily?: string;
   fontSize: number;
@@ -80,6 +94,7 @@ export interface RawPdfPage {
   spans: RawPdfTextSpan[];
   links: RawPdfLink[];
   images: RawPdfImage[];
+  formulaCandidates?: PdfFormulaCandidate[];
   taggedStructure?: RawPdfStructureNode;
 }
 
@@ -127,6 +142,9 @@ export interface PdfAnalysisOptions extends ConversionOptions {
   removedCandidateIds?: readonly string[];
   retainedCandidateIds?: readonly string[];
   styleMappings?: Readonly<Record<string, StyleMapping>>;
+  formulaDecisions?: Readonly<Record<string, PdfFormulaDecision>>;
+  formulaRecognizer?: PdfFormulaRecognizer;
+  formulaLimits?: Partial<PdfFormulaLimits>;
 }
 
 export interface PdfFurnitureCandidate {
@@ -146,6 +164,7 @@ export interface PdfAnalysisSummary {
   crop: PdfCropOptions;
   candidates: PdfFurnitureCandidate[];
   scannedPages: number[];
+  formulaCandidates?: PdfFormulaCandidate[];
 }
 
 export interface PdfAnalysisResult {
@@ -180,6 +199,14 @@ const DEFAULT_LIMITS: PdfReaderLimits = {
   maxImages: 10_000,
   maxImagePixels: 40_000_000,
   maxTotalImagePixels: 80_000_000,
+};
+
+export const DEFAULT_PDF_FORMULA_LIMITS: PdfFormulaLimits = {
+  maxCandidatesPerPage: 100,
+  maxCandidatesTotal: 1_000,
+  maxCropPixels: 4_000_000,
+  maxTotalCropPixels: 40_000_000,
+  maxRecognitionTokens: 512,
 };
 
 export const pdfJsReader: PdfReader = {
@@ -353,6 +380,169 @@ export async function analysePdf(
     message: 'Analysing PDF styles.',
   });
   const styles = await analyseStyles(lines, options.styleMappings, options);
+  const formulaLimits = {
+    ...DEFAULT_PDF_FORMULA_LIMITS,
+    ...options.formulaLimits,
+  };
+  const formulaCandidates: PdfFormulaCandidate[] = [];
+  let formulaLimitExceeded = false;
+  for (const page of retainedPages) {
+    const retainedSpanIds = new Set(page.spans.map(({ id }) => id));
+    const extractedCandidates = page.formulaCandidates?.filter(({ spanIds }) =>
+      spanIds.every((id) => retainedSpanIds.has(id)),
+    );
+    const roles = taggedRoles(page.taggedStructure);
+    const taggedFormulaSpanIds = new Set(
+      page.spans
+        .filter(
+          ({ markedContentId }) =>
+            markedContentId &&
+            /^(?:formula|math)$/i.test(roles.get(markedContentId) ?? ''),
+        )
+        .map(({ id }) => id),
+    );
+    const pageCandidates =
+      extractedCandidates && extractedCandidates.length > 0
+        ? extractedCandidates
+        : createFormulaCandidates({
+            page: page.number,
+            spans: page.spans,
+            taggedFormulaSpanIds,
+          });
+    if (pageCandidates.length > formulaLimits.maxCandidatesPerPage)
+      formulaLimitExceeded = true;
+    formulaCandidates.push(
+      ...pageCandidates.slice(0, formulaLimits.maxCandidatesPerPage),
+    );
+  }
+  if (formulaCandidates.length > formulaLimits.maxCandidatesTotal) {
+    formulaCandidates.length = formulaLimits.maxCandidatesTotal;
+    formulaLimitExceeded = true;
+  }
+  if (formulaLimitExceeded)
+    warnings.push({
+      code: 'pdf-formula-limit-exceeded',
+      severity: 'warning',
+      message:
+        'Some formula candidates exceeded the configured analysis limit and were retained as text.',
+      details: { candidates: formulaCandidates.length },
+    });
+  const semanticCandidates: PdfFormulaCandidate[] = [];
+  const equations: DocumentModel['equations'] = {};
+  let recognizedCropPixels = 0;
+  for (const candidate of formulaCandidates) {
+    await analysisCheckpoint(options);
+    const decision = options.formulaDecisions?.[candidate.id];
+    if (decision?.decision === 'text') continue;
+    let tex = decision?.tex ?? candidate.tex;
+    let recognitionMethod: 'pdf-text' | 'pdf-geometry' | 'pdf-onnx' | 'user' =
+      decision?.tex ? 'user' : 'pdf-text';
+    if (!tex && options.formulaRecognizer) {
+      const page = retainedPages.find(
+        ({ number }) => number === candidate.page,
+      );
+      const pixelWidth = Math.max(
+        1,
+        Math.ceil((page?.width ?? 1) * candidate.bounds.width * 2),
+      );
+      const pixelHeight = Math.max(
+        1,
+        Math.ceil((page?.height ?? 1) * candidate.bounds.height * 2),
+      );
+      const pixels = pixelWidth * pixelHeight;
+      if (
+        pixels > formulaLimits.maxCropPixels ||
+        recognizedCropPixels + pixels > formulaLimits.maxTotalCropPixels
+      ) {
+        warnings.push(formulaWarning('pdf-formula-limit-exceeded', candidate));
+        continue;
+      }
+      recognizedCropPixels += pixels;
+      try {
+        const recognized = await options.formulaRecognizer.recognize(
+          {
+            width: pixelWidth,
+            height: pixelHeight,
+            rgba: new Uint8ClampedArray(pixels * 4),
+          },
+          options.cancellation ? { cancellation: options.cancellation } : {},
+        );
+        tex = recognized.tex.trim() || undefined;
+        recognitionMethod = 'pdf-onnx';
+        if (
+          recognized.diagnostics?.tokens !== undefined &&
+          recognized.diagnostics.tokens > formulaLimits.maxRecognitionTokens
+        ) {
+          warnings.push(
+            formulaWarning('pdf-formula-limit-exceeded', candidate),
+          );
+          continue;
+        }
+        if (!tex) {
+          warnings.push(formulaWarning('pdf-formula-invalid-tex', candidate));
+          continue;
+        }
+        if (!isStructurallyValidTex(tex)) {
+          warnings.push(formulaWarning('pdf-formula-invalid-tex', candidate));
+          continue;
+        }
+      } catch {
+        warnings.push(
+          formulaWarning('pdf-formula-recognition-failed', candidate),
+        );
+        continue;
+      }
+    }
+    if (!tex) {
+      warnings.push(
+        formulaWarning('pdf-formula-recognition-unavailable', candidate),
+      );
+      continue;
+    }
+    const display =
+      decision?.display ?? (candidate.kind === 'display' ? 'block' : 'inline');
+    equations[candidate.id] = {
+      id: candidate.id,
+      source: { format: 'tex', value: tex },
+      tex,
+      conversionComplete: true,
+      display,
+      recognition: {
+        method: recognitionMethod,
+        confidence:
+          candidate.confidence === 'high'
+            ? 0.9
+            : candidate.confidence === 'medium'
+              ? 0.65
+              : 0.35,
+        ...(recognitionMethod === 'pdf-onnx' && options.formulaRecognizer
+          ? { model: options.formulaRecognizer.implementation }
+          : {}),
+      },
+      location: {
+        kind: 'pdf',
+        page: candidate.page,
+        ...candidate.bounds,
+        spanIds: candidate.spanIds,
+      },
+      review: {
+        status: decision?.tex
+          ? 'edited'
+          : decision?.accepted
+            ? 'accepted'
+            : candidate.confidence === 'high' &&
+                recognitionMethod === 'pdf-text'
+              ? 'accepted'
+              : 'unreviewed',
+        ...(decision?.tex && candidate.tex
+          ? { originalTex: candidate.tex }
+          : {}),
+      },
+    };
+    semanticCandidates.push({ ...candidate, tex });
+    if (candidate.confidence !== 'high')
+      warnings.push(formulaWarning('pdf-formula-low-confidence', candidate));
+  }
   options.onProgress?.({
     phase: 'analyse',
     completed: raw.pages.length * 2 + 3,
@@ -360,7 +550,15 @@ export async function analysePdf(
     message: 'Building the document.',
   });
   const blocks = normalizePdfLists(
-    normalizePdfToc(await linesToBlocks(lines, styles, retainedPages, options)),
+    normalizePdfToc(
+      await linesToBlocks(
+        lines,
+        styles,
+        retainedPages,
+        options,
+        semanticCandidates,
+      ),
+    ),
   );
   return {
     model: {
@@ -382,7 +580,7 @@ export async function analysePdf(
           ]),
         ),
       ),
-      equations: {},
+      equations,
       notes: {},
       styles,
       warnings,
@@ -393,8 +591,47 @@ export async function analysePdf(
       crop,
       candidates,
       scannedPages,
+      formulaCandidates,
     },
   };
+}
+
+function formulaWarning(
+  code:
+    | 'pdf-formula-recognition-unavailable'
+    | 'pdf-formula-recognition-failed'
+    | 'pdf-formula-low-confidence'
+    | 'pdf-formula-invalid-tex'
+    | 'pdf-formula-limit-exceeded',
+  candidate: PdfFormulaCandidate,
+): ConversionWarning {
+  const messages = {
+    'pdf-formula-recognition-unavailable':
+      'A complex formula requires recognition and was retained as source text.',
+    'pdf-formula-recognition-failed':
+      'Formula recognition failed and the source content was retained.',
+    'pdf-formula-low-confidence':
+      'A detected formula has low confidence and should be reviewed.',
+    'pdf-formula-invalid-tex':
+      'Formula recognition returned no usable TeX and the source content was retained.',
+    'pdf-formula-limit-exceeded':
+      'A formula crop exceeded the configured resource limit and was retained as source text.',
+  } as const;
+  return {
+    code,
+    severity: 'warning',
+    message: messages[code],
+    details: { equationId: candidate.id, page: candidate.page },
+  };
+}
+
+function isStructurallyValidTex(tex: string): boolean {
+  let braces = 0;
+  for (const character of tex) {
+    if (character === '{') braces++;
+    else if (character === '}' && --braces < 0) return false;
+  }
+  return braces === 0 && !tex.includes('\0');
 }
 
 function validateCrop(
@@ -928,6 +1165,7 @@ async function linesToBlocks(
   styles: readonly AnalysedStyle[],
   pages: readonly RawPdfPage[],
   options: PdfAnalysisOptions,
+  formulaCandidates: readonly PdfFormulaCandidate[] = [],
 ): Promise<BlockNode[]> {
   const mapping = new Map(
     styles.map(({ id, proposedMapping }) => [id, proposedMapping]),
@@ -996,6 +1234,28 @@ async function linesToBlocks(
       const line = pageLines[index];
       if (!line) continue;
       if (processed++ % 250 === 0) await analysisCheckpoint(options);
+      const lineFormulaCandidates = formulaCandidates.filter(
+        (candidate) =>
+          candidate.page === line.page &&
+          candidate.spanIds.some((id) =>
+            line.spans.some((span) => span.id === id),
+          ),
+      );
+      const displayFormula = lineFormulaCandidates.find(
+        (candidate) =>
+          candidate.kind === 'display' &&
+          line.spans
+            .filter(({ text }) => !/^\(\d+[a-z]?\)$/i.test(text.trim()))
+            .every((span) => candidate.spanIds.includes(span.id)),
+      );
+      if (displayFormula) {
+        blocks.push({
+          type: 'equationBlock',
+          equationId: displayFormula.id,
+        });
+        previousLine = line;
+        continue;
+      }
       const id = styleId(line);
       const mapped = mapping.get(id) ?? 'body';
       if (mapped !== 'ignore') {
@@ -1003,6 +1263,7 @@ async function linesToBlocks(
           line,
           page.links,
           equationHosts.get(line) ?? [],
+          lineFormulaCandidates,
         );
         const taggedRole = taggedRoleForLine(rolesByMarkedContentId, line);
         const taggedHeading = /^H([1-6])$/i.exec(taggedRole ?? '');
@@ -1149,16 +1410,32 @@ function lineInlines(
   line: PdfLine,
   links: readonly RawPdfLink[],
   equations: readonly RawPdfImage[] = [],
+  formulaCandidates: readonly PdfFormulaCandidate[] = [],
 ): InlineNode[] {
   const output: InlineNode[] = [];
   let previous: RawPdfTextSpan | undefined;
-  const items: Array<RawPdfTextSpan | RawPdfImage> = [
+  const formulaSpanIds = new Set(
+    formulaCandidates.flatMap(({ spanIds }) => spanIds),
+  );
+  const items: Array<RawPdfTextSpan | RawPdfImage | PdfFormulaCandidate> = [
     ...line.spans.filter(
-      (span) => !equations.some((image) => intersectsBounds(span, image)),
+      (span) =>
+        !formulaSpanIds.has(span.id) &&
+        !equations.some((image) => intersectsBounds(span, image)),
     ),
     ...equations,
-  ].sort((left, right) => left.x - right.x);
+    ...formulaCandidates,
+  ].sort(
+    (left, right) =>
+      ('bounds' in left ? left.bounds.x : left.x) -
+      ('bounds' in right ? right.bounds.x : right.x),
+  );
   for (const item of items) {
+    if ('features' in item) {
+      output.push({ type: 'equation', equationId: item.id });
+      previous = undefined;
+      continue;
+    }
     if ('pixelWidth' in item) {
       output.push({
         type: 'image',

@@ -1,0 +1,205 @@
+import type { RawPdfTextSpan } from '../index.ts';
+import { extractMathFeatures, PDF_FORMULA_THRESHOLDS } from './features.ts';
+import { reconstructSimpleTex } from './reconstruct.ts';
+import type {
+  PdfBounds,
+  PdfFormulaCandidate,
+  PdfFormulaSource,
+} from './types.ts';
+
+interface LayoutRegion extends PdfBounds {
+  label: string;
+  confidence: number;
+}
+
+export function createFormulaCandidates(input: {
+  page: number;
+  spans: readonly RawPdfTextSpan[];
+  layoutRegions?: readonly LayoutRegion[];
+  taggedFormulaSpanIds?: ReadonlySet<string>;
+}): PdfFormulaCandidate[] {
+  const groups = geometryGroups(input.spans).filter(isFormulaGroup);
+  const proposals = groups.map((spans) =>
+    candidate(input.page, spans, undefined, input.taggedFormulaSpanIds),
+  );
+  for (const region of input.layoutRegions ?? []) {
+    if (
+      region.label !== 'formula' ||
+      region.confidence < PDF_FORMULA_THRESHOLDS.heronConfidence
+    )
+      continue;
+    const spans = input.spans.filter((span) => intersects(span, region));
+    if (spans.length > 0)
+      proposals.push(
+        candidate(input.page, spans, region, input.taggedFormulaSpanIds),
+      );
+  }
+  const fused: PdfFormulaCandidate[] = [];
+  for (const proposal of proposals.sort(comparePosition)) {
+    const existing = fused.find(
+      ({ bounds }) =>
+        coverage(bounds, proposal.bounds) >=
+          PDF_FORMULA_THRESHOLDS.fusionCoverage ||
+        coverage(proposal.bounds, bounds) >=
+          PDF_FORMULA_THRESHOLDS.fusionCoverage,
+    );
+    if (!existing) fused.push(proposal);
+    else mergeCandidate(existing, proposal);
+  }
+  return fused.sort(comparePosition).map((value, index) => ({
+    ...value,
+    id: `pdf-equation-p${input.page}-${String(index + 1).padStart(3, '0')}`,
+  }));
+}
+
+export function padFormulaBounds(
+  bounds: PdfBounds,
+  padding = 0.008,
+): PdfBounds {
+  const x = Math.max(0, bounds.x - padding);
+  const top = Math.max(0, bounds.top - padding);
+  const right = Math.min(1, bounds.x + bounds.width + padding);
+  const bottom = Math.min(1, bounds.top + bounds.height + padding);
+  return { x, top, width: right - x, height: bottom - top };
+}
+
+function geometryGroups(spans: readonly RawPdfTextSpan[]): RawPdfTextSpan[][] {
+  const sorted = [...spans]
+    .filter(({ text }) => text.trim())
+    .sort((left, right) => left.top - right.top || left.x - right.x);
+  const inlineRuns = sorted
+    .filter(({ text }) => /[A-Za-z0-9Α-ω]\s*[=<>≤≥]\s*[^\s]/u.test(text))
+    .map((span) => [span]);
+  const groups: RawPdfTextSpan[][] = [];
+  for (const span of sorted) {
+    const group = groups.findLast((candidate) => {
+      const bounds = boundsOf(candidate);
+      return (
+        Math.abs(span.top - bounds.top) <= 0.025 &&
+        span.x - (bounds.x + bounds.width) <= 0.04
+      );
+    });
+    if (group) group.push(span);
+    else groups.push([span]);
+  }
+  return [...inlineRuns, ...groups];
+}
+
+function isFormulaGroup(spans: readonly RawPdfTextSpan[]): boolean {
+  const text = spans.map(({ text }) => text).join(' ');
+  const features = extractMathFeatures(spans, { isolated: true });
+  return (
+    /[=<>≤≥]/u.test(text) &&
+    !/^\s*[A-Za-z]{3,}(?:\s+[A-Za-z]{3,})+\s*$/u.test(text) &&
+    (features.score >= 1.5 || /[+\-−×÷*/]/u.test(text))
+  );
+}
+
+function candidate(
+  page: number,
+  spans: readonly RawPdfTextSpan[],
+  heron?: LayoutRegion,
+  taggedFormulaSpanIds?: ReadonlySet<string>,
+): PdfFormulaCandidate {
+  const formulaSpans = spans.filter(
+    ({ text }) => !/^\(\d+[a-z]?\)$/i.test(text.trim()),
+  );
+  const features = extractMathFeatures(formulaSpans, {
+    isolated: true,
+    ...(heron ? { heronFormulaConfidence: heron.confidence } : {}),
+  });
+  const tex = reconstructSimpleTex(formulaSpans);
+  const sources: PdfFormulaSource[] = [
+    ...(heron ? (['heron'] as const) : []),
+    'geometry',
+    ...(features.mathFontRatio > 0 ? (['font'] as const) : []),
+    ...(features.operatorRatio + features.greekRatio + features.symbolRatio > 0
+      ? (['symbols'] as const)
+      : []),
+    ...(formulaSpans.some(({ id }) => taggedFormulaSpanIds?.has(id))
+      ? (['tagged-structure'] as const)
+      : []),
+  ];
+  return {
+    id: '',
+    page,
+    kind: heron || features.centered ? 'display' : 'inline',
+    bounds: padFormulaBounds(boundsOf(formulaSpans)),
+    spanIds: formulaSpans.map(({ id }) => id),
+    features,
+    score: features.score,
+    confidence: features.confidence,
+    sources: [...new Set(sources)],
+    ...(tex ? { tex } : {}),
+    requiresRecognition: tex === undefined,
+  };
+}
+
+function mergeCandidate(
+  target: PdfFormulaCandidate,
+  source: PdfFormulaCandidate,
+): void {
+  target.bounds = union(target.bounds, source.bounds);
+  target.spanIds = [...new Set([...target.spanIds, ...source.spanIds])];
+  target.sources = [...new Set([...target.sources, ...source.sources])];
+  if (source.score > target.score) {
+    target.features = source.features;
+    target.score = source.score;
+    target.confidence = source.confidence;
+  }
+  target.kind =
+    target.kind === 'display' || source.kind === 'display'
+      ? 'display'
+      : target.kind;
+}
+
+function boundsOf(spans: readonly RawPdfTextSpan[]): PdfBounds {
+  const x = Math.min(...spans.map((span) => span.x));
+  const top = Math.min(...spans.map((span) => span.top));
+  const right = Math.max(...spans.map((span) => span.x + span.width));
+  const bottom = Math.max(...spans.map((span) => span.top + span.height));
+  return { x, top, width: right - x, height: bottom - top };
+}
+
+function intersects(left: PdfBounds, right: PdfBounds): boolean {
+  return (
+    left.x < right.x + right.width &&
+    left.x + left.width > right.x &&
+    left.top < right.top + right.height &&
+    left.top + left.height > right.top
+  );
+}
+
+function coverage(target: PdfBounds, covering: PdfBounds): number {
+  const width = Math.max(
+    0,
+    Math.min(target.x + target.width, covering.x + covering.width) -
+      Math.max(target.x, covering.x),
+  );
+  const height = Math.max(
+    0,
+    Math.min(target.top + target.height, covering.top + covering.height) -
+      Math.max(target.top, covering.top),
+  );
+  return (
+    (width * height) / Math.max(target.width * target.height, Number.EPSILON)
+  );
+}
+
+function union(left: PdfBounds, right: PdfBounds): PdfBounds {
+  const x = Math.min(left.x, right.x);
+  const top = Math.min(left.top, right.top);
+  return {
+    x,
+    top,
+    width: Math.max(left.x + left.width, right.x + right.width) - x,
+    height: Math.max(left.top + left.height, right.top + right.height) - top,
+  };
+}
+
+function comparePosition(
+  left: PdfFormulaCandidate,
+  right: PdfFormulaCandidate,
+): number {
+  return left.bounds.top - right.bounds.top || left.bounds.x - right.bounds.x;
+}

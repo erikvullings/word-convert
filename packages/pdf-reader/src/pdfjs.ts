@@ -28,6 +28,7 @@ import type {
   RawPdfTextSpan,
 } from './index.ts';
 import { PdfReadError } from './error.ts';
+import { createFormulaCandidates } from './formula/index.ts';
 import { rgbaToPng } from './png.ts';
 
 export interface PdfReaderLimits {
@@ -359,6 +360,11 @@ async function readPage(
   const figureRegions = images.filter(
     ({ source }) => source === 'rendered-figure',
   );
+  const formulaCandidates = createFormulaCandidates({
+    page: pageNumber,
+    spans,
+    layoutRegions,
+  });
   return {
     number: pageNumber,
     width: viewport.width,
@@ -369,6 +375,7 @@ async function readPage(
     ),
     links,
     images,
+    ...(formulaCandidates.length > 0 ? { formulaCandidates } : {}),
     ...(structure ? { taggedStructure: readStructure(structure) } : {}),
   };
 }
@@ -431,6 +438,13 @@ export function readSpans(
       top,
       width,
       height,
+      baseline: clamp(transform[5] / pageHeight),
+      ...(typeof style?.ascent === 'number'
+        ? { ascent: (style.ascent * fontHeight) / pageHeight }
+        : {}),
+      ...(typeof style?.descent === 'number'
+        ? { descent: (style.descent * fontHeight) / pageHeight }
+        : {}),
       fontId: stableFontId(fontFamily, fontSignature),
       ...(fontFamily ? { fontFamily } : {}),
       fontSize: fontHeight,
@@ -630,7 +644,11 @@ export async function readImages(
     }
   }
   if (!figureRasterizer) return images;
-  const equations = displayEquationRegions(spans);
+  const equations = displayEquationRegions(
+    spans,
+    layoutRegions,
+    page.pageNumber,
+  );
   const regions = figureRegions(
     vectorBounds,
     images,
@@ -960,7 +978,16 @@ function expandToNearbyLabel(
 
 function displayEquationRegions(
   spans: readonly RawPdfTextSpan[],
+  layoutRegions: readonly PdfLayoutRegion[] = [],
+  page = 1,
 ): NormalizedBounds[] {
+  const learnedAndDeterministic = createFormulaCandidates({
+    page,
+    spans,
+    layoutRegions,
+  })
+    .filter(({ sources }) => sources.includes('heron'))
+    .map(({ bounds }) => bounds);
   const equationRegions = spans
     .filter(
       (span) =>
@@ -1019,7 +1046,11 @@ function displayEquationRegions(
         ? []
         : [region];
     });
-  return [...equationRegions, ...radicalRegions].filter(
+  return [
+    ...learnedAndDeterministic,
+    ...equationRegions,
+    ...radicalRegions,
+  ].filter(
     (region, index, regions) =>
       regions.findIndex(
         (candidate) =>
