@@ -86,6 +86,7 @@
   --muted: #5b6761;
   --accent: #006b55;
   --line: #d4d8d0;
+  --error: #a32828;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
   background: var(--page);
   color: var(--ink);
@@ -99,6 +100,7 @@
   --muted: #aab7b0;
   --accent: #74d9bd;
   --line: #39443e;
+  --error: #ffb4ab;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -109,6 +111,7 @@
     --muted: #aab7b0;
     --accent: #74d9bd;
     --line: #39443e;
+    --error: #ffb4ab;
   }
 }
 
@@ -1200,6 +1203,192 @@ h1 {
 .editor :is(input, select, textarea, button):focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 2px;
+}
+
+.formula-review {
+  min-width: 0;
+}
+
+.formula-review-header,
+.formula-review-actions,
+.formula-review-navigation,
+.formula-review-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.formula-review-header {
+  justify-content: space-between;
+}
+
+.formula-review-header h3,
+.formula-review-detail h4 {
+  margin: 0;
+}
+
+.formula-review-filters button[aria-pressed='true'] {
+  color: var(--surface);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.formula-review-layout {
+  display: grid;
+  grid-template-columns: minmax(15rem, 0.7fr) minmax(24rem, 1.3fr);
+  gap: 1.25rem;
+  min-width: 0;
+}
+
+.formula-review-list {
+  display: grid;
+  align-content: start;
+  gap: 0.65rem;
+  max-height: 42rem;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.formula-review-card {
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr);
+  gap: 0.35rem 0.75rem;
+  width: 100%;
+  min-height: 8rem;
+  padding: 0.75rem;
+  color: inherit;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+}
+
+.formula-review-card[aria-current='true'] {
+  border-left: 0.3rem solid var(--accent);
+  background: var(--page);
+}
+
+.formula-review-card
+  > :not(.formula-source-crop):not(.formula-source-placeholder) {
+  grid-column: 2;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.formula-source-placeholder {
+  grid-row: 1 / span 7;
+  align-self: stretch;
+  padding: 0.5rem;
+  color: var(--muted);
+  background: var(--page);
+  border: 1px dashed var(--line);
+}
+
+.formula-safe-preview {
+  min-height: 2.25rem;
+  overflow: auto hidden;
+}
+
+.formula-review-detail {
+  display: grid;
+  align-content: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  min-width: 0;
+}
+
+.formula-source-panel,
+.formula-render-panel,
+.formula-tex-field,
+.formula-review-actions,
+.formula-review-navigation,
+.formula-validation-error {
+  min-width: 0;
+}
+
+.formula-source-panel,
+.formula-render-panel {
+  display: grid;
+  align-content: start;
+  gap: 0.65rem;
+}
+
+.formula-render-panel {
+  min-height: 10rem;
+  padding: 1rem;
+  background: var(--page);
+  border-left: 0.25rem solid var(--accent);
+}
+
+.formula-source-crop {
+  position: relative;
+  width: 100%;
+  max-height: 18rem;
+  overflow: hidden;
+  background: white;
+  border: 1px solid var(--line);
+}
+
+.formula-source-crop img {
+  position: absolute;
+  max-width: none;
+  height: auto;
+}
+
+.formula-source-crop--compact {
+  grid-row: 1 / span 7;
+  width: 5rem;
+  min-height: 5rem;
+}
+
+.formula-tex-field {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 0.4rem;
+}
+
+.formula-tex-field textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.formula-review-actions,
+.formula-review-navigation,
+.formula-validation-error {
+  grid-column: 1 / -1;
+}
+
+.formula-review-navigation {
+  justify-content: space-between;
+}
+
+.formula-validation-error,
+.formula-card-warning {
+  color: var(--error);
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .formula-review-layout,
+  .formula-review-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .formula-review-list {
+    max-height: 19rem;
+  }
+
+  .formula-render-panel,
+  .formula-tex-field,
+  .formula-review-actions,
+  .formula-review-navigation,
+  .formula-validation-error {
+    grid-column: 1;
+  }
 }
 
 .style-review-list {

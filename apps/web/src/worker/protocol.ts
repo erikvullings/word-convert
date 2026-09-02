@@ -11,6 +11,7 @@ import type { ConversionMode } from '../output.ts';
 import type {
   PdfAnalysisSummary,
   PdfCropOptions,
+  PdfFormulaDecision,
 } from '@wordconvert/pdf-reader';
 
 export interface PdfWorkerOptions {
@@ -19,6 +20,7 @@ export interface PdfWorkerOptions {
   removeDetectedFurniture?: boolean;
   removedCandidateIds?: string[];
   retainedCandidateIds?: string[];
+  formulaDecisions?: Readonly<Record<string, PdfFormulaDecision>>;
 }
 
 export type WorkerRequest =

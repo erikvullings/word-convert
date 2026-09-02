@@ -108,6 +108,10 @@ export function isValidTex(tex: string): boolean {
   }
 }
 
+export function renderTex(tex: string, display = false): string {
+  return renderTexSafely(tex, display);
+}
+
 interface XmlElement {
   name: string;
   children: Array<XmlElement | string>;

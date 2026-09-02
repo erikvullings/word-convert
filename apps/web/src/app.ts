@@ -28,6 +28,7 @@ import {
   WORKFLOW_STAGES,
   type AppState,
   type DownloadOutput,
+  type FormulaReviewFilter,
   type PreviewMode,
   type ThemePreference,
 } from './state.ts';
@@ -43,6 +44,8 @@ import { writeMarkdown } from '@wordconvert/markdown-writer';
 import { writeHtml } from '@wordconvert/html-writer';
 import { previewSanitizeConfig, warningDestination } from './preview/index.ts';
 import type { HtmlOutputMode, MarkdownOutputMode } from './output.ts';
+import type { PdfFormulaDecision } from '@wordconvert/pdf-reader';
+import { formulaReviewEditor } from './formula-review.ts';
 
 const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
   id: mapping,
@@ -91,6 +94,15 @@ export interface AppController {
   setPdfSamplePageCount?(pageCount: number): void;
   rescanPdfSample?(): void;
   setPdfCandidateRemoval?(candidateId: string, remove: boolean): void;
+  setFormulaDecision?(decision: PdfFormulaDecision): void;
+  setFormulaReviewFilter?(filter: FormulaReviewFilter): void;
+  selectFormula?(equationId: string): void;
+  setFormulaDraft?(equationId: string, tex: string): void;
+  saveFormulaEdit?(equationId: string): void;
+  resetFormulaEdit?(equationId: string): void;
+  rejectFormula?(equationId: string): void;
+  acceptFormula?(equationId: string): void;
+  acceptHighConfidenceFormulas?(): void;
   setPdfAutomaticFurnitureRemoval?(remove: boolean): void;
   setPresetText(value: string): void;
   importPreset(): void;
@@ -277,6 +289,7 @@ function stageContent(controller: AppController): m.Children {
   const state = controller.state;
   if (state.review === 'styles') return styleEditor(controller);
   if (state.review === 'metadata') return metadataEditor(controller);
+  if (state.review === 'formula') return formulaReviewEditor(controller);
   if (state.stage === 1) return outputChooser(controller);
   if (state.stage === 2) return preview(controller);
   return downloadPanel(controller);
@@ -304,6 +317,22 @@ function outputChooser(controller: AppController): m.Vnode {
         : 'Analysis is complete. Choose how you want to use the document.',
     ),
     requiresFullPdfAnalysis ? pdfImportEditor(controller) : null,
+    !requiresFullPdfAnalysis && hasFormulas
+      ? m(
+          'button.formula-review-entry',
+          {
+            type: 'button',
+            onclick: () => {
+              const first = state.pdfAnalysis?.formulaCandidates?.find(
+                ({ id }) => state.model?.equations[id],
+              );
+              if (first) state.formulaReviewSelectedId = first.id;
+              openReview(state, 'formula');
+            },
+          },
+          'Review formulas',
+        )
+      : null,
     requiresFullPdfAnalysis
       ? null
       : m(
@@ -1442,6 +1471,7 @@ function warningPanel(controller: AppController): m.Vnode | null {
                               controller.state,
                               destination,
                               warningStyleId(warning),
+                              warningEquationId(warning),
                             ),
                         },
                         warningReviewLabel(
@@ -1487,6 +1517,11 @@ function warningStyleId(warning: ConversionWarning): string | undefined {
   return typeof styleId === 'string' ? styleId : undefined;
 }
 
+function warningEquationId(warning: ConversionWarning): string | undefined {
+  const equationId = warning.details?.equationId;
+  return typeof equationId === 'string' ? equationId : undefined;
+}
+
 function warningReviewLabel(
   state: AppState,
   warning: ConversionWarning,
@@ -1506,14 +1541,37 @@ function warningReviewLabel(
   return 'Review metadata';
 }
 
-function navigateToWarning(
+export function navigateToWarning(
   state: AppState,
   destination: NonNullable<ReturnType<typeof warningDestination>>,
   styleId?: string,
+  equationId?: string,
 ): void {
-  if (destination === 'styles' || destination === 'metadata') {
+  if (
+    destination === 'styles' ||
+    destination === 'metadata' ||
+    destination === 'formula'
+  ) {
     openReview(state, destination);
-    if (destination === 'styles' && styleId)
+    if (destination === 'formula') {
+      state.formulaReviewFilter = 'all';
+      const selectedId =
+        equationId ??
+        state.pdfAnalysis?.formulaCandidates?.find(
+          ({ id }) => state.model?.equations[id],
+        )?.id;
+      if (selectedId) state.formulaReviewSelectedId = selectedId;
+      else delete state.formulaReviewSelectedId;
+      if (typeof document !== 'undefined')
+        queueMicrotask(() =>
+          document
+            .querySelector<HTMLTextAreaElement>(
+              '.formula-review-detail textarea',
+            )
+            ?.focus(),
+        );
+    }
+    if (destination === 'styles' && styleId && typeof document !== 'undefined')
       queueMicrotask(() =>
         document
           .getElementById(`style-mapping-${styleId}`)
@@ -1763,7 +1821,10 @@ function metadataEditor(controller: AppController): m.Vnode {
   ]);
 }
 
-function openReview(state: AppState, review: 'styles' | 'metadata'): void {
+function openReview(
+  state: AppState,
+  review: 'styles' | 'metadata' | 'formula',
+): void {
   state.review = review;
   if (typeof history !== 'undefined') {
     history.pushState(

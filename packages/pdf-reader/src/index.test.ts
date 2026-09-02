@@ -210,6 +210,50 @@ describe('PDF layout analysis', () => {
     });
   });
 
+  it('preserves original recognized TeX when a user edit reruns analysis', async () => {
+    const formula = span('x = √y', 0.22, 0.3, { width: 0.1 });
+    const detected = createFormulaCandidates({ page: 1, spans: [formula] })[0]!;
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [formula],
+          links: [],
+          images: [],
+          formulaCandidates: [
+            {
+              ...detected,
+              recognition: {
+                tex: '\\sqrt{y}',
+                model: 'rapid-latex-ocr-onnx',
+                reviewConfidence: 'medium',
+              },
+            },
+          ],
+        },
+      ]),
+      {
+        conversionDate: '2026-09-02',
+        formulaDecisions: {
+          [detected.id]: {
+            equationId: detected.id,
+            decision: 'formula',
+            tex: '\\sqrt{y} + 1',
+          },
+        },
+      },
+    );
+
+    expect(result.model.equations[detected.id]).toMatchObject({
+      tex: '\\sqrt{y} + 1',
+      recognition: { method: 'user' },
+      review: { status: 'edited', originalTex: '\\sqrt{y}' },
+    });
+  });
+
   it('constructs a block node for an isolated centered formula', async () => {
     const result = await analysePdf(
       rawDocument([

@@ -41,7 +41,7 @@ local model inference, review decisions, and browser hardening.
 - [x] 0019 Plan PDF formula recognition
 - [x] 0020 Detect and reconstruct PDF formulas
 - [x] 0021 Add local ONNX formula recognition *(needs 0020)*
-- [ ] 0022 Build formula review workflow *(needs 0021)*
+- [x] 0022 Build formula review workflow *(needs 0021)*
 - [ ] 0023 Harden and tune PDF formula OCR *(needs 0022)*
 
 ## Formula follow-ups

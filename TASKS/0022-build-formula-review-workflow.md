@@ -1,6 +1,6 @@
 # 0022 Build formula review workflow
 
-Status: open
+Status: done
 Priority: high
 Subsystem: frontend
 Depends on: 0021
@@ -66,3 +66,11 @@ deterministically, analogous to existing cleanup decisions.
 - 2026-09-02 GitHub Copilot: Created from phase 3 of the PDF formula
   specification. Begin at the existing rerunnable PDF cleanup decision flow and
   warning routing, then add tests for decision persistence before visual UI work.
+- 2026-09-02 GitHub Copilot: Added the dedicated Formula Review editor with
+  typed in-memory decisions, filters, source-region comparison, strict KaTeX
+  previews, edit/reset/reject/accept commands, keyboard controls, warning
+  navigation, and responsive layouts. PDF analysis reruns preserve decisions
+  during partial analyses and deterministically prune disappeared candidates and
+  their UI state only after complete analyses. Focused controller, UI, reader,
+  and type checks pass; the production component was also mounted in the live
+  Vite app at desktop and narrow viewports with no console errors or overflow.

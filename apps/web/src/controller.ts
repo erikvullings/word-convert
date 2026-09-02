@@ -38,6 +38,7 @@ import { saveDownload } from './download/index.ts';
 import { withMarkdownContent } from './content-editor.ts';
 import { fetchRemotePdf } from './remote-pdf.ts';
 import { inferDocumentLanguage } from './language.ts';
+import { isValidTex } from '@wordconvert/math-converter';
 
 export function createBrowserController(): AppController {
   const state: AppState = createInitialState(
@@ -187,10 +188,11 @@ export function createBrowserController(): AppController {
     }
     const stage =
       typeof event.state?.stage === 'number' ? event.state.stage : 1;
-    state.review =
-      event.state?.review === 'styles' || event.state?.review === 'metadata'
-        ? event.state.review
-        : undefined;
+    state.review = ['styles', 'metadata', 'formula'].includes(
+      event.state?.review,
+    )
+      ? event.state.review
+      : undefined;
     if (stage === 1) {
       state.stage = 1;
       delete state.output;
@@ -348,6 +350,10 @@ export function createBrowserController(): AppController {
       epubRefreshTimer = undefined;
       delete state.model;
       delete state.pdfAnalysis;
+      state.pdfImport.formulaDecisions = {};
+      state.formulaDrafts = {};
+      state.formulaValidationErrors = {};
+      delete state.formulaReviewSelectedId;
       delete state.pdfLayoutStatus;
       disposePdfPreview();
       state.pdfPreviewPage = 1;
@@ -713,6 +719,113 @@ export function createBrowserController(): AppController {
       if (candidate) candidate.removed = remove;
       state.outputSaved = false;
     },
+    setFormulaDecision(decision) {
+      state.pdfImport.formulaDecisions = {
+        ...state.pdfImport.formulaDecisions,
+        [decision.equationId]: decision,
+      };
+      state.outputSaved = false;
+    },
+    setFormulaReviewFilter(filter) {
+      state.formulaReviewFilter = filter;
+    },
+    selectFormula(equationId) {
+      state.formulaReviewSelectedId = equationId;
+      const candidate = state.pdfAnalysis?.formulaCandidates?.find(
+        ({ id }) => id === equationId,
+      );
+      if (candidate) requestPdfPage(candidate.page);
+    },
+    setFormulaDraft(equationId, tex) {
+      state.formulaDrafts = { ...state.formulaDrafts, [equationId]: tex };
+      const trimmed = tex.trim();
+      const error = !trimmed
+        ? 'LaTeX is required.'
+        : isValidTex(trimmed)
+          ? undefined
+          : 'Enter valid LaTeX before saving.';
+      const errors = { ...state.formulaValidationErrors };
+      if (error) errors[equationId] = error;
+      else delete errors[equationId];
+      state.formulaValidationErrors = errors;
+    },
+    saveFormulaEdit(equationId) {
+      const candidate = state.pdfAnalysis?.formulaCandidates?.find(
+        ({ id }) => id === equationId,
+      );
+      const tex = (
+        state.formulaDrafts[equationId] ??
+        state.model?.equations[equationId]?.tex ??
+        candidate?.tex ??
+        candidate?.recognition?.tex ??
+        ''
+      ).trim();
+      if (!tex || !isValidTex(tex)) {
+        controller.setFormulaDraft?.(equationId, tex);
+        return;
+      }
+      controller.setFormulaDecision?.({
+        equationId,
+        decision: 'formula',
+        tex,
+        ...(candidate
+          ? { display: candidate.kind === 'display' ? 'block' : 'inline' }
+          : {}),
+      });
+      controller.rerunAnalysis();
+    },
+    resetFormulaEdit(equationId) {
+      const decisions = { ...state.pdfImport.formulaDecisions };
+      const drafts = { ...state.formulaDrafts };
+      const errors = { ...state.formulaValidationErrors };
+      delete decisions[equationId];
+      delete drafts[equationId];
+      delete errors[equationId];
+      state.pdfImport.formulaDecisions = decisions;
+      state.formulaDrafts = drafts;
+      state.formulaValidationErrors = errors;
+      controller.rerunAnalysis();
+    },
+    rejectFormula(equationId) {
+      controller.setFormulaDecision?.({ equationId, decision: 'text' });
+      controller.rerunAnalysis();
+    },
+    acceptFormula(equationId) {
+      const existing = state.pdfImport.formulaDecisions[equationId];
+      controller.setFormulaDecision?.({
+        equationId,
+        decision: 'formula',
+        ...(existing?.tex ? { tex: existing.tex } : {}),
+        ...(existing?.display ? { display: existing.display } : {}),
+        accepted: true,
+      });
+      controller.rerunAnalysis();
+    },
+    acceptHighConfidenceFormulas() {
+      const equations = state.model?.equations ?? {};
+      const decisions = { ...state.pdfImport.formulaDecisions };
+      for (const candidate of state.pdfAnalysis?.formulaCandidates ?? []) {
+        const confidence =
+          candidate.recognition?.reviewConfidence ?? candidate.confidence;
+        if (
+          confidence !== 'high' ||
+          !equations[candidate.id] ||
+          decisions[candidate.id]?.decision === 'text'
+        )
+          continue;
+        const existing = decisions[candidate.id];
+        decisions[candidate.id] = {
+          equationId: candidate.id,
+          decision: 'formula',
+          ...(existing?.tex ? { tex: existing.tex } : {}),
+          ...(existing?.display ? { display: existing.display } : {}),
+          accepted: true,
+        };
+      }
+      state.pdfImport.formulaDecisions = decisions;
+      state.outputSaved = false;
+      controller.rerunAnalysis();
+    },
     setPdfAutomaticFurnitureRemoval(remove) {
       state.pdfImport.removeDetectedFurniture = remove;
       state.outputSaved = false;
@@ -901,8 +1014,37 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
   if (response.type === 'analysed') {
     inferDocumentLanguage(response.model);
     state.model = response.model;
-    if (response.pdfAnalysis) state.pdfAnalysis = response.pdfAnalysis;
-    else delete state.pdfAnalysis;
+    if (response.pdfAnalysis) {
+      state.pdfAnalysis = response.pdfAnalysis;
+      if (
+        response.pdfAnalysis.analysedPages.length ===
+        response.pdfAnalysis.pageCount
+      ) {
+        const candidateIds = new Set(
+          response.pdfAnalysis.formulaCandidates?.map(({ id }) => id) ?? [],
+        );
+        state.pdfImport.formulaDecisions = Object.fromEntries(
+          Object.entries(state.pdfImport.formulaDecisions).filter(([id]) =>
+            candidateIds.has(id),
+          ),
+        );
+        state.formulaDrafts = Object.fromEntries(
+          Object.entries(state.formulaDrafts).filter(([id]) =>
+            candidateIds.has(id),
+          ),
+        );
+        state.formulaValidationErrors = Object.fromEntries(
+          Object.entries(state.formulaValidationErrors).filter(([id]) =>
+            candidateIds.has(id),
+          ),
+        );
+        if (
+          state.formulaReviewSelectedId &&
+          !candidateIds.has(state.formulaReviewSelectedId)
+        )
+          delete state.formulaReviewSelectedId;
+      }
+    } else delete state.pdfAnalysis;
     state.stage = 1;
     state.status = 'ready';
     delete state.progress;
@@ -957,6 +1099,7 @@ function pdfWorkerOptions(
     removeDetectedFurniture: state.pdfImport.removeDetectedFurniture,
     removedCandidateIds: [...removedCandidateIds],
     retainedCandidateIds: [...state.pdfImport.retainedCandidateIds],
+    formulaDecisions: { ...state.pdfImport.formulaDecisions },
   };
 }
 

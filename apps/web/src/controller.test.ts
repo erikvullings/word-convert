@@ -8,6 +8,7 @@ import {
 
 import { createBrowserController } from './controller.ts';
 import type { WorkerResponse } from './worker/protocol.ts';
+import type { PdfFormulaCandidate } from '@wordconvert/pdf-reader';
 
 class WorkerStub {
   readonly postMessage = vi.fn();
@@ -64,6 +65,39 @@ function model(): DocumentModel {
     notes: {},
     styles: [],
     warnings: [],
+  };
+}
+
+function formulaCandidate(id = 'pdf-equation-p2-001'): PdfFormulaCandidate {
+  return {
+    id,
+    page: 2,
+    kind: 'display',
+    bounds: { x: 0.2, top: 0.3, width: 0.4, height: 0.08 },
+    spanIds: ['formula-span'],
+    features: {
+      mathFontRatio: 1,
+      operatorRatio: 0.2,
+      greekRatio: 0,
+      symbolRatio: 0.2,
+      singleLetterTokenRatio: 0.5,
+      dictionaryLikeWordRatio: 0,
+      superscriptCount: 0,
+      subscriptCount: 0,
+      baselineVariance: 0,
+      fontSizeVariance: 0,
+      centered: true,
+      isolated: true,
+      equationNumberAtRight: false,
+      multilineStructure: false,
+      score: 5,
+      confidence: 'high',
+    },
+    score: 5,
+    confidence: 'high',
+    sources: ['heron'],
+    tex: 'x^2',
+    requiresRecognition: false,
   };
 }
 
@@ -329,4 +363,215 @@ describe('browser controller', () => {
 
     expect(controller.state.output.filename).toBe('Final handbook.epub');
   });
+
+  it('retains formula decisions across PDF reruns and prunes disappeared candidates', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([new Uint8Array([1])], 'formulas.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    const initialOperationId = controller.state.operationId;
+    if (!initialOperationId)
+      throw new Error('Initial analysis was not started.');
+    worker.emit({
+      type: 'analysed',
+      operationId: initialOperationId,
+      model: model(),
+      pdfAnalysis: {
+        pageCount: 2,
+        analysedPages: [1, 2],
+        crop: { top: 0, bottom: 0 },
+        scannedPages: [],
+        candidates: [],
+        formulaCandidates: [formulaCandidate()],
+      },
+    });
+
+    controller.setFormulaDecision?.({
+      equationId: 'pdf-equation-p2-001',
+      decision: 'formula',
+      tex: 'x^3',
+    });
+    controller.rerunAnalysis();
+
+    expect(worker.postMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'analyse',
+        pdfOptions: expect.objectContaining({
+          formulaDecisions: {
+            'pdf-equation-p2-001': {
+              equationId: 'pdf-equation-p2-001',
+              decision: 'formula',
+              tex: 'x^3',
+            },
+          },
+        }),
+      }),
+      expect.any(Array),
+    );
+    const rerunOperationId = controller.state.operationId;
+    if (!rerunOperationId) throw new Error('Rerun analysis was not started.');
+    controller.state.formulaDrafts['pdf-equation-p2-001'] = 'x^4';
+    controller.state.formulaValidationErrors['pdf-equation-p2-001'] =
+      'stale error';
+    controller.state.formulaReviewSelectedId = 'pdf-equation-p2-001';
+    worker.emit({
+      type: 'analysed',
+      operationId: rerunOperationId,
+      model: model(),
+      pdfAnalysis: {
+        pageCount: 2,
+        analysedPages: [1],
+        crop: { top: 0, bottom: 0 },
+        scannedPages: [],
+        candidates: [],
+        formulaCandidates: [],
+      },
+    });
+
+    expect(controller.state.pdfImport.formulaDecisions).toHaveProperty(
+      'pdf-equation-p2-001',
+    );
+    expect(controller.state.formulaDrafts).toHaveProperty(
+      'pdf-equation-p2-001',
+    );
+    expect(controller.state.formulaReviewSelectedId).toBe(
+      'pdf-equation-p2-001',
+    );
+
+    controller.rerunAnalysis();
+    const completeRerunOperationId = controller.state.operationId;
+    if (!completeRerunOperationId)
+      throw new Error('Complete rerun analysis was not started.');
+    worker.emit({
+      type: 'analysed',
+      operationId: completeRerunOperationId,
+      model: model(),
+      pdfAnalysis: {
+        pageCount: 2,
+        analysedPages: [1, 2],
+        crop: { top: 0, bottom: 0 },
+        scannedPages: [],
+        candidates: [],
+        formulaCandidates: [],
+      },
+    });
+
+    expect(controller.state.pdfImport.formulaDecisions).toEqual({});
+    expect(controller.state.formulaDrafts).toEqual({});
+    expect(controller.state.formulaValidationErrors).toEqual({});
+    expect(controller.state.formulaReviewSelectedId).toBeUndefined();
+  });
+
+  it('validates and reruns formula edit, reset, reject, and bulk accept commands', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([new Uint8Array([1])], 'formulas.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    const high = formulaCandidate('high');
+    const low = { ...formulaCandidate('low'), confidence: 'low' as const };
+    low.features = { ...low.features, confidence: 'low' };
+    const analysedModel = model();
+    analysedModel.equations = {
+      high: {
+        id: 'high',
+        source: { format: 'tex', value: 'x' },
+        tex: 'x',
+        conversionComplete: true,
+        review: { status: 'unreviewed' },
+      },
+      low: {
+        id: 'low',
+        source: { format: 'tex', value: 'y' },
+        tex: 'y',
+        conversionComplete: true,
+        review: { status: 'unreviewed' },
+      },
+    };
+    const emitAnalysis = () => {
+      const operationId = controller.state.operationId;
+      if (!operationId) throw new Error('Analysis was not started.');
+      worker.emit({
+        type: 'analysed',
+        operationId,
+        model: analysedModel,
+        pdfAnalysis: {
+          pageCount: 2,
+          analysedPages: [1, 2],
+          crop: { top: 0, bottom: 0 },
+          scannedPages: [],
+          candidates: [],
+          formulaCandidates: [high, low],
+        },
+      });
+    };
+    emitAnalysis();
+
+    controller.setFormulaDraft?.('high', '\\frac{x{y}');
+    controller.saveFormulaEdit?.('high');
+    expect(worker.postMessage).toHaveBeenCalledOnce();
+    expect(controller.state.formulaValidationErrors.high).toBe(
+      'Enter valid LaTeX before saving.',
+    );
+
+    delete controller.state.formulaDrafts.high;
+    controller.saveFormulaEdit?.('high');
+    expect(lastPdfFormulaDecisions(worker)).toMatchObject({
+      high: { decision: 'formula', tex: 'x' },
+    });
+    emitAnalysis();
+
+    controller.setFormulaDraft?.('high', 'x^3');
+    controller.saveFormulaEdit?.('high');
+    expect(lastPdfFormulaDecisions(worker)).toMatchObject({
+      high: { decision: 'formula', tex: 'x^3' },
+    });
+    emitAnalysis();
+
+    controller.resetFormulaEdit?.('high');
+    expect(lastPdfFormulaDecisions(worker)).toEqual({});
+    emitAnalysis();
+
+    controller.rejectFormula?.('high');
+    expect(lastPdfFormulaDecisions(worker)).toMatchObject({
+      high: { decision: 'text' },
+    });
+    emitAnalysis();
+
+    controller.resetFormulaEdit?.('high');
+    emitAnalysis();
+    controller.acceptHighConfidenceFormulas?.();
+    expect(lastPdfFormulaDecisions(worker)).toEqual({
+      high: {
+        equationId: 'high',
+        decision: 'formula',
+        accepted: true,
+      },
+    });
+  });
 });
+
+function lastPdfFormulaDecisions(worker: WorkerStub): unknown {
+  const request = worker.postMessage.mock.calls.at(-1)?.[0] as
+    { pdfOptions?: { formulaDecisions?: unknown } } | undefined;
+  return request?.pdfOptions?.formulaDecisions;
+}

@@ -13,7 +13,10 @@ import type {
   HtmlOutputMode,
   MarkdownOutputMode,
 } from './output.ts';
-import type { PdfAnalysisSummary } from '@wordconvert/pdf-reader';
+import type {
+  PdfAnalysisSummary,
+  PdfFormulaDecision,
+} from '@wordconvert/pdf-reader';
 
 export const WORKFLOW_STAGES = [
   'Document',
@@ -26,6 +29,8 @@ export type ThemePreference = 'system' | 'light' | 'dark';
 export type OutputFormat = 'html' | 'markdown' | 'epub';
 export type PreviewMode = 'rendered' | 'source' | 'edit' | 'package';
 export type SourceFormat = 'docx' | 'pdf';
+export type FormulaReviewFilter =
+  'all' | 'needs-review' | 'edited' | 'accepted';
 
 export interface PdfImportSettings {
   cropTop: number;
@@ -34,6 +39,7 @@ export interface PdfImportSettings {
   removeDetectedFurniture: boolean;
   removedCandidateIds: string[];
   retainedCandidateIds: string[];
+  formulaDecisions: Record<string, PdfFormulaDecision>;
 }
 
 export interface PdfPagePreviewState {
@@ -93,7 +99,11 @@ export interface AppState {
   styleMappings: Record<string, StyleMapping>;
   presetText: string;
   editorNotice?: string;
-  review?: 'styles' | 'metadata';
+  review?: 'styles' | 'metadata' | 'formula';
+  formulaReviewFilter: FormulaReviewFilter;
+  formulaReviewSelectedId?: string;
+  formulaDrafts: Record<string, string>;
+  formulaValidationErrors: Record<string, string>;
   previewMode: PreviewMode;
   cover: CoverSettings;
   preferences: Preferences;
@@ -135,6 +145,9 @@ export function createInitialState(
     remotePdfUrl: '',
     styleMappings: {},
     presetText: '',
+    formulaReviewFilter: 'all',
+    formulaDrafts: {},
+    formulaValidationErrors: {},
     previewMode: 'rendered',
     cover: createCoverSettings(),
     pdfImport: {
@@ -144,6 +157,7 @@ export function createInitialState(
       removeDetectedFurniture: true,
       removedCandidateIds: [],
       retainedCandidateIds: [],
+      formulaDecisions: {},
     },
     pdfPreviewPage: 1,
     pdfPreviewScale: 1,

@@ -11,6 +11,7 @@ import {
   epubRenderedPreview,
   extractHtmlBody,
   markdownSourcePreview,
+  navigateToWarning,
   outputPreviewSource,
   renderApp,
   type AppController,
@@ -447,6 +448,132 @@ describe('App', () => {
     ])
       expect(metadata).toContain(label);
     expect(metadata).toContain('default · certain · conversion settings');
+  });
+
+  it('shows Formula Review only for PDF equations and exposes review controls', () => {
+    const state = createInitialState('2026-09-02');
+    state.stage = 1;
+    state.status = 'ready';
+    state.sourceFormat = 'pdf';
+    state.model = editorModel();
+    const withoutFormula = JSON.stringify(renderApp(controllerFor(state)));
+    expect(withoutFormula).not.toContain('Review formulas');
+
+    state.model.equations = {
+      'pdf-equation-p2-001': {
+        id: 'pdf-equation-p2-001',
+        source: { format: 'tex', value: 'x^2' },
+        tex: 'x^2',
+        conversionComplete: true,
+        display: 'block',
+        recognition: {
+          method: 'pdf-onnx',
+          confidence: 0.9,
+          model: 'rapid-latex-ocr-onnx',
+        },
+        location: {
+          kind: 'pdf',
+          page: 2,
+          x: 0.2,
+          top: 0.3,
+          width: 0.4,
+          height: 0.08,
+          spanIds: ['formula-span'],
+        },
+        review: { status: 'unreviewed' },
+      },
+    };
+    state.pdfAnalysis = {
+      pageCount: 2,
+      analysedPages: [1, 2],
+      crop: { top: 0, bottom: 0 },
+      scannedPages: [],
+      candidates: [],
+      formulaCandidates: [
+        {
+          id: 'pdf-equation-p2-001',
+          page: 2,
+          kind: 'display',
+          bounds: { x: 0.2, top: 0.3, width: 0.4, height: 0.08 },
+          spanIds: ['formula-span'],
+          features: {
+            mathFontRatio: 1,
+            operatorRatio: 0.2,
+            greekRatio: 0,
+            symbolRatio: 0.2,
+            singleLetterTokenRatio: 0.5,
+            dictionaryLikeWordRatio: 0,
+            superscriptCount: 0,
+            subscriptCount: 0,
+            baselineVariance: 0,
+            fontSizeVariance: 0,
+            centered: true,
+            isolated: true,
+            equationNumberAtRight: false,
+            multilineStructure: false,
+            score: 5,
+            confidence: 'high',
+          },
+          score: 5,
+          confidence: 'high',
+          sources: ['heron'],
+          requiresRecognition: true,
+          recognition: {
+            tex: 'x^2',
+            model: 'rapid-latex-ocr-onnx',
+            reviewConfidence: 'high',
+            diagnostics: { backend: 'wasm', tokens: 3 },
+          },
+        },
+      ],
+    };
+    state.pdfPreview = {
+      pageNumber: 2,
+      width: 600,
+      height: 800,
+      url: 'blob:formula-source-page',
+    };
+
+    const chooser = JSON.stringify(renderApp(controllerFor(state)));
+    expect(chooser).toContain('Review formulas');
+    state.review = 'formula';
+    const review = JSON.stringify(renderApp(controllerFor(state)));
+    for (const text of [
+      'Formula Review',
+      'Needs review',
+      'Page 2',
+      'high confidence',
+      'ONNX recognition',
+      'Block formula',
+      'Unreviewed',
+      'LaTeX',
+      'Original PDF region',
+      'Original PDF formula region on page 2',
+      'blob:formula-source-page',
+      'Rendered formula',
+      'Save edit',
+      'Reset detected value',
+      'Not a formula',
+      'Accept result',
+      'Previous formula',
+      'Next formula',
+      'Accept all high-confidence formulas',
+    ])
+      expect(review).toContain(text);
+  });
+
+  it('routes formula warnings to the referenced Formula Review item', () => {
+    const state = createInitialState('2026-09-02');
+    state.stage = 2;
+    state.formulaReviewFilter = 'accepted';
+
+    navigateToWarning(state, 'formula', undefined, 'pdf-equation-p4-002');
+
+    expect(state).toMatchObject({
+      review: 'formula',
+      formulaReviewFilter: 'all',
+      formulaReviewSelectedId: 'pdf-equation-p4-002',
+    });
   });
 
   it('offers output formats without preview configuration and lists Markdown first', () => {

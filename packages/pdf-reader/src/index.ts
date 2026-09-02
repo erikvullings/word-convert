@@ -463,6 +463,7 @@ export async function analysePdf(
       decision?.display ?? (candidate.kind === 'display' ? 'block' : 'inline');
     const reviewConfidence =
       candidate.recognition?.reviewConfidence ?? candidate.confidence;
+    const originalTex = candidate.tex ?? candidate.recognition?.tex;
     equations[candidate.id] = {
       id: candidate.id,
       source: { format: 'tex', value: tex },
@@ -495,9 +496,7 @@ export async function analysePdf(
             : reviewConfidence === 'high' && recognitionMethod === 'pdf-text'
               ? 'accepted'
               : 'unreviewed',
-        ...(decision?.tex && candidate.tex
-          ? { originalTex: candidate.tex }
-          : {}),
+        ...(decision?.tex && originalTex ? { originalTex } : {}),
       },
     };
     semanticCandidates.push({ ...candidate, tex });
