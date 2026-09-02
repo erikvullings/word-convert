@@ -47,6 +47,33 @@ describe('writeMarkdown', () => {
     );
   });
 
+  it('preserves inline equation image width in Markdown', () => {
+    const input = model([
+      {
+        type: 'paragraph',
+        children: [
+          { type: 'text', text: 'Before ' },
+          {
+            type: 'image',
+            assetId: 'equation',
+            presentation: 'equation',
+            width: 0.47,
+          },
+          { type: 'text', text: ' after.' },
+        ],
+      },
+    ]);
+    input.assets.equation = {
+      id: 'equation',
+      mediaType: 'image/png',
+      data: Uint8Array.from([137, 80, 78, 71]),
+    };
+
+    expect(writeMarkdown(input, { conversionDate: '2026-07-15' })).toContain(
+      '<img class="equation-image image-width-45" src="data:image/png;base64,iVBORw==" alt="Equation" width="45%">',
+    );
+  });
+
   it('applies source, MathML, KaTeX, and disabled formula modes', () => {
     const input = model([{ type: 'equationBlock', equationId: 'eq' }]);
     input.equations.eq = {

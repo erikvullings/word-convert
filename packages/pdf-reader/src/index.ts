@@ -69,7 +69,7 @@ export interface RawPdfImage {
   pixelHeight: number;
   mediaType: 'image/png' | 'image/jpeg';
   data: Uint8Array;
-  source?: 'embedded' | 'rendered-figure';
+  source?: 'embedded' | 'rendered-figure' | 'rendered-equation';
 }
 
 export interface RawPdfPage {
@@ -945,11 +945,25 @@ async function linesToBlocks(
   for (const page of pages) {
     await analysisCheckpoint(options);
     const rolesByMarkedContentId = taggedRoles(page.taggedStructure);
-    const pageLines = lines.filter(
+    const allPageLines = lines.filter(
       (line) =>
         line.page === page.number && !isDetachedMathFragment(line, bodySize),
     );
-    const placements = imagePlacements(pageLines, page.images);
+    const equationImages = page.images.filter(
+      ({ source }) => source === 'rendered-equation',
+    );
+    const equationHosts = equationHostLines(allPageLines, equationImages);
+    const pageLines = allPageLines.filter(
+      (line) =>
+        equationHosts.has(line) ||
+        !line.spans.every((span) =>
+          equationImages.some((image) => intersectsBounds(span, image)),
+        ),
+    );
+    const placements = imagePlacements(
+      pageLines,
+      page.images.filter(({ source }) => source !== 'rendered-equation'),
+    );
     if (pageLines.length === 0 && page.images.length === 0) continue;
     const previousBlock = blocks.at(-1);
     const firstLine = pageLines[0];
@@ -985,7 +999,11 @@ async function linesToBlocks(
       const id = styleId(line);
       const mapped = mapping.get(id) ?? 'body';
       if (mapped !== 'ignore') {
-        const children = lineInlines(line, page.links);
+        const children = lineInlines(
+          line,
+          page.links,
+          equationHosts.get(line) ?? [],
+        );
         const taggedRole = taggedRoleForLine(rolesByMarkedContentId, line);
         const taggedHeading = /^H([1-6])$/i.exec(taggedRole ?? '');
         const mappedHeading = /^heading([1-6])$/.exec(mapped);
@@ -1130,10 +1148,28 @@ function imagePlacements(
 function lineInlines(
   line: PdfLine,
   links: readonly RawPdfLink[],
+  equations: readonly RawPdfImage[] = [],
 ): InlineNode[] {
   const output: InlineNode[] = [];
   let previous: RawPdfTextSpan | undefined;
-  for (const span of line.spans) {
+  const items: Array<RawPdfTextSpan | RawPdfImage> = [
+    ...line.spans.filter(
+      (span) => !equations.some((image) => intersectsBounds(span, image)),
+    ),
+    ...equations,
+  ].sort((left, right) => left.x - right.x);
+  for (const item of items) {
+    if ('pixelWidth' in item) {
+      output.push({
+        type: 'image',
+        assetId: item.id,
+        presentation: 'equation',
+        width: item.width,
+      });
+      previous = undefined;
+      continue;
+    }
+    const span = item;
     if (
       previous &&
       span.x - (previous.x + previous.width) >
@@ -1158,6 +1194,37 @@ function lineInlines(
     previous = span;
   }
   return output;
+}
+
+function equationHostLines(
+  lines: readonly PdfLine[],
+  equations: readonly RawPdfImage[],
+): Map<PdfLine, RawPdfImage[]> {
+  const hosts = new Map<PdfLine, RawPdfImage[]>();
+  for (const equation of equations) {
+    const overlapping = lines.filter((line) =>
+      line.spans.some((span) => intersectsBounds(span, equation)),
+    );
+    const host =
+      overlapping.find(({ text }) => text.includes('=')) ?? overlapping[0];
+    if (!host) continue;
+    const images = hosts.get(host) ?? [];
+    images.push(equation);
+    hosts.set(host, images);
+  }
+  return hosts;
+}
+
+function intersectsBounds(
+  left: Pick<RawPdfTextSpan, 'x' | 'top' | 'width' | 'height'>,
+  right: Pick<RawPdfImage, 'x' | 'top' | 'width' | 'height'>,
+): boolean {
+  return (
+    left.x < right.x + right.width &&
+    left.x + left.width > right.x &&
+    left.top < right.top + right.height &&
+    left.top + left.height > right.top
+  );
 }
 
 function canMergeLines(previous: PdfLine, current: PdfLine): boolean {

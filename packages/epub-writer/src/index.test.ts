@@ -231,7 +231,13 @@ describe('writeEpub', () => {
             href: '#local',
             children: [{ type: 'text', text: ' link' }],
           },
-          { type: 'image', assetId: 'photo', alt: 'A photo' },
+          {
+            type: 'image',
+            assetId: 'photo',
+            alt: 'A photo',
+            presentation: 'equation',
+            width: 0.47,
+          },
           { type: 'equation', equationId: 'eq' },
           { type: 'noteReference', noteId: 'note' },
         ],
@@ -304,6 +310,7 @@ describe('writeEpub', () => {
     expect(Object.keys(files)).toContain('EPUB/fonts/font-001.woff2');
     expect(chapter).toContain('<strong>Bold</strong>');
     expect(chapter).toContain('src="images/image-001.png"');
+    expect(chapter).toContain('class="equation-image image-width-45"/>');
     expect(chapter).toContain(
       '<figure class="image-block image-right image-width-30"><img',
     );

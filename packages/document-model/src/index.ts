@@ -71,6 +71,8 @@ export interface ImageInline {
   assetId: string;
   alt?: string;
   title?: string;
+  presentation?: 'equation';
+  width?: number;
 }
 
 export interface EquationInline {

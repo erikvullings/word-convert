@@ -2066,6 +2066,70 @@ describe('PDF.js extraction helpers', () => {
     ]);
   });
 
+  it('rejects a Heron picture proposal that encloses flowing prose', async () => {
+    const page = {
+      pageNumber: 19,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render: vi.fn(() => ({ promise: Promise.resolve() })),
+      getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+    };
+    const spans = [
+      span('The encoder is composed of a stack of six identical', 0.16, 0.3, {
+        width: 0.65,
+      }),
+      span(
+        'layers with residual connections around each sub-layer',
+        0.16,
+        0.32,
+        {
+          width: 0.66,
+        },
+      ),
+      span('followed by layer normalization.', 0.16, 0.34, { width: 0.4 }),
+    ];
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 20,
+        maxTextItemsPerPage: 20,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      spans,
+      [
+        {
+          label: 'picture',
+          confidence: 0.91,
+          x: 0.15,
+          top: 0.29,
+          width: 0.7,
+          height: 0.08,
+        },
+      ],
+    );
+
+    expect(images).toEqual([]);
+  });
+
   it('prefers a learned figure proposal over overlapping broad vector geometry', async () => {
     const render = vi.fn(() => ({ promise: Promise.resolve() }));
     const page = {
@@ -2272,7 +2336,7 @@ describe('PDF.js extraction helpers', () => {
     });
   });
 
-  it('rasterizes a centered display equation as a figure', async () => {
+  it('keeps a centered display equation as extracted text', async () => {
     const page = {
       pageNumber: 4,
       getViewport: ({ scale }: { scale: number }) => ({
@@ -2283,17 +2347,22 @@ describe('PDF.js extraction helpers', () => {
       getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
     };
     const spans = [
-      span('Attention(Q, K, V ) = softmax(', 0.35, 0.59, {
-        width: 0.25,
+      span('Attention(', 0.35, 0.59, {
+        width: 0.08,
         height: 0.013,
         fontSize: 10,
       }),
+      span('Q, K, V', 0.43, 0.59, { width: 0.06, fontSize: 10 }),
+      span(') = softmax(', 0.49, 0.59, { width: 0.11, fontSize: 10 }),
       span('QK', 0.6, 0.582, { width: 0.03, fontSize: 10 }),
       span('T', 0.63, 0.578, { width: 0.01, fontSize: 7 }),
       span('√d', 0.6, 0.6, { width: 0.03, fontSize: 10 }),
       span('k', 0.63, 0.61, { width: 0.01, fontSize: 7 }),
       span(')V', 0.65, 0.59, { width: 0.03, fontSize: 10 }),
       span('(1)', 0.8, 0.59, { width: 0.02, fontSize: 10 }),
+      span('Following prose must remain outside the crop.', 0.17, 0.623, {
+        width: 0.65,
+      }),
     ];
 
     const images = await readImages(
@@ -2320,12 +2389,219 @@ describe('PDF.js extraction helpers', () => {
         }),
       },
       spans,
+      [
+        {
+          label: 'picture',
+          confidence: 0.75,
+          x: 0.34,
+          top: 0.57,
+          width: 0.5,
+          height: 0.07,
+        },
+      ],
     );
 
     expect(images).toEqual([
       expect.objectContaining({
-        id: 'pdf-figure-4-0',
-        source: 'rendered-figure',
+        id: 'pdf-equation-4-0',
+        source: 'rendered-equation',
+        x: expect.closeTo(0.35, 3),
+        width: expect.closeTo(0.47, 3),
+      }),
+    ]);
+  });
+
+  it('captures compact equations and inline radical fractions', async () => {
+    const page = {
+      pageNumber: 4,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render: vi.fn(() => ({ promise: Promise.resolve() })),
+      getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+    };
+    const spans = [
+      span('The previous sentence must stay outside the crop.', 0.55, 0.175, {
+        width: 0.32,
+      }),
+      span('we scale the dot products by', 0.55, 0.2, { width: 0.18 }),
+      span('1', 0.75, 0.205, { width: 0.01, fontSize: 8 }),
+      span('√d', 0.745, 0.208, { width: 0.025, fontSize: 8 }),
+      span('k', 0.77, 0.215, { width: 0.008, fontSize: 6 }),
+      span('.', 0.79, 0.2, { width: 0.005 }),
+      span('weights by', 0.68, 0.4, { width: 0.08 }),
+      span('√', 0.77, 0.39, { width: 0.014 }),
+      span('d', 0.784, 0.4, { width: 0.009 }),
+      span('model', 0.793, 0.406, { width: 0.028, fontSize: 7 }),
+      span('.', 0.822, 0.4, { width: 0.004 }),
+      span('Then their dot product,', 0.393, 0.7, { width: 0.143 }),
+      span('q · k =', 0.54, 0.7, { width: 0.043, fontSize: 9 }),
+      span('Σ', 0.586, 0.692, { width: 0.016, fontSize: 9 }),
+      span('d', 0.602, 0.699, { width: 0.006, fontSize: 6 }),
+      span('k', 0.608, 0.702, { width: 0.006, fontSize: 5 }),
+      span('i=1', 0.602, 0.708, { width: 0.02, fontSize: 6 }),
+      span('q', 0.625, 0.7, { width: 0.007, fontSize: 9 }),
+      span('i', 0.632, 0.705, { width: 0.004, fontSize: 6 }),
+      span('k', 0.637, 0.7, { width: 0.008, fontSize: 9 }),
+      span('i', 0.645, 0.705, { width: 0.004, fontSize: 6 }),
+      span(', has mean 0 and variance dk.', 0.65, 0.7, { width: 0.17 }),
+    ];
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 10,
+        maxTextItemsPerPage: 10,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      spans,
+    );
+
+    expect(images).toEqual([
+      expect.objectContaining({
+        source: 'rendered-equation',
+        x: expect.closeTo(0.54, 3),
+        width: expect.closeTo(0.109, 3),
+      }),
+      expect.objectContaining({
+        source: 'rendered-equation',
+        x: expect.closeTo(0.745, 3),
+        top: expect.closeTo(0.205, 3),
+        width: expect.closeTo(0.033, 3),
+      }),
+      expect.objectContaining({
+        source: 'rendered-equation',
+        x: expect.closeTo(0.77, 3),
+        width: expect.closeTo(0.051, 3),
+      }),
+    ]);
+  });
+
+  it('keeps Transformer-style inline equations inside flowing prose', async () => {
+    const page = {
+      pageNumber: 4,
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+      }),
+      render: vi.fn(() => ({ promise: Promise.resolve() })),
+      getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+    };
+    const spans = [
+      span('To facilitate these residual connections,', 0.16, 0.59, {
+        width: 0.27,
+      }),
+      span('all sub-layers produce outputs', 0.44, 0.59, { width: 0.2 }),
+      span('of dimension dmodel = 512.', 0.65, 0.59, { width: 0.16 }),
+      span('model', 0.71, 0.6, { width: 0.04, fontSize: 7 }),
+      span('for every layer.', 0.82, 0.59, { width: 0.07 }),
+      span('We used length penalty α = 0.6 [38].', 0.16, 0.63, {
+        width: 0.32,
+      }),
+      span('α', 0.35, 0.624, { width: 0.01, fontSize: 7 }),
+      span('x =', 0.16, 0.67, { width: 0.56 }),
+      span('1', 0.72, 0.662, { width: 0.01, fontSize: 7 }),
+      span('2', 0.72, 0.68, { width: 0.01, fontSize: 7 }),
+      span('A long prose line contains √d within its text.', 0.16, 0.71, {
+        width: 0.6,
+      }),
+      span('k', 0.4, 0.72, { width: 0.01, fontSize: 7 }),
+    ];
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, 1, 0, 0],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 10,
+        maxTextItemsPerPage: 10,
+        maxImages: 10,
+        maxImagePixels: 2_000_000,
+        maxTotalImagePixels: 3_000_000,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+          dispose: () => undefined,
+        }),
+      },
+      spans,
+    );
+
+    expect(images).toEqual([]);
+  });
+
+  it('places a rendered equation inline and removes only its covered spans', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('We compute', 0.12, 0.3, { width: 0.12 }),
+            span('Attention(Q,K,V)=softmax(QKᵀ/√dk)V', 0.25, 0.3, {
+              width: 0.45,
+            }),
+            span('simultaneously.', 0.71, 0.3, { width: 0.16 }),
+          ],
+          links: [],
+          images: [
+            {
+              id: 'pdf-equation-1-0',
+              x: 0.245,
+              top: 0.285,
+              width: 0.46,
+              height: 0.04,
+              pixelWidth: 552,
+              pixelHeight: 64,
+              mediaType: 'image/png',
+              data: Uint8Array.from([137, 80, 78, 71]),
+              source: 'rendered-equation',
+            },
+          ],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks).toEqual([
+      expect.objectContaining({
+        type: 'paragraph',
+        children: [
+          expect.objectContaining({ type: 'text', text: 'We compute' }),
+          {
+            type: 'image',
+            assetId: 'pdf-equation-1-0',
+            presentation: 'equation',
+            width: 0.46,
+          },
+          expect.objectContaining({ type: 'text', text: 'simultaneously.' }),
+        ],
       }),
     ]);
   });

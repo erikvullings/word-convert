@@ -33,7 +33,7 @@ interface RenderContext {
   formulaMode: MathOutputMode;
 }
 
-const STYLES = `:root{color-scheme:light dark;--background:#fff;--foreground:#202124;--muted:#5f6368;--link:#0759b6}*{box-sizing:border-box}body{max-width:48rem;margin:0 auto;padding:2rem;font:18px/1.6 system-ui,sans-serif;background:var(--background);color:var(--foreground)}h1,h2,h3,h4,h5,h6{clear:both;line-height:1.2;margin-block:1.6em .6em}p,ul,ol,blockquote,figure,table,pre{margin-block:0 1.25em}img{max-width:100%;height:auto}p>img{display:block;clear:both;margin-block:1.25em}figure{clear:both;margin-inline:0}figure>img{display:block}.image-block>img{width:100%}.image-center{margin-inline:auto;text-align:center}.image-left{float:left;margin:0 1.25em 1em 0}.image-right{float:right;margin:0 0 1em 1.25em}figcaption{margin-top:.5em;color:var(--muted)}table{clear:both;border-collapse:collapse;width:100%}th,td{border:1px solid var(--muted);padding:.4rem;text-align:left;vertical-align:top}a{color:var(--link)}pre{clear:both;overflow:auto}.page-break{clear:both;break-after:page}.table-of-contents{clear:both}.table-of-contents ol{padding-left:1.5rem}@media (prefers-color-scheme: dark){:root{--background:#181a1b;--foreground:#eee;--muted:#aaa;--link:#8ab4f8}}@media print{body{max-width:none;padding:0;font-size:12pt}.table-of-contents{break-after:page}a{color:inherit;text-decoration:none}}`;
+const STYLES = `:root{color-scheme:light dark;--background:#fff;--foreground:#202124;--muted:#5f6368;--link:#0759b6}*{box-sizing:border-box}body{max-width:48rem;margin:0 auto;padding:2rem;font:18px/1.6 system-ui,sans-serif;background:var(--background);color:var(--foreground)}h1,h2,h3,h4,h5,h6{clear:both;line-height:1.2;margin-block:1.6em .6em}p,ul,ol,blockquote,figure,table,pre{margin-block:0 1.25em}img{max-width:100%;height:auto}p>img{display:block;clear:both;margin-block:1.25em}p>img.equation-image{display:inline-block;clear:none;margin:0 .12em;vertical-align:middle}figure{clear:both;margin-inline:0}figure>img{display:block}.image-block>img{width:100%}.image-center{margin-inline:auto;text-align:center}.image-left{float:left;margin:0 1.25em 1em 0}.image-right{float:right;margin:0 0 1em 1.25em}figcaption{margin-top:.5em;color:var(--muted)}table{clear:both;border-collapse:collapse;width:100%}th,td{border:1px solid var(--muted);padding:.4rem;text-align:left;vertical-align:top}a{color:var(--link)}pre{clear:both;overflow:auto}.page-break{clear:both;break-after:page}.table-of-contents{clear:both}.table-of-contents ol{padding-left:1.5rem}@media (prefers-color-scheme: dark){:root{--background:#181a1b;--foreground:#eee;--muted:#aaa;--link:#8ab4f8}}@media print{body{max-width:none;padding:0;font-size:12pt}.table-of-contents{break-after:page}a{color:inherit;text-decoration:none}}`;
 const IMAGE_WIDTH_STYLES = Array.from(
   { length: 20 },
   (_, index) => `.image-width-${(index + 1) * 5}{width:${(index + 1) * 5}%}`,
@@ -310,7 +310,13 @@ function renderInline(node: InlineNode, context: RenderContext): string {
         : children;
     }
     case 'image':
-      return renderImage(node.assetId, node.alt, node.title, context);
+      return renderImage(
+        node.assetId,
+        node.alt,
+        node.title,
+        context,
+        imageInlineAttributes(node),
+      );
     case 'equation':
       return `<span class="equation" role="math">${renderEquation(node.equationId, false, context)}</span>`;
     case 'noteReference': {
@@ -346,13 +352,29 @@ function renderImage(
   alt: string | undefined,
   title: string | undefined,
   context: RenderContext,
+  attributes = '',
 ): string {
   const asset = context.model.assets[assetId];
   if (!asset) return '';
   const source = context.assetUrl(asset);
   if (!source) return '';
   const titleAttribute = title ? ` title="${escapeAttribute(title)}"` : '';
-  return `<img src="${escapeAttribute(source)}" alt="${escapeAttribute(alt ?? '')}"${titleAttribute}>`;
+  return `<img src="${escapeAttribute(source)}" alt="${escapeAttribute(alt ?? '')}"${titleAttribute}${attributes}>`;
+}
+
+function imageInlineAttributes(
+  image: Extract<InlineNode, { type: 'image' }>,
+): string {
+  if (
+    image.presentation !== 'equation' ||
+    !Number.isFinite(image.width) ||
+    image.width === undefined ||
+    image.width <= 0 ||
+    image.width > 1
+  )
+    return '';
+  const percentage = Math.max(5, Math.round(image.width * 20) * 5);
+  return ` class="equation-image image-width-${percentage}"`;
 }
 
 function renderEquation(

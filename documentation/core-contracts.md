@@ -18,6 +18,11 @@ the page width become full-width, while smaller images retain their relative
 width and are centered or aligned left/right. HTML and EPUB writers render
 these hints responsively; readers without source geometry may omit them.
 
+Inline images may carry `presentation: "equation"` and a normalized `width`.
+PDF analysis uses these additive hints for tightly cropped equation snapshots;
+HTML and EPUB writers render them on the text baseline at their source-relative
+width. Other inline images retain their existing rendering.
+
 ## Binary and JSON conventions
 
 In memory and across structured-clone boundaries, binary fields are `Uint8Array`. Do not rely on a view's offset into a larger buffer: construct a `Uint8Array` containing exactly the asset or output bytes. A worker may transfer its underlying `ArrayBuffer` only when it gives up ownership.

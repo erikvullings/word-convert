@@ -255,7 +255,14 @@ function renderInline(
     return `[${children}](${escapeDestination(node.href.trim())}${title})`;
   }
   if (node.type === 'image')
-    return renderImage(node.assetId, node.alt, node.title, context);
+    return renderImage(
+      node.assetId,
+      node.alt,
+      node.title,
+      context,
+      node.presentation,
+      node.width,
+    );
   if (node.type === 'equation')
     return renderEquation(node.equationId, false, context);
   if (node.type === 'noteReference') {
@@ -273,6 +280,8 @@ function renderImage(
   alt: string | undefined,
   title: string | undefined,
   context: RenderContext,
+  presentation?: 'equation',
+  width?: number,
 ): string {
   const url = context.assetUrl(assetId);
   if (!url) {
@@ -293,6 +302,17 @@ function renderImage(
           },
     );
     return '';
+  }
+  if (
+    presentation === 'equation' &&
+    width !== undefined &&
+    Number.isFinite(width) &&
+    width > 0 &&
+    width <= 1
+  ) {
+    const percentage = Math.max(5, Math.round(width * 20) * 5);
+    const titlePart = title ? ` title="${escapeHtmlAttribute(title)}"` : '';
+    return `<img class="equation-image image-width-${percentage}" src="${escapeHtmlAttribute(url)}" alt="${escapeHtmlAttribute(alt ?? 'Equation')}" width="${percentage}%"${titlePart}>`;
   }
   const titlePart = title ? ` "${title.replace(/["\\]/g, '\\$&')}"` : '';
   return `![${escapeText(alt ?? '', true)}](${url}${titlePart})`;
@@ -413,6 +433,14 @@ function escapeText(value: string, escapeBrackets = false): string {
 
 function escapeDestination(value: string): string {
   return value.replace(/[()\\]/g, '\\$&');
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
 }
 
 function safeHref(value: string): boolean {

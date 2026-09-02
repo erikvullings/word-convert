@@ -630,7 +630,18 @@ export async function readImages(
     }
   }
   if (!figureRasterizer) return images;
-  const regions = figureRegions(vectorBounds, images, spans, layoutRegions);
+  const equations = displayEquationRegions(spans);
+  const regions = figureRegions(
+    vectorBounds,
+    images,
+    spans,
+    layoutRegions,
+  ).filter(
+    (region) =>
+      !equations.some(
+        (equation) => intersectionCoverage(equation, region) >= 0.8,
+      ),
+  );
   const standaloneImages = images.filter(
     (image) => !regions.some((region) => intersects(image, region)),
   );
@@ -645,6 +656,21 @@ export async function readImages(
         figureRasterizer,
         cancellation,
         images,
+      ),
+    );
+  }
+  for (const [index, region] of equations.entries()) {
+    standaloneImages.push(
+      await rasterizeFigure(
+        page,
+        region,
+        index,
+        limits,
+        imageBudget,
+        figureRasterizer,
+        cancellation,
+        [],
+        'rendered-equation',
       ),
     );
   }
@@ -685,7 +711,7 @@ function figureRegions(
         imageSeed: true,
         learnedSeed: false,
       })),
-    ...visualLayoutRegions(layoutRegions).map((region) => ({
+    ...visualLayoutRegions(layoutRegions, spans).map((region) => ({
       region,
       paths: 0,
       imageSeed: true,
@@ -732,12 +758,6 @@ function figureRegions(
       learnedSeed ||
       !learnedRegions.some((learned) => nearby(region, learned.region, 0.015)),
   );
-  regions.push(
-    ...displayEquationRegions(spans).map((region) => ({
-      region,
-      learnedSeed: false,
-    })),
-  );
   const inferred = captionFigureRegions(
     spans,
     regions.map(({ region }) => region),
@@ -754,6 +774,7 @@ function figureRegions(
 
 function visualLayoutRegions(
   regions: readonly PdfLayoutRegion[],
+  spans: readonly RawPdfTextSpan[],
 ): PdfLayoutRegion[] {
   return [...regions]
     .filter(
@@ -763,6 +784,7 @@ function visualLayoutRegions(
         width >= 0.05 &&
         height >= 0.03,
     )
+    .filter((region) => !enclosesFlowingProse(region, spans))
     .sort((left, right) => right.confidence - left.confidence)
     .reduce<PdfLayoutRegion[]>((accepted, candidate) => {
       if (
@@ -773,6 +795,30 @@ function visualLayoutRegions(
         accepted.push(candidate);
       return accepted;
     }, []);
+}
+
+function enclosesFlowingProse(
+  region: NormalizedBounds,
+  spans: readonly RawPdfTextSpan[],
+): boolean {
+  const enclosed = spans.filter((span) => {
+    const centerX = span.x + span.width / 2;
+    const centerY = span.top + span.height / 2;
+    return (
+      centerX >= region.x &&
+      centerX <= region.x + region.width &&
+      centerY >= region.top &&
+      centerY <= region.top + region.height
+    );
+  });
+  const wordCount = enclosed.reduce(
+    (count, { text }) => count + (text.match(/[A-Za-z]{2,}/g)?.length ?? 0),
+    0,
+  );
+  return (
+    wordCount >= 12 &&
+    enclosed.some(({ text }) => /[.!?]["')\]]?$/.test(text.trim()))
+  );
 }
 
 function captionFigureRegions(
@@ -915,20 +961,22 @@ function expandToNearbyLabel(
 function displayEquationRegions(
   spans: readonly RawPdfTextSpan[],
 ): NormalizedBounds[] {
-  return spans
+  const equationRegions = spans
     .filter(
       (span) =>
-        span.text.includes('=') && span.x >= 0.22 && span.text.length <= 80,
+        span.text.includes('=') &&
+        span.text.length <= 80 &&
+        (span.text.match(/[A-Za-z]{2,}/g)?.length ?? 0) <= 2 &&
+        (/[()[\]{}·×÷+*/√Σ^]/.test(span.text) ||
+          (span.text.match(/[A-Za-z]{2,}/g)?.length ?? 0) < 2),
     )
     .flatMap((anchor) => {
-      const members = spans.filter(
-        (span) =>
-          span.top >= anchor.top - 0.02 &&
-          span.top <= anchor.top + 0.035 &&
-          span.x >= 0.15 &&
-          span.x + span.width <= 0.9,
-      );
-      if (members.length < 3) return [];
+      const members = connectedEquationSpans(spans, anchor);
+      if (
+        members.length < 3 ||
+        !members.some((span) => Math.abs(span.top - anchor.top) >= 0.006)
+      )
+        return [];
       const region = members
         .map<NormalizedBounds>(({ x, top, width, height }) => ({
           x,
@@ -937,8 +985,121 @@ function displayEquationRegions(
           height,
         }))
         .reduce(unionBounds);
-      return region.width >= 0.15 ? [region] : [];
+      return region.width <= 0.5 ? [region] : [];
     });
+  const radicalRegions = spans
+    .filter((span) => span.text.includes('√'))
+    .flatMap((anchor) => {
+      const members = spans.filter(
+        (span) =>
+          span.top >= anchor.top - 0.012 &&
+          span.top <= anchor.top + 0.02 &&
+          span.x <= anchor.x + anchor.width + 0.015 &&
+          span.x + span.width >= anchor.x - 0.01 &&
+          isRadicalSpan(span) &&
+          span.text.trim().length > 0,
+      );
+      if (
+        members.length < 2 ||
+        !members.some((span) => Math.abs(span.top - anchor.top) >= 0.006)
+      )
+        return [];
+      const region = members
+        .map<NormalizedBounds>(({ x, top, width, height }) => ({
+          x,
+          top,
+          width,
+          height,
+        }))
+        .reduce(unionBounds);
+      if (region.width > 0.5) return [];
+      return equationRegions.some(
+        (equation) => intersectionCoverage(region, equation) >= 0.8,
+      )
+        ? []
+        : [region];
+    });
+  return [...equationRegions, ...radicalRegions].filter(
+    (region, index, regions) =>
+      regions.findIndex(
+        (candidate) =>
+          intersectionOverUnion(candidate, region) >= 0.6 ||
+          intersectionCoverage(region, candidate) >= 0.8,
+      ) === index,
+  );
+}
+
+function connectedEquationSpans(
+  spans: readonly RawPdfTextSpan[],
+  anchor: RawPdfTextSpan,
+): RawPdfTextSpan[] {
+  const candidates = spans.filter(
+    (span) =>
+      span.top >= anchor.top - 0.012 &&
+      span.top <= anchor.top + 0.025 &&
+      isEquationSpan(span),
+  );
+  const members = new Set<RawPdfTextSpan>([anchor]);
+  let left = anchor.x;
+  let right = anchor.x + anchor.width;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const candidate of candidates) {
+      if (
+        members.has(candidate) ||
+        candidate.x > right + 0.02 ||
+        candidate.x + candidate.width < left - 0.02
+      )
+        continue;
+      members.add(candidate);
+      left = Math.min(left, candidate.x);
+      right = Math.max(right, candidate.x + candidate.width);
+      changed = true;
+    }
+  }
+  for (const candidate of spans) {
+    if (
+      /^\(\d+\)$/.test(candidate.text.trim()) &&
+      Math.abs(candidate.top - anchor.top) <= 0.006 &&
+      candidate.x >= right &&
+      candidate.x - right <= 0.2
+    ) {
+      members.add(candidate);
+      right = candidate.x + candidate.width;
+    }
+  }
+  return [...members];
+}
+
+function isEquationSpan(span: RawPdfTextSpan): boolean {
+  const value = span.text.trim();
+  return (
+    value.length === 0 ||
+    /[()[\]{}·×÷+*/√Σ^=<>]/.test(value) ||
+    /^[A-Za-z](?:\s*,\s*[A-Za-z])+[,.]?$/.test(value) ||
+    /^[A-Za-z0-9]{1,2}[,.;:]?$/.test(value) ||
+    /^\d+(?:\.\d+)?$/.test(value)
+  );
+}
+
+function isRadicalSpan(span: RawPdfTextSpan): boolean {
+  return /^[A-Za-z0-9√()[\]{}.,+*/^_-]+$/.test(span.text.trim());
+}
+
+function intersectionCoverage(
+  target: NormalizedBounds,
+  covering: NormalizedBounds,
+): number {
+  const left = Math.max(target.x, covering.x);
+  const right = Math.min(target.x + target.width, covering.x + covering.width);
+  const top = Math.max(target.top, covering.top);
+  const bottom = Math.min(
+    target.top + target.height,
+    covering.top + covering.height,
+  );
+  const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
+  return intersection / (target.width * target.height);
 }
 
 async function rasterizeFigure(
@@ -950,6 +1111,7 @@ async function rasterizeFigure(
   rasterizer: PdfFigureRasterizer,
   cancellation?: CancellationSignal,
   sourceImages: readonly RawPdfImage[] = [],
+  source: 'rendered-figure' | 'rendered-equation' = 'rendered-figure',
 ): Promise<RawPdfImage> {
   const base = page.getViewport({ scale: 1 });
   const regionPixels = base.width * region.width * base.height * region.height;
@@ -1006,8 +1168,9 @@ async function rasterizeFigure(
       imageBudget,
     );
     throwIfCancelled(cancellation);
+    const kind = source === 'rendered-equation' ? 'equation' : 'figure';
     return {
-      id: `pdf-figure-${page.pageNumber}-${index}`,
+      id: `pdf-${kind}-${page.pageNumber}-${index}`,
       x: finalRegion.x,
       top: finalRegion.top,
       width: finalRegion.width,
@@ -1016,7 +1179,7 @@ async function rasterizeFigure(
       pixelHeight,
       mediaType: 'image/png',
       data: await surface.encodePng(),
-      source: 'rendered-figure',
+      source,
     };
   } finally {
     surface.dispose();

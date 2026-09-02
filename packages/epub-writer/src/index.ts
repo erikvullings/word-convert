@@ -71,6 +71,7 @@ const STYLES = [
   'a{color:#0645ad;text-decoration:underline}',
   /* Images */
   'img{max-width:100%;height:auto;display:block;margin:1em auto}',
+  'img.equation-image{display:inline-block;margin:0 .12em;vertical-align:middle}',
   'figure{margin:1.5em 0;text-align:center}',
   '.image-block>img{width:100%;margin:0}',
   '.image-center{margin-left:auto;margin-right:auto}',
@@ -485,7 +486,13 @@ function renderInline(node: InlineNode, context: RenderContext): string {
         : content;
     }
     case 'image':
-      return renderImage(node.assetId, node.alt, node.title, context);
+      return renderImage(
+        node.assetId,
+        node.alt,
+        node.title,
+        context,
+        imageInlineAttributes(node),
+      );
     case 'equation':
       return `<span class="equation" role="math">${renderEquation(node.equationId, false, context)}</span>`;
     case 'noteReference': {
@@ -533,10 +540,26 @@ function renderImage(
   alt: string | undefined,
   title: string | undefined,
   context: RenderContext,
+  attributes = '',
 ): string {
   const path = context.assetPaths.get(assetId);
   if (!path) return '';
-  return `<img src="${escapeAttribute(path)}" alt="${escapeAttribute(alt ?? '')}"${title ? ` title="${escapeAttribute(title)}"` : ''}/>`;
+  return `<img src="${escapeAttribute(path)}" alt="${escapeAttribute(alt ?? '')}"${title ? ` title="${escapeAttribute(title)}"` : ''}${attributes}/>`;
+}
+
+function imageInlineAttributes(
+  image: Extract<InlineNode, { type: 'image' }>,
+): string {
+  if (
+    image.presentation !== 'equation' ||
+    !Number.isFinite(image.width) ||
+    image.width === undefined ||
+    image.width <= 0 ||
+    image.width > 1
+  )
+    return '';
+  const percentage = Math.max(5, Math.round(image.width * 20) * 5);
+  return ` class="equation-image image-width-${percentage}"`;
 }
 
 function renderEquation(

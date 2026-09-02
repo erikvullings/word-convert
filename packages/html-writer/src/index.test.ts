@@ -145,7 +145,13 @@ describe('writeHtml', () => {
             href: 'https://example.com/a?x=1&y=2',
             children: [{ type: 'text', text: 'site' }],
           },
-          { type: 'image', assetId: 'photo', alt: 'Photo' },
+          {
+            type: 'image',
+            assetId: 'photo',
+            alt: 'Photo',
+            presentation: 'equation',
+            width: 0.47,
+          },
           { type: 'equation', equationId: 'eq' },
           { type: 'noteReference', noteId: 'note' },
         ],
@@ -237,6 +243,7 @@ describe('writeHtml', () => {
       '<a href="https://example.com/a?x=1&amp;y=2">site</a>',
     );
     expect(html).toContain('src="data:image/png;base64,iVBORw=="');
+    expect(html).toContain('class="equation-image image-width-45">');
     expect(html).toContain('<ol start="3"><li><p>Item</p></li></ol>');
     expect(html).toContain('<caption>Data</caption>');
     expect(html).toContain('<th colspan="2" rowspan="1"><p>Head</p></th>');
