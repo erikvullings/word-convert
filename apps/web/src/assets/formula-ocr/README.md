@@ -11,4 +11,6 @@ revision; canonical upstream licensing was therefore reviewed separately.
 Run `pnpm assets:formula-ocr` to download missing files and verify every recorded
 size and SHA-256 hash. Conversion never contacts the mirror: Vite emits the
 models as same-origin hashed assets, and the service worker caches them after
-their first use.
+their first use. The production-like 60-crop results, runtime measurements, and
+alternative recognizer preflight are recorded in
+`documentation/formula-benchmarks/README.md`.

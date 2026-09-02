@@ -5,6 +5,7 @@ import type {
   PdfBounds,
   PdfFormulaCandidate,
   PdfFormulaSource,
+  PdfManualFormulaRegion,
 } from './types.ts';
 
 interface LayoutRegion extends PdfBounds {
@@ -18,7 +19,14 @@ export function createFormulaCandidates(input: {
   layoutRegions?: readonly LayoutRegion[];
   taggedFormulaSpanIds?: ReadonlySet<string>;
 }): PdfFormulaCandidate[] {
-  const groups = geometryGroups(input.spans).filter(isFormulaGroup);
+  const typicalFontSize = median(
+    input.spans
+      .filter(({ text }) => text.trim())
+      .map(({ fontSize }) => fontSize),
+  );
+  const groups = geometryGroups(input.spans).filter((spans) =>
+    isFormulaGroup(spans, typicalFontSize, input.spans),
+  );
   const proposals = groups.map((spans) =>
     candidate(input.page, spans, undefined, input.taggedFormulaSpanIds),
   );
@@ -63,6 +71,28 @@ export function padFormulaBounds(
   return { x, top, width: right - x, height: bottom - top };
 }
 
+export function createManualFormulaCandidate(
+  region: PdfManualFormulaRegion,
+  spans: readonly RawPdfTextSpan[],
+): PdfFormulaCandidate {
+  const formulaSpans = spans.filter((span) => intersects(span, region.bounds));
+  const features = extractMathFeatures(formulaSpans, { isolated: true });
+  const tex = reconstructSimpleTex(formulaSpans);
+  return {
+    id: region.id,
+    page: region.page,
+    kind: region.kind,
+    bounds: region.bounds,
+    spanIds: formulaSpans.map(({ id }) => id),
+    features,
+    score: features.score,
+    confidence: 'medium',
+    sources: ['manual'],
+    ...(tex ? { tex } : {}),
+    requiresRecognition: tex === undefined,
+  };
+}
+
 function geometryGroups(spans: readonly RawPdfTextSpan[]): RawPdfTextSpan[][] {
   const sorted = [...spans]
     .filter(({ text }) => text.trim())
@@ -85,14 +115,47 @@ function geometryGroups(spans: readonly RawPdfTextSpan[]): RawPdfTextSpan[][] {
   return [...inlineRuns, ...groups];
 }
 
-function isFormulaGroup(spans: readonly RawPdfTextSpan[]): boolean {
+function isFormulaGroup(
+  spans: readonly RawPdfTextSpan[],
+  typicalFontSize: number,
+  pageSpans: readonly RawPdfTextSpan[],
+): boolean {
   const text = spans.map(({ text }) => text).join(' ');
   const features = extractMathFeatures(spans, { isolated: true });
   return (
+    Math.max(...spans.map(({ fontSize }) => fontSize)) >=
+      typicalFontSize * 0.85 &&
+    !isSubordinateScript(spans, pageSpans) &&
     /[=<>≤≥]/u.test(text) &&
     !/^\s*[A-Za-z]{3,}(?:\s+[A-Za-z]{3,})+\s*$/u.test(text) &&
-    (features.score >= 1.5 || /[+\-−×÷*/]/u.test(text))
+    features.score >= PDF_FORMULA_THRESHOLDS.geometryScore
   );
+}
+
+function isSubordinateScript(
+  spans: readonly RawPdfTextSpan[],
+  pageSpans: readonly RawPdfTextSpan[],
+): boolean {
+  const bounds = boundsOf(spans);
+  const maximumSize = Math.max(...spans.map(({ fontSize }) => fontSize));
+  return pageSpans.some(
+    (span) =>
+      !spans.includes(span) &&
+      span.fontSize >= maximumSize * 1.5 &&
+      span.x < bounds.x + bounds.width &&
+      span.x + span.width > bounds.x &&
+      Math.max(
+        0,
+        bounds.top - (span.top + span.height),
+        span.top - (bounds.top + bounds.height),
+      ) <= 0.02,
+  );
+}
+
+function median(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.floor(sorted.length / 2)]!;
 }
 
 function candidate(

@@ -450,14 +450,19 @@ describe('App', () => {
     expect(metadata).toContain('default · certain · conversion settings');
   });
 
-  it('shows Formula Review only for PDF equations and exposes review controls', () => {
+  it('shows Formula Review for fully analysed PDFs and exposes review controls', () => {
     const state = createInitialState('2026-09-02');
     state.stage = 1;
     state.status = 'ready';
     state.sourceFormat = 'pdf';
     state.model = editorModel();
     const withoutFormula = JSON.stringify(renderApp(controllerFor(state)));
-    expect(withoutFormula).not.toContain('Review formulas');
+    expect(withoutFormula).toContain('Review formulas');
+    state.review = 'formula';
+    const emptyReview = JSON.stringify(renderApp(controllerFor(state)));
+    expect(emptyReview).toContain('Add missed formula');
+    expect(emptyReview).toContain('No formulas match this filter.');
+    delete state.review;
 
     state.model.equations = {
       'pdf-equation-p2-001': {
@@ -558,6 +563,7 @@ describe('App', () => {
       'Previous formula',
       'Next formula',
       'Accept all high-confidence formulas',
+      'Add missed formula',
     ])
       expect(review).toContain(text);
   });

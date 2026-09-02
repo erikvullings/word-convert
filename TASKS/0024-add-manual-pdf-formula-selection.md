@@ -1,6 +1,6 @@
 # 0024 Add manual PDF formula selection
 
-Status: open
+Status: done
 Priority: low
 Subsystem: frontend
 Depends on: 0022
@@ -38,3 +38,12 @@ selection interaction.
 - 2026-09-02 GitHub Copilot: Deferred from the initial implementation because a
   robust region-selection interaction is materially larger than editing and
   rejecting detected formulas.
+- 2026-09-02 GitHub Copilot: Added normalized pointer and percentage-field
+  selection, stable coordinate-derived manual IDs, inline/block choice, and
+  removal through reader-owned candidates and typed decisions. Manual regions
+  now traverse the existing deterministic reconstruction/OCR, limits, warning,
+  review, rerun, reject, and cleanup paths. Fully analysed PDFs expose Formula
+  Review even with zero automatic detections. Unit/controller/reader coverage
+  includes image-only bounded recognition and crop disposal; live Chromium
+  evidence covers pointer, keyboard, empty-review routing, recoverable failure,
+  and responsive layout.

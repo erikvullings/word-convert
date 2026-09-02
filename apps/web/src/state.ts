@@ -16,6 +16,8 @@ import type {
 import type {
   PdfAnalysisSummary,
   PdfFormulaDecision,
+  PdfManualFormulaRegion,
+  PdfBounds,
 } from '@wordconvert/pdf-reader';
 
 export const WORKFLOW_STAGES = [
@@ -40,6 +42,7 @@ export interface PdfImportSettings {
   removedCandidateIds: string[];
   retainedCandidateIds: string[];
   formulaDecisions: Record<string, PdfFormulaDecision>;
+  manualFormulaRegions: PdfManualFormulaRegion[];
 }
 
 export interface PdfPagePreviewState {
@@ -104,6 +107,10 @@ export interface AppState {
   formulaReviewSelectedId?: string;
   formulaDrafts: Record<string, string>;
   formulaValidationErrors: Record<string, string>;
+  formulaSelectionOpen?: boolean;
+  formulaSelectionKind: 'inline' | 'display';
+  formulaSelectionAnchor?: { x: number; top: number };
+  formulaSelectionBounds?: PdfBounds;
   previewMode: PreviewMode;
   cover: CoverSettings;
   preferences: Preferences;
@@ -148,6 +155,7 @@ export function createInitialState(
     formulaReviewFilter: 'all',
     formulaDrafts: {},
     formulaValidationErrors: {},
+    formulaSelectionKind: 'inline',
     previewMode: 'rendered',
     cover: createCoverSettings(),
     pdfImport: {
@@ -158,6 +166,7 @@ export function createInitialState(
       removedCandidateIds: [],
       retainedCandidateIds: [],
       formulaDecisions: {},
+      manualFormulaRegions: [],
     },
     pdfPreviewPage: 1,
     pdfPreviewScale: 1,

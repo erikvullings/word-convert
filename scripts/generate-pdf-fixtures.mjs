@@ -9,6 +9,7 @@ import {
   StandardFonts,
   rgb,
 } from 'pdf-lib';
+import { format } from 'prettier';
 
 const outputDirectory = resolve('tests/fixtures/pdf');
 const fixedDate = new Date('2026-08-29T12:00:00.000Z');
@@ -18,6 +19,8 @@ await save('one-column-book.pdf', await oneColumnBook());
 await save('two-column-article.pdf', await twoColumnArticle());
 await save('tagged-article.pdf', await taggedArticle());
 await save('scanned-page.pdf', await scannedPage());
+await save('formula-layouts.pdf', await formulaLayouts());
+await save('formula-false-positives.pdf', await formulaFalsePositives());
 await writeFile(resolve(outputDirectory, 'malformed.pdf'), '%PDF-invalid\n');
 const encrypted = spawnSync(
   'qpdf',
@@ -37,8 +40,8 @@ if (encrypted.error)
 
 await writeFile(
   resolve(outputDirectory, 'corpus.json'),
-  `${JSON.stringify(
-    {
+  await format(
+    JSON.stringify({
       generatedAt: fixedDate.toISOString(),
       fixtures: [
         {
@@ -57,13 +60,54 @@ await writeFile(
           file: 'scanned-page.pdf',
           covers: ['image-only page', 'OCR warning'],
         },
+        {
+          file: 'formula-layouts.pdf',
+          covers: [
+            'inline formula',
+            'display formula',
+            'scripts',
+            'Greek and operators',
+            'complex fraction',
+            'sum and integral',
+            'equation number',
+            'nearby figure',
+            'two-column formulas',
+          ],
+          expectedEquations: [
+            { page: 1, display: 'inline', tex: 'E=mc^2' },
+            {
+              page: 1,
+              display: 'block',
+              tex: '\\frac{x^2+\\alpha}{\\sqrt{y_1}}',
+            },
+            {
+              page: 1,
+              display: 'block',
+              tex: '\\sum_{i=1}^{n}i+\\int_0^1x\\,dx',
+              number: '(1)',
+            },
+            { page: 2, display: 'inline', tex: 'a_i+b_i=c_i' },
+            { page: 2, display: 'block', tex: 'x^2+y^2=z^2' },
+          ],
+          expectedFigures: [{ page: 1, label: 'Figure 1' }],
+        },
+        {
+          file: 'formula-false-positives.pdf',
+          covers: [
+            'false-positive prose',
+            'false-positive heading',
+            'false-positive code',
+            'false-positive chemistry',
+            'false-positive numeric table',
+          ],
+          expectedEquations: [],
+        },
         { file: 'encrypted.pdf', covers: ['password-protected PDF error'] },
         { file: 'malformed.pdf', covers: ['invalid PDF error'] },
       ],
-    },
-    null,
-    2,
-  )}\n`,
+    }),
+    { parser: 'json' },
+  ),
 );
 
 async function baseDocument(title) {
@@ -214,6 +258,158 @@ async function scannedPage() {
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nS8AAAAASUVORK5CYII=',
   );
   page.drawImage(image, { x: 50, y: 50, width: 500, height: 700 });
+  return document;
+}
+
+async function formulaLayouts() {
+  const document = await baseDocument('Formula Layouts');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const italic = await document.embedFont(StandardFonts.TimesRomanItalic);
+  const bold = await document.embedFont(StandardFonts.TimesRomanBold);
+  const symbol = await document.embedFont(StandardFonts.Symbol);
+  const page = document.addPage([600, 800]);
+  page.drawText('Formula Layouts', { x: 60, y: 740, size: 22, font: bold });
+  page.drawText('Mass and energy satisfy E = mc', {
+    x: 60,
+    y: 680,
+    size: 12,
+    font: body,
+  });
+  page.drawText('2', { x: 231, y: 687, size: 8, font: body });
+  page.drawText(' in the simplest model.', {
+    x: 237,
+    y: 680,
+    size: 12,
+    font: body,
+  });
+
+  page.drawText('x', { x: 225, y: 596, size: 18, font: italic });
+  page.drawText('2', { x: 236, y: 606, size: 10, font: body });
+  page.drawText('+', { x: 251, y: 596, size: 18, font: body });
+  page.drawText('α', { x: 270, y: 596, size: 18, font: symbol });
+  page.drawLine({ start: { x: 215, y: 588 }, end: { x: 310, y: 588 } });
+  page.drawText('y', { x: 250, y: 562, size: 18, font: italic });
+  page.drawText('1', { x: 261, y: 558, size: 10, font: body });
+  page.drawText('Complex fraction with scripts and Greek.', {
+    x: 170,
+    y: 530,
+    size: 10,
+    font: body,
+  });
+
+  page.drawText('∑', { x: 180, y: 430, size: 28, font: symbol });
+  page.drawText('n', { x: 188, y: 453, size: 9, font: italic });
+  page.drawText('i=1', { x: 181, y: 416, size: 8, font: italic });
+  page.drawText('i +', { x: 214, y: 432, size: 18, font: italic });
+  page.drawText('∫', { x: 255, y: 427, size: 30, font: symbol });
+  page.drawText('1', { x: 266, y: 452, size: 9, font: body });
+  page.drawText('0', { x: 264, y: 414, size: 9, font: body });
+  page.drawText('x dx', { x: 286, y: 432, size: 18, font: italic });
+  page.drawText('(1)', { x: 505, y: 432, size: 12, font: body });
+
+  page.drawRectangle({
+    x: 70,
+    y: 215,
+    width: 180,
+    height: 110,
+    borderWidth: 1,
+    borderColor: rgb(0, 0, 0),
+  });
+  page.drawLine({ start: { x: 85, y: 235 }, end: { x: 225, y: 300 } });
+  page.drawText('Figure 1. Linear response.', {
+    x: 78,
+    y: 195,
+    size: 10,
+    font: body,
+  });
+  page.drawText('The nearby figure remains independent of equation (1).', {
+    x: 285,
+    y: 270,
+    size: 11,
+    font: body,
+  });
+
+  const columns = document.addPage([600, 800]);
+  columns.drawText('Two-column formula layout', {
+    x: 60,
+    y: 740,
+    size: 20,
+    font: bold,
+  });
+  columns.drawText('Left prose introduces a', {
+    x: 60,
+    y: 680,
+    size: 11,
+    font: body,
+  });
+  columns.drawText('i', { x: 180, y: 676, size: 8, font: body });
+  columns.drawText('+ b', { x: 185, y: 680, size: 11, font: body });
+  columns.drawText('i', { x: 205, y: 676, size: 8, font: body });
+  columns.drawText('= c', { x: 210, y: 680, size: 11, font: body });
+  columns.drawText('i', { x: 229, y: 676, size: 8, font: body });
+  columns.drawText('Right prose follows.', {
+    x: 330,
+    y: 680,
+    size: 11,
+    font: body,
+  });
+  columns.drawText('x', { x: 390, y: 590, size: 18, font: italic });
+  columns.drawText('2', { x: 401, y: 600, size: 9, font: body });
+  columns.drawText('+ y', { x: 415, y: 590, size: 18, font: italic });
+  columns.drawText('2', { x: 448, y: 600, size: 9, font: body });
+  columns.drawText('= z', { x: 462, y: 590, size: 18, font: italic });
+  columns.drawText('2', { x: 495, y: 600, size: 9, font: body });
+  return document;
+}
+
+async function formulaFalsePositives() {
+  const document = await baseDocument('Formula False Positives');
+  const body = await document.embedFont(StandardFonts.Helvetica);
+  const bold = await document.embedFont(StandardFonts.HelveticaBold);
+  const mono = await document.embedFont(StandardFonts.Courier);
+  const page = document.addPage([600, 800]);
+  page.drawText('Q4 RESULTS + 20% GROWTH', {
+    x: 60,
+    y: 730,
+    size: 22,
+    font: bold,
+  });
+  page.drawText('The product name X appears in prose, not as mathematics.', {
+    x: 60,
+    y: 675,
+    size: 11,
+    font: body,
+  });
+  page.drawText('const total = items.length + 1;', {
+    x: 60,
+    y: 625,
+    size: 11,
+    font: mono,
+  });
+  page.drawText('The sample contains H2O, CO2, NaCl, and pH 7.', {
+    x: 60,
+    y: 575,
+    size: 11,
+    font: body,
+  });
+  page.drawText('Year      2023      2024      2025', {
+    x: 60,
+    y: 500,
+    size: 11,
+    font: mono,
+  });
+  page.drawText('Revenue   120       135       149', {
+    x: 60,
+    y: 475,
+    size: 11,
+    font: mono,
+  });
+  page.drawText('Margin    18%       20%       21%', {
+    x: 60,
+    y: 450,
+    size: 11,
+    font: mono,
+  });
   return document;
 }
 

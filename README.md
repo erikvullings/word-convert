@@ -136,7 +136,11 @@ after deterministic text reconstruction is insufficient. Formula crops and
 inference remain inside the conversion worker; the three pinned models are
 same-origin assets cached after first use. Install or verify them with
 `pnpm assets:formula-ocr` and check the real ONNX graphs with
-`pnpm test:formula-ocr`.
+`pnpm test:formula-ocr`. Manual page-bounded formula regions use the same local
+recognition, review, cancellation, and resource-limit path; source pixels and
+recognized TeX are never sent to a service. See the
+[formula benchmark](documentation/formula-benchmarks/README.md) for the measured
+accuracy, timing, transfer, memory, and alternative-model decision.
 
 The default DOCX reader limits are 50 MiB compressed input, 200 MiB expanded
 content, 1,000 ZIP entries, a 100:1 per-entry compression ratio, and 25 MiB per

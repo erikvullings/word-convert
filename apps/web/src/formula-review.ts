@@ -6,8 +6,12 @@ import type {
   PdfFormulaCandidate,
   PdfFormulaDecision,
 } from '@wordconvert/pdf-reader';
-import type { AppState, FormulaReviewFilter } from './state.ts';
+import type { FormulaReviewFilter } from './state.ts';
 import { previewSanitizeConfig } from './preview/index.ts';
+import {
+  formulaSelectionEditor,
+  type FormulaSelectionController,
+} from './formula-selection.ts';
 
 export type FormulaReviewStatus =
   'needs-review' | 'edited' | 'accepted' | 'rejected';
@@ -22,8 +26,7 @@ export interface FormulaReviewItem {
   status: FormulaReviewStatus;
 }
 
-export interface FormulaReviewController {
-  state: AppState;
+export interface FormulaReviewController extends FormulaSelectionController {
   setFormulaReviewFilter?(filter: FormulaReviewFilter): void;
   selectFormula?(equationId: string): void;
   setFormulaDraft?(equationId: string, tex: string): void;
@@ -32,6 +35,7 @@ export interface FormulaReviewController {
   rejectFormula?(equationId: string): void;
   acceptFormula?(equationId: string): void;
   acceptHighConfidenceFormulas?(): void;
+  removeManualFormulaRegion?(equationId: string): void;
 }
 
 const FILTERS: readonly [FormulaReviewFilter, string][] = [
@@ -93,6 +97,7 @@ export function formulaReviewEditor(
         ),
       ),
     ),
+    formulaSelectionEditor(controller),
     items.length === 0
       ? m('p.formula-review-empty', 'No formulas match this filter.')
       : m('.formula-review-layout', [
@@ -248,6 +253,17 @@ function formulaReviewDetail(
         },
         'Accept result',
       ),
+      item.candidate.sources.includes('manual')
+        ? m(
+            'button',
+            {
+              type: 'button',
+              disabled: busy,
+              onclick: () => controller.removeManualFormulaRegion?.(item.id),
+            },
+            'Remove manual region',
+          )
+        : null,
     ]),
     m('.formula-review-navigation', [
       m(

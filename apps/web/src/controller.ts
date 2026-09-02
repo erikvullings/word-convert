@@ -39,6 +39,10 @@ import { withMarkdownContent } from './content-editor.ts';
 import { fetchRemotePdf } from './remote-pdf.ts';
 import { inferDocumentLanguage } from './language.ts';
 import { isValidTex } from '@wordconvert/math-converter';
+import {
+  manualFormulaRegionId,
+  normalizeFormulaSelection,
+} from './formula-selection.ts';
 
 export function createBrowserController(): AppController {
   const state: AppState = createInitialState(
@@ -351,9 +355,13 @@ export function createBrowserController(): AppController {
       delete state.model;
       delete state.pdfAnalysis;
       state.pdfImport.formulaDecisions = {};
+      state.pdfImport.manualFormulaRegions = [];
       state.formulaDrafts = {};
       state.formulaValidationErrors = {};
       delete state.formulaReviewSelectedId;
+      delete state.formulaSelectionOpen;
+      delete state.formulaSelectionAnchor;
+      delete state.formulaSelectionBounds;
       delete state.pdfLayoutStatus;
       disposePdfPreview();
       state.pdfPreviewPage = 1;
@@ -826,6 +834,75 @@ export function createBrowserController(): AppController {
       state.outputSaved = false;
       controller.rerunAnalysis();
     },
+    openFormulaSelection() {
+      state.formulaSelectionOpen = true;
+      state.formulaSelectionKind = 'inline';
+      delete state.formulaSelectionAnchor;
+      delete state.formulaSelectionBounds;
+      requestPdfPage(state.pdfPreviewPage);
+    },
+    cancelFormulaSelection() {
+      delete state.formulaSelectionOpen;
+      delete state.formulaSelectionAnchor;
+      delete state.formulaSelectionBounds;
+    },
+    setFormulaSelectionKind(kind) {
+      state.formulaSelectionKind = kind;
+    },
+    beginFormulaSelection(point) {
+      state.formulaSelectionAnchor = point;
+      delete state.formulaSelectionBounds;
+    },
+    updateFormulaSelection(point) {
+      if (!state.formulaSelectionAnchor) return;
+      const bounds = normalizeFormulaSelection(
+        state.formulaSelectionAnchor,
+        point,
+      );
+      if (bounds) state.formulaSelectionBounds = bounds;
+      else delete state.formulaSelectionBounds;
+    },
+    endFormulaSelection(point) {
+      controller.updateFormulaSelection?.(point);
+      delete state.formulaSelectionAnchor;
+    },
+    setFormulaSelectionBounds(bounds) {
+      state.formulaSelectionBounds = { ...bounds };
+    },
+    addManualFormulaRegion() {
+      const bounds = state.formulaSelectionBounds;
+      const page = state.pdfPreview?.pageNumber ?? state.pdfPreviewPage;
+      if (!bounds) return;
+      const id = manualFormulaRegionId(page, bounds);
+      state.pdfImport.manualFormulaRegions = [
+        ...state.pdfImport.manualFormulaRegions.filter(
+          (region) => region.id !== id,
+        ),
+        { id, page, bounds: { ...bounds }, kind: state.formulaSelectionKind },
+      ];
+      controller.setFormulaDecision?.({ equationId: id, decision: 'formula' });
+      state.formulaReviewSelectedId = id;
+      controller.cancelFormulaSelection?.();
+      controller.rerunAnalysis();
+    },
+    removeManualFormulaRegion(equationId) {
+      state.pdfImport.manualFormulaRegions =
+        state.pdfImport.manualFormulaRegions.filter(
+          ({ id }) => id !== equationId,
+        );
+      const decisions = { ...state.pdfImport.formulaDecisions };
+      const drafts = { ...state.formulaDrafts };
+      const errors = { ...state.formulaValidationErrors };
+      delete decisions[equationId];
+      delete drafts[equationId];
+      delete errors[equationId];
+      state.pdfImport.formulaDecisions = decisions;
+      state.formulaDrafts = drafts;
+      state.formulaValidationErrors = errors;
+      if (state.formulaReviewSelectedId === equationId)
+        delete state.formulaReviewSelectedId;
+      controller.rerunAnalysis();
+    },
     setPdfAutomaticFurnitureRemoval(remove) {
       state.pdfImport.removeDetectedFurniture = remove;
       state.outputSaved = false;
@@ -1100,6 +1177,12 @@ function pdfWorkerOptions(
     removedCandidateIds: [...removedCandidateIds],
     retainedCandidateIds: [...state.pdfImport.retainedCandidateIds],
     formulaDecisions: { ...state.pdfImport.formulaDecisions },
+    manualFormulaRegions: state.pdfImport.manualFormulaRegions.map(
+      (region) => ({
+        ...region,
+        bounds: { ...region.bounds },
+      }),
+    ),
   };
 }
 

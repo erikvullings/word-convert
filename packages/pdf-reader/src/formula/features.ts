@@ -17,6 +17,7 @@ export const PDF_FORMULA_WEIGHTS = {
 
 export const PDF_FORMULA_THRESHOLDS = {
   heronConfidence: 0.6,
+  geometryScore: 1.5,
   mediumScore: 2.25,
   highScore: 4.5,
   baselineDisplacement: 0.004,

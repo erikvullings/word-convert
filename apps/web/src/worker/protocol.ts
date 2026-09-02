@@ -12,6 +12,7 @@ import type {
   PdfAnalysisSummary,
   PdfCropOptions,
   PdfFormulaDecision,
+  PdfManualFormulaRegion,
 } from '@wordconvert/pdf-reader';
 
 export interface PdfWorkerOptions {
@@ -21,6 +22,7 @@ export interface PdfWorkerOptions {
   removedCandidateIds?: string[];
   retainedCandidateIds?: string[];
   formulaDecisions?: Readonly<Record<string, PdfFormulaDecision>>;
+  manualFormulaRegions?: readonly PdfManualFormulaRegion[];
 }
 
 export type WorkerRequest =

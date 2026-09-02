@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { RawPdfTextSpan } from '../index.ts';
 import {
   createFormulaCandidates,
+  createManualFormulaCandidate,
   extractMathFeatures,
   padFormulaBounds,
   reconstructSimpleTex,
@@ -139,5 +140,26 @@ describe('PDF formula domain', () => {
     expect(
       padFormulaBounds({ x: 0.001, top: 0.002, width: 0.998, height: 0.997 }),
     ).toEqual({ x: 0, top: 0, width: 1, height: 1 });
+  });
+
+  it('turns a manual region into the same reconstructable candidate shape', () => {
+    const candidate = createManualFormulaCandidate(
+      {
+        id: 'pdf-equation-manual-p1-1000-2000-3000-1000',
+        page: 1,
+        kind: 'inline',
+        bounds: { x: 0.1, top: 0.2, width: 0.3, height: 0.1 },
+      },
+      [span('equation', 'x = 5', 0.15, 0.22, { width: 0.12 })],
+    );
+
+    expect(candidate).toMatchObject({
+      id: 'pdf-equation-manual-p1-1000-2000-3000-1000',
+      sources: ['manual'],
+      spanIds: ['equation'],
+      tex: 'x = 5',
+      requiresRecognition: false,
+      confidence: 'medium',
+    });
   });
 });

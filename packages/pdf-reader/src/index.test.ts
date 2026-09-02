@@ -6,6 +6,7 @@ import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 import {
   analysePdf,
+  createManualFormulaCandidate,
   createFormulaCandidates,
   pdfJsReader,
   type RawPdfDocument,
@@ -143,6 +144,60 @@ describe('PDF layout analysis', () => {
 
     expect(recognize).not.toHaveBeenCalled();
     expect(recognized).toEqual([candidate]);
+  });
+
+  it('recognizes an image-only manual formula region through the bounded crop path', async () => {
+    const candidate = createManualFormulaCandidate(
+      {
+        id: 'pdf-equation-manual-p1-1000-2000-3000-1000',
+        page: 1,
+        kind: 'display',
+        bounds: { x: 0.1, top: 0.2, width: 0.3, height: 0.1 },
+      },
+      [],
+    );
+    const dispose = vi.fn();
+    const recognize = vi.fn(async () => ({
+      tex: '\\frac{a}{b}',
+      diagnostics: { tokens: 6 },
+    }));
+
+    const recognized = await recognizeFormulaCandidates(
+      {
+        getViewport: ({ scale }: { scale: number }) => ({
+          width: 600 * scale,
+          height: 800 * scale,
+        }),
+        render: () => ({ promise: Promise.resolve() }),
+      } as never,
+      [candidate],
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          readRgba: () => new Uint8ClampedArray(width * height * 4).fill(255),
+          encodePng: async () => new Uint8Array(),
+          dispose,
+        }),
+      },
+      { implementation: 'test-model', recognize },
+      {
+        maxCandidatesPerPage: 10,
+        maxCandidatesTotal: 10,
+        maxCropPixels: 1_000_000,
+        maxTotalCropPixels: 1_000_000,
+        maxRecognitionTokens: 10,
+      },
+    );
+
+    expect(recognize).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(recognized[0]).toMatchObject({
+      id: candidate.id,
+      sources: ['manual'],
+      recognition: { tex: '\\frac{a}{b}', model: 'test-model' },
+    });
   });
 
   it('constructs a semantic equation from simple PDF text geometry', async () => {
@@ -796,6 +851,25 @@ describe('PDF layout analysis', () => {
         images: ['pdf-image-1-0'],
         warning: ['pdf-ocr-not-supported'],
       });
+    });
+
+    it('detects generated formula layouts without classifying deliberate false positives', async () => {
+      const [formulaLayouts, falsePositives] = await Promise.all([
+        pdfJsReader.read(await fixture('formula-layouts.pdf'), {
+          conversionDate: '2026-09-02',
+        }),
+        pdfJsReader.read(await fixture('formula-false-positives.pdf'), {
+          conversionDate: '2026-09-02',
+        }),
+      ]);
+
+      const detectedTex = Object.values(formulaLayouts.model.equations).map(
+        ({ tex }) => tex,
+      );
+      expect(detectedTex.some((tex) => /x.*y.*z/.test(tex))).toBe(true);
+      expect(detectedTex).not.toContain('i=1');
+      expect(falsePositives.analysis.formulaCandidates ?? []).toEqual([]);
+      expect(Object.keys(falsePositives.model.equations)).toEqual([]);
     });
 
     it('is deterministic and rejects malformed, excessive, and cancelled input privately', async () => {

@@ -28,10 +28,14 @@ import type {
   RawPdfTextSpan,
 } from './index.ts';
 import { PdfReadError } from './error.ts';
-import { createFormulaCandidates } from './formula/index.ts';
+import {
+  createFormulaCandidates,
+  createManualFormulaCandidate,
+} from './formula/index.ts';
 import type {
   PdfFormulaCandidate,
   PdfFormulaLimits,
+  PdfManualFormulaRegion,
   PdfFormulaRecognizer,
 } from './formula/index.ts';
 import { rgbaToPng } from './png.ts';
@@ -55,6 +59,7 @@ export interface PdfExtractionOptions {
   layoutDetector?: PdfLayoutDetector;
   formulaRecognizer?: PdfFormulaRecognizer;
   formulaLimits?: PdfFormulaLimits;
+  manualFormulaRegions?: readonly PdfManualFormulaRegion[];
 }
 
 export interface PdfFigureSurface {
@@ -234,6 +239,7 @@ export async function extractPdfWithPdfJs(
           options.layoutDetector,
           options.formulaRecognizer,
           options.formulaLimits,
+          options.manualFormulaRegions,
           formulaBudget,
           options.onProgress,
         );
@@ -328,6 +334,7 @@ async function readPage(
   layoutDetector?: PdfLayoutDetector,
   formulaRecognizer?: PdfFormulaRecognizer,
   formulaLimits?: PdfFormulaLimits,
+  manualFormulaRegions: readonly PdfManualFormulaRegion[] = [],
   formulaBudget: PdfFormulaBudget = {
     candidates: 0,
     cropPixels: 0,
@@ -395,6 +402,12 @@ async function readPage(
     spans,
     layoutRegions,
   });
+  for (const region of manualFormulaRegions.filter(
+    ({ page: regionPage }) => regionPage === pageNumber,
+  )) {
+    formulaCandidates = formulaCandidates.filter(({ id }) => id !== region.id);
+    formulaCandidates.push(createManualFormulaCandidate(region, spans));
+  }
   if (formulaLimits) {
     const available = Math.max(
       0,

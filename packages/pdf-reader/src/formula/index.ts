@@ -1,4 +1,8 @@
-export { createFormulaCandidates, padFormulaBounds } from './candidates.ts';
+export {
+  createFormulaCandidates,
+  createManualFormulaCandidate,
+  padFormulaBounds,
+} from './candidates.ts';
 export {
   extractMathFeatures,
   normalizePdfFontName,
@@ -13,6 +17,7 @@ export type {
   PdfFormulaDecision,
   PdfFormulaImage,
   PdfFormulaLimits,
+  PdfManualFormulaRegion,
   PdfFormulaRecognition,
   PdfFormulaRecognizer,
   PdfFormulaSource,

@@ -45,6 +45,8 @@ import { writeHtml } from '@wordconvert/html-writer';
 import { previewSanitizeConfig, warningDestination } from './preview/index.ts';
 import type { HtmlOutputMode, MarkdownOutputMode } from './output.ts';
 import type { PdfFormulaDecision } from '@wordconvert/pdf-reader';
+import type { PdfBounds } from '@wordconvert/pdf-reader';
+import type { FormulaSelectionPoint } from './formula-selection.ts';
 import { formulaReviewEditor } from './formula-review.ts';
 
 const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
@@ -103,6 +105,15 @@ export interface AppController {
   rejectFormula?(equationId: string): void;
   acceptFormula?(equationId: string): void;
   acceptHighConfidenceFormulas?(): void;
+  openFormulaSelection?(): void;
+  cancelFormulaSelection?(): void;
+  setFormulaSelectionKind?(kind: 'inline' | 'display'): void;
+  beginFormulaSelection?(point: FormulaSelectionPoint): void;
+  updateFormulaSelection?(point: FormulaSelectionPoint): void;
+  endFormulaSelection?(point: FormulaSelectionPoint): void;
+  setFormulaSelectionBounds?(bounds: PdfBounds): void;
+  addManualFormulaRegion?(): void;
+  removeManualFormulaRegion?(equationId: string): void;
   setPdfAutomaticFurnitureRemoval?(remove: boolean): void;
   setPresetText(value: string): void;
   importPreset(): void;
@@ -317,7 +328,7 @@ function outputChooser(controller: AppController): m.Vnode {
         : 'Analysis is complete. Choose how you want to use the document.',
     ),
     requiresFullPdfAnalysis ? pdfImportEditor(controller) : null,
-    !requiresFullPdfAnalysis && hasFormulas
+    !requiresFullPdfAnalysis && state.sourceFormat === 'pdf'
       ? m(
           'button.formula-review-entry',
           {

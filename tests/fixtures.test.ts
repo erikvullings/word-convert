@@ -11,6 +11,7 @@ import {
 } from '../scripts/generate-docx-fixtures.mjs';
 
 const fixtureDirectory = new URL('./fixtures/docx/', import.meta.url);
+const pdfFixtureDirectory = new URL('./fixtures/pdf/', import.meta.url);
 
 interface Manifest {
   name: string;
@@ -125,5 +126,33 @@ describe('DOCX fixture corpus', () => {
     expect(expandedSize.length).toBeLessThan(2048);
     expect(entryCount.subarray(0, 4).toString()).toBe('PK\u0003\u0004');
     expect(expandedSize.subarray(0, 4).toString()).toBe('PK\u0003\u0004');
+  });
+});
+
+describe('PDF formula fixture corpus', () => {
+  it('covers representative formula layouts and false positives', async () => {
+    const corpus = JSON.parse(
+      await readFile(new URL('corpus.json', pdfFixtureDirectory), 'utf8'),
+    ) as {
+      fixtures: Array<{ file: string; covers: string[] }>;
+    };
+    const coverage = new Set(corpus.fixtures.flatMap(({ covers }) => covers));
+
+    expect(
+      [
+        'inline formula',
+        'display formula',
+        'complex fraction',
+        'sum and integral',
+        'equation number',
+        'nearby figure',
+        'two-column formulas',
+        'false-positive prose',
+        'false-positive heading',
+        'false-positive code',
+        'false-positive chemistry',
+        'false-positive numeric table',
+      ].filter((feature) => !coverage.has(feature)),
+    ).toEqual([]);
   });
 });

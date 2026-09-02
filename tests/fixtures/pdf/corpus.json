@@ -18,12 +18,48 @@
       "covers": ["image-only page", "OCR warning"]
     },
     {
-      "file": "encrypted.pdf",
-      "covers": ["password-protected PDF error"]
+      "file": "formula-layouts.pdf",
+      "covers": [
+        "inline formula",
+        "display formula",
+        "scripts",
+        "Greek and operators",
+        "complex fraction",
+        "sum and integral",
+        "equation number",
+        "nearby figure",
+        "two-column formulas"
+      ],
+      "expectedEquations": [
+        { "page": 1, "display": "inline", "tex": "E=mc^2" },
+        {
+          "page": 1,
+          "display": "block",
+          "tex": "\\frac{x^2+\\alpha}{\\sqrt{y_1}}"
+        },
+        {
+          "page": 1,
+          "display": "block",
+          "tex": "\\sum_{i=1}^{n}i+\\int_0^1x\\,dx",
+          "number": "(1)"
+        },
+        { "page": 2, "display": "inline", "tex": "a_i+b_i=c_i" },
+        { "page": 2, "display": "block", "tex": "x^2+y^2=z^2" }
+      ],
+      "expectedFigures": [{ "page": 1, "label": "Figure 1" }]
     },
     {
-      "file": "malformed.pdf",
-      "covers": ["invalid PDF error"]
-    }
+      "file": "formula-false-positives.pdf",
+      "covers": [
+        "false-positive prose",
+        "false-positive heading",
+        "false-positive code",
+        "false-positive chemistry",
+        "false-positive numeric table"
+      ],
+      "expectedEquations": []
+    },
+    { "file": "encrypted.pdf", "covers": ["password-protected PDF error"] },
+    { "file": "malformed.pdf", "covers": ["invalid PDF error"] }
   ]
 }

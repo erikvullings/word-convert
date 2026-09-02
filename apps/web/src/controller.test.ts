@@ -568,10 +568,69 @@ describe('browser controller', () => {
       },
     });
   });
+
+  it('creates, persists, rejects, and removes a manual formula region', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([new Uint8Array([1])], 'manual-formula.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    controller.state.pdfPreviewPage = 2;
+    controller.setFormulaSelectionKind?.('display');
+    controller.setFormulaSelectionBounds?.({
+      x: 0.1,
+      top: 0.2,
+      width: 0.3,
+      height: 0.1,
+    });
+    controller.addManualFormulaRegion?.();
+
+    const id = 'pdf-equation-manual-p2-1000-2000-3000-1000';
+    expect(lastPdfOptions(worker)).toMatchObject({
+      manualFormulaRegions: [
+        {
+          id,
+          page: 2,
+          kind: 'display',
+          bounds: { x: 0.1, top: 0.2, width: 0.3, height: 0.1 },
+        },
+      ],
+      formulaDecisions: {
+        [id]: { equationId: id, decision: 'formula' },
+      },
+    });
+
+    controller.rejectFormula?.(id);
+    expect(lastPdfOptions(worker)).toMatchObject({
+      manualFormulaRegions: [expect.objectContaining({ id })],
+      formulaDecisions: { [id]: { equationId: id, decision: 'text' } },
+    });
+
+    controller.removeManualFormulaRegion?.(id);
+    expect(lastPdfOptions(worker)).toMatchObject({
+      manualFormulaRegions: [],
+      formulaDecisions: {},
+    });
+  });
 });
 
 function lastPdfFormulaDecisions(worker: WorkerStub): unknown {
   const request = worker.postMessage.mock.calls.at(-1)?.[0] as
     { pdfOptions?: { formulaDecisions?: unknown } } | undefined;
   return request?.pdfOptions?.formulaDecisions;
+}
+
+function lastPdfOptions(worker: WorkerStub): unknown {
+  const request = worker.postMessage.mock.calls.at(-1)?.[0] as
+    { pdfOptions?: unknown } | undefined;
+  return request?.pdfOptions;
 }

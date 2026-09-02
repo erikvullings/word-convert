@@ -20,6 +20,7 @@ import {
   type PdfFormulaDecision,
   type PdfFormulaLimits,
   type PdfFormulaRecognizer,
+  type PdfManualFormulaRegion,
 } from './formula/index.ts';
 import {
   extractPdfWithPdfJs,
@@ -35,6 +36,7 @@ export type {
   PdfLayoutLabel,
   PdfLayoutRegion,
 } from './pdfjs.ts';
+export type { PdfManualFormulaRegion } from './formula/index.ts';
 export * from './formula/index.ts';
 
 export { PdfReadError } from './error.ts';
@@ -143,6 +145,7 @@ export interface PdfAnalysisOptions extends ConversionOptions {
   retainedCandidateIds?: readonly string[];
   styleMappings?: Readonly<Record<string, StyleMapping>>;
   formulaDecisions?: Readonly<Record<string, PdfFormulaDecision>>;
+  manualFormulaRegions?: readonly PdfManualFormulaRegion[];
   formulaRecognizer?: PdfFormulaRecognizer;
   formulaLimits?: Partial<PdfFormulaLimits>;
 }
@@ -228,6 +231,9 @@ export const pdfJsReader: PdfReader = {
         : {}),
       ...(options.formulaRecognizer
         ? { formulaRecognizer: options.formulaRecognizer }
+        : {}),
+      ...(options.manualFormulaRegions
+        ? { manualFormulaRegions: options.manualFormulaRegions }
         : {}),
       formulaLimits: {
         ...DEFAULT_PDF_FORMULA_LIMITS,

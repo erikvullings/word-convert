@@ -1,6 +1,6 @@
 # 0025 Benchmark alternative formula recognizers
 
-Status: open
+Status: done
 Priority: low
 Subsystem: research
 Depends on: 0021
@@ -42,3 +42,14 @@ may improve difficult matrices, rare symbols, and multiline formulae.
 
 - 2026-09-02 GitHub Copilot: Created as the explicit secondary-model benchmark
   requested by the specification. It is not on the initial shipping path.
+- 2026-09-02 GitHub Copilot: Pinned the Apache-2.0 browser-tagged TexTeller ONNX
+  revision and SHA-256 hashes. Its smallest complete q4f16 pair is 201,928,966
+  bytes plus about 2.24 MB metadata; official unquantized pairs exceed 1.18 GB.
+  A temporary Transformers.js install occupied 360 MB before weights and
+  introduced native build scripts blocked by repository policy. Preflight
+  therefore stopped before model download/inference, and the dependency was
+  removed. The retained dependency-injected prototype passes recognizer,
+  cancellation, validation, token-cap, concurrent-disposal, and strict-type
+  checks. No comparative accuracy is claimed. RapidLatexOCR remains the default
+  because TexTeller did not clear runtime, supply-chain, memory, or maintenance
+  gates needed to justify a corpus run or production integration.

@@ -1,6 +1,6 @@
 # 0023 Harden and tune PDF formula OCR
 
-Status: open
+Status: done
 Priority: high
 Subsystem: quality
 Depends on: 0022
@@ -68,3 +68,21 @@ public benchmark claims or isolated happy paths.
   specification. This task is the shipping gate and should not be marked done
   from unit tests alone; real browser, asset, privacy, and lifecycle evidence is
   required.
+- 2026-09-02 GitHub Copilot: Added deterministic formula-rich and deliberate
+  false-positive PDFs plus a generated 60-crop recognition corpus. The measured
+  Chromium 146 WebGPU run produced 48/60 strict KaTeX parses, 4 recoverable
+  failures, 1/60 normalized exact TeX, 225.9 ms median and 498 ms p95 inference,
+  178,952,787 transferred model bytes, and an 82,093,612-byte observed JS heap
+  high-water mark. This evidence keeps ONNX output reviewable and simple text
+  reconstruction preferred. Tightened the named detector threshold and rejected
+  subordinate script fragments; the generated detector fixture now has 100%
+  precision, 20% recall, and 0.895 IoU for its complete semantic result.
+- 2026-09-02 GitHub Copilot: Verified a clean Chromium worker through sample and
+  full PDF processing, same-origin model use, pointer/keyboard selection,
+  recoverable recognition failure, and zero desktop/mobile overflow. Updated
+  privacy, hardening, asset, benchmark, and browser evidence documentation. A
+  correctness/privacy/lifecycle review found no unresolved shipping issue.
+  Formatting, lint, all typechecks, 275 tests, production build, PDF fixture
+  regeneration, real Heron, real RapidLatexOCR, and static offline verification
+  pass. Firefox, Safari, and assistive-technology manual passes remain the
+  documented human release matrix rather than claimed evidence.

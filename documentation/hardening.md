@@ -1,6 +1,6 @@
 # Hardening and browser verification
 
-This document is the release checklist for security, privacy, performance, and browser compatibility. The automated checks are the source of truth; the interactive evidence records the exploratory run performed on 16 July 2026.
+This document is the release checklist for security, privacy, performance, and browser compatibility. The automated checks are the source of truth; the interactive evidence records exploratory runs performed on 16 July and 2 September 2026.
 
 ## Security requirement-to-test matrix
 
@@ -79,6 +79,21 @@ detector evidence, decoder diagnostics, parse success, and prose contamination
 produce a discrete review band. Failures preserve the source PDF text and add a
 reviewable warning.
 
+The 60-crop Chromium 146 WebGPU run parsed 48 outputs, failed recoverably on 4,
+and produced only 1 normalized exact result. Median inference was 225.9 ms, p95
+was 498 ms, initialization was 782.8 ms, and observed JavaScript heap peaked at
+82,093,612 bytes. These results keep recognized output reviewable and retain the
+named 3x crop scale, tight page bounds, and current confidence policy. Full
+methodology, raw measurements, detector precision/recall/IoU, and the TexTeller
+preflight decision are in [formula-benchmarks](formula-benchmarks/README.md).
+
+Manual formula selections are normalized to page-bounded coordinates and enter
+the same reader-owned candidate, recognition, warning, and decision pipeline.
+Stable coordinate-derived IDs preserve selections across deterministic reruns;
+removing or marking a region as text removes its semantic equation without
+retaining a UI-owned node. Pointer selection has percentage-field and keyboard
+alternatives.
+
 The three formula graphs total approximately 171 MiB. They and the tokenizer are
 imported only on the first complex formula during full processing, emitted as
 same-origin content-hashed assets, and excluded from install-time precaching.
@@ -122,6 +137,21 @@ EPUB content edits are parsed from Markdown into a cloned `DocumentModel` before
 The in-app browser run directly verified the Chromium path, which also exercises the engine used by Chrome and Edge. Firefox and Safari were not available in this environment, so direct two-version engine runs remain a release gate rather than a claimed result. No engine-specific API is used in conversion packages; any discovered browser-specific issue should be recorded here with the affected version and workaround.
 
 ## Interactive browser evidence
+
+The 2 September 2026 Chromium 146 run used the six-page PDF fixture and verified
+that a fully analysed PDF with zero detected equations still exposes Formula
+Review. A real pointer drag normalized to `18%, 24%, 40%, 14%`; the percentage
+inputs provided the keyboard alternative and clamped edits to page bounds. The
+manual candidate survived the full reader rerun and an invalid non-math crop
+returned a reviewable recognition warning without aborting conversion. The
+selection surface exposed a page-specific accessible name and keyboard focus.
+Desktop and 390 CSS px mobile views had no horizontal overflow. Formula and
+model requests remained same-origin; no source crop was sent externally.
+
+Screenshots:
+
+- [Desktop manual formula selection](browser-evidence/manual-formula-selection.png)
+- [Mobile manual formula review](browser-evidence/mobile-manual-formula-review.png)
 
 The 16 July 2026 in-app Chromium run used the standard comprehensive DOCX fixture and verified:
 

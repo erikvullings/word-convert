@@ -1219,6 +1219,99 @@ h1 {
   gap: 0.65rem;
 }
 
+.formula-selection-open {
+  justify-self: start;
+}
+
+.formula-selection {
+  display: grid;
+  gap: 0.85rem;
+  padding-block: 1rem;
+  border-block: 1px solid var(--line);
+}
+
+.formula-selection > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.formula-selection > header h4,
+.formula-selection > header p {
+  margin: 0;
+}
+
+.formula-selection-kind {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.formula-selection-kind button[aria-pressed='true'] {
+  color: var(--page);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.formula-selection-surface {
+  position: relative;
+  width: min(100%, 56rem);
+  max-height: 36rem;
+  overflow: auto;
+  cursor: crosshair;
+  background: white;
+  border: 1px solid var(--line);
+  touch-action: none;
+}
+
+.formula-selection-surface:focus-visible {
+  outline: 0.2rem solid var(--accent);
+  outline-offset: 0.15rem;
+}
+
+.formula-selection-surface img {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+  pointer-events: none;
+}
+
+.formula-selection-box {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  min-width: 1rem;
+  min-height: 1rem;
+  overflow: hidden;
+  color: transparent;
+  background: rgb(15 118 110 / 16%);
+  border: 0.18rem solid var(--accent);
+  pointer-events: none;
+}
+
+.formula-selection-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(5.5rem, 1fr));
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.formula-selection-fields legend {
+  grid-column: 1 / -1;
+}
+
+.formula-selection-fields label {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.formula-selection-fields input {
+  width: 100%;
+  min-width: 0;
+}
+
 .formula-review-header {
   justify-content: space-between;
 }
@@ -1373,6 +1466,18 @@ h1 {
 }
 
 @media (max-width: 760px) {
+  .app-header {
+    gap: 0.75rem;
+  }
+
+  .brand {
+    gap: 0.65rem;
+  }
+
+  .brand h1 {
+    font-size: 2rem;
+  }
+
   .formula-review-layout,
   .formula-review-detail {
     grid-template-columns: minmax(0, 1fr);
@@ -1388,6 +1493,14 @@ h1 {
   .formula-review-navigation,
   .formula-validation-error {
     grid-column: 1;
+  }
+
+  .formula-selection > header {
+    display: grid;
+  }
+
+  .formula-selection-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

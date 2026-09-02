@@ -294,6 +294,7 @@ async function decodeTokens(
       ),
       [inputNames[2]]: context,
     });
+    throwIfCancelled(cancellation);
     const logits = floatData(result, 'decoder output');
     const vocabulary = result.dims.at(-1);
     if (!vocabulary || logits.length < vocabulary)

@@ -1,0 +1,614 @@
+{
+  "schema": "wordconvert.formula-benchmark",
+  "version": 1,
+  "generatedAt": "2026-09-02T00:00:00.000Z",
+  "license": "CC0-1.0 generated fixtures",
+  "preprocessing": {
+    "background": "#ffffff",
+    "horizontalPadding": 18,
+    "browserRasterization": true,
+    "productionCropLimits": true
+  },
+  "cases": [
+    {
+      "id": "inline-01-serif",
+      "file": "inline-01-serif.svg",
+      "category": "inline",
+      "variant": "serif",
+      "tex": "x+y=z",
+      "width": 214,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "inline-01-sans",
+      "file": "inline-01-sans.svg",
+      "category": "inline",
+      "variant": "sans",
+      "tex": "x+y=z",
+      "width": 204,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "inline-01-compact",
+      "file": "inline-01-compact.svg",
+      "category": "inline",
+      "variant": "compact",
+      "tex": "x+y=z",
+      "width": 177,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "inline-02-serif",
+      "file": "inline-02-serif.svg",
+      "category": "inline",
+      "variant": "serif",
+      "tex": "E=mc^2",
+      "width": 175,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "inline-02-sans",
+      "file": "inline-02-sans.svg",
+      "category": "inline",
+      "variant": "sans",
+      "tex": "E=mc^2",
+      "width": 166,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "inline-02-compact",
+      "file": "inline-02-compact.svg",
+      "category": "inline",
+      "variant": "compact",
+      "tex": "E=mc^2",
+      "width": 146,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "scripts-03-serif",
+      "file": "scripts-03-serif.svg",
+      "category": "scripts",
+      "variant": "serif",
+      "tex": "a_i+b_i=c_i",
+      "width": 273,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "scripts-03-sans",
+      "file": "scripts-03-sans.svg",
+      "category": "scripts",
+      "variant": "sans",
+      "tex": "a_i+b_i=c_i",
+      "width": 259,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "scripts-03-compact",
+      "file": "scripts-03-compact.svg",
+      "category": "scripts",
+      "variant": "compact",
+      "tex": "a_i+b_i=c_i",
+      "width": 224,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "scripts-04-serif",
+      "file": "scripts-04-serif.svg",
+      "category": "scripts",
+      "variant": "serif",
+      "tex": "x^2+y^2=z^2",
+      "width": 273,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "scripts-04-sans",
+      "file": "scripts-04-sans.svg",
+      "category": "scripts",
+      "variant": "sans",
+      "tex": "x^2+y^2=z^2",
+      "width": 259,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "scripts-04-compact",
+      "file": "scripts-04-compact.svg",
+      "category": "scripts",
+      "variant": "compact",
+      "tex": "x^2+y^2=z^2",
+      "width": 224,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "greek-05-serif",
+      "file": "greek-05-serif.svg",
+      "category": "greek",
+      "variant": "serif",
+      "tex": "\\alpha+\\beta=\\gamma",
+      "width": 214,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "greek-05-sans",
+      "file": "greek-05-sans.svg",
+      "category": "greek",
+      "variant": "sans",
+      "tex": "\\alpha+\\beta=\\gamma",
+      "width": 204,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "greek-05-compact",
+      "file": "greek-05-compact.svg",
+      "category": "greek",
+      "variant": "compact",
+      "tex": "\\alpha+\\beta=\\gamma",
+      "width": 177,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "greek-06-serif",
+      "file": "greek-06-serif.svg",
+      "category": "greek",
+      "variant": "serif",
+      "tex": "\\Delta x\\to0",
+      "width": 155,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "greek-06-sans",
+      "file": "greek-06-sans.svg",
+      "category": "greek",
+      "variant": "sans",
+      "tex": "\\Delta x\\to0",
+      "width": 148,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "greek-06-compact",
+      "file": "greek-06-compact.svg",
+      "category": "greek",
+      "variant": "compact",
+      "tex": "\\Delta x\\to0",
+      "width": 130,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "operator-07-serif",
+      "file": "operator-07-serif.svg",
+      "category": "operator",
+      "variant": "serif",
+      "tex": "\\sum_{i=1}^n i",
+      "width": 175,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "operator-07-sans",
+      "file": "operator-07-sans.svg",
+      "category": "operator",
+      "variant": "sans",
+      "tex": "\\sum_{i=1}^n i",
+      "width": 166,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "operator-07-compact",
+      "file": "operator-07-compact.svg",
+      "category": "operator",
+      "variant": "compact",
+      "tex": "\\sum_{i=1}^n i",
+      "width": 146,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "operator-08-serif",
+      "file": "operator-08-serif.svg",
+      "category": "operator",
+      "variant": "serif",
+      "tex": "\\int_0^1x\\,dx",
+      "width": 194,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "operator-08-sans",
+      "file": "operator-08-sans.svg",
+      "category": "operator",
+      "variant": "sans",
+      "tex": "\\int_0^1x\\,dx",
+      "width": 185,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "operator-08-compact",
+      "file": "operator-08-compact.svg",
+      "category": "operator",
+      "variant": "compact",
+      "tex": "\\int_0^1x\\,dx",
+      "width": 162,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "relation-09-serif",
+      "file": "relation-09-serif.svg",
+      "category": "relation",
+      "variant": "serif",
+      "tex": "x\\ne y",
+      "width": 135,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "relation-09-sans",
+      "file": "relation-09-sans.svg",
+      "category": "relation",
+      "variant": "sans",
+      "tex": "x\\ne y",
+      "width": 129,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "relation-09-compact",
+      "file": "relation-09-compact.svg",
+      "category": "relation",
+      "variant": "compact",
+      "tex": "x\\ne y",
+      "width": 128,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "relation-10-serif",
+      "file": "relation-10-serif.svg",
+      "category": "relation",
+      "variant": "serif",
+      "tex": "a\\le b\\ge c",
+      "width": 214,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "relation-10-sans",
+      "file": "relation-10-sans.svg",
+      "category": "relation",
+      "variant": "sans",
+      "tex": "a\\le b\\ge c",
+      "width": 204,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "relation-10-compact",
+      "file": "relation-10-compact.svg",
+      "category": "relation",
+      "variant": "compact",
+      "tex": "a\\le b\\ge c",
+      "width": 177,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "fraction-11-serif",
+      "file": "fraction-11-serif.svg",
+      "category": "fraction",
+      "variant": "serif",
+      "tex": "\\frac{x+1}{y-1}",
+      "width": 372,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "fraction-11-sans",
+      "file": "fraction-11-sans.svg",
+      "category": "fraction",
+      "variant": "sans",
+      "tex": "\\frac{x+1}{y-1}",
+      "width": 352,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "fraction-11-compact",
+      "file": "fraction-11-compact.svg",
+      "category": "fraction",
+      "variant": "compact",
+      "tex": "\\frac{x+1}{y-1}",
+      "width": 303,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "fraction-12-serif",
+      "file": "fraction-12-serif.svg",
+      "category": "fraction",
+      "variant": "serif",
+      "tex": "\\frac{x^2+\\alpha}{\\sqrt{y_1}}",
+      "width": 313,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "fraction-12-sans",
+      "file": "fraction-12-sans.svg",
+      "category": "fraction",
+      "variant": "sans",
+      "tex": "\\frac{x^2+\\alpha}{\\sqrt{y_1}}",
+      "width": 296,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "fraction-12-compact",
+      "file": "fraction-12-compact.svg",
+      "category": "fraction",
+      "variant": "compact",
+      "tex": "\\frac{x^2+\\alpha}{\\sqrt{y_1}}",
+      "width": 256,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "root-13-serif",
+      "file": "root-13-serif.svg",
+      "category": "root",
+      "variant": "serif",
+      "tex": "\\sqrt{x+y}",
+      "width": 194,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "root-13-sans",
+      "file": "root-13-sans.svg",
+      "category": "root",
+      "variant": "sans",
+      "tex": "\\sqrt{x+y}",
+      "width": 185,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "root-13-compact",
+      "file": "root-13-compact.svg",
+      "category": "root",
+      "variant": "compact",
+      "tex": "\\sqrt{x+y}",
+      "width": 162,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "root-14-serif",
+      "file": "root-14-serif.svg",
+      "category": "root",
+      "variant": "serif",
+      "tex": "\\sqrt[3]{x^2+1}",
+      "width": 234,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "root-14-sans",
+      "file": "root-14-sans.svg",
+      "category": "root",
+      "variant": "sans",
+      "tex": "\\sqrt[3]{x^2+1}",
+      "width": 222,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "root-14-compact",
+      "file": "root-14-compact.svg",
+      "category": "root",
+      "variant": "compact",
+      "tex": "\\sqrt[3]{x^2+1}",
+      "width": 193,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "matrix-15-serif",
+      "file": "matrix-15-serif.svg",
+      "category": "matrix",
+      "variant": "serif",
+      "tex": "\\begin{bmatrix}a&b\\\\c&d\\end{bmatrix}",
+      "width": 332,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "matrix-15-sans",
+      "file": "matrix-15-sans.svg",
+      "category": "matrix",
+      "variant": "sans",
+      "tex": "\\begin{bmatrix}a&b\\\\c&d\\end{bmatrix}",
+      "width": 315,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "matrix-15-compact",
+      "file": "matrix-15-compact.svg",
+      "category": "matrix",
+      "variant": "compact",
+      "tex": "\\begin{bmatrix}a&b\\\\c&d\\end{bmatrix}",
+      "width": 271,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "matrix-16-serif",
+      "file": "matrix-16-serif.svg",
+      "category": "matrix",
+      "variant": "serif",
+      "tex": "\\begin{pmatrix}1&0\\\\0&1\\end{pmatrix}",
+      "width": 332,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "matrix-16-sans",
+      "file": "matrix-16-sans.svg",
+      "category": "matrix",
+      "variant": "sans",
+      "tex": "\\begin{pmatrix}1&0\\\\0&1\\end{pmatrix}",
+      "width": 315,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "matrix-16-compact",
+      "file": "matrix-16-compact.svg",
+      "category": "matrix",
+      "variant": "compact",
+      "tex": "\\begin{pmatrix}1&0\\\\0&1\\end{pmatrix}",
+      "width": 271,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "multiline-17-serif",
+      "file": "multiline-17-serif.svg",
+      "category": "multiline",
+      "variant": "serif",
+      "tex": "\\begin{aligned}f(x)&=x^2+1\\\\g(x)&=2x-3\\end{aligned}",
+      "width": 293,
+      "height": 128,
+      "maxTokens": 128
+    },
+    {
+      "id": "multiline-17-sans",
+      "file": "multiline-17-sans.svg",
+      "category": "multiline",
+      "variant": "sans",
+      "tex": "\\begin{aligned}f(x)&=x^2+1\\\\g(x)&=2x-3\\end{aligned}",
+      "width": 278,
+      "height": 128,
+      "maxTokens": 128
+    },
+    {
+      "id": "multiline-17-compact",
+      "file": "multiline-17-compact.svg",
+      "category": "multiline",
+      "variant": "compact",
+      "tex": "\\begin{aligned}f(x)&=x^2+1\\\\g(x)&=2x-3\\end{aligned}",
+      "width": 240,
+      "height": 128,
+      "maxTokens": 128
+    },
+    {
+      "id": "rare-symbol-18-serif",
+      "file": "rare-symbol-18-serif.svg",
+      "category": "rare-symbol",
+      "variant": "serif",
+      "tex": "A\\subset B\\cup C",
+      "width": 214,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "rare-symbol-18-sans",
+      "file": "rare-symbol-18-sans.svg",
+      "category": "rare-symbol",
+      "variant": "sans",
+      "tex": "A\\subset B\\cup C",
+      "width": 204,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "rare-symbol-18-compact",
+      "file": "rare-symbol-18-compact.svg",
+      "category": "rare-symbol",
+      "variant": "compact",
+      "tex": "A\\subset B\\cup C",
+      "width": 177,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "rare-symbol-19-serif",
+      "file": "rare-symbol-19-serif.svg",
+      "category": "rare-symbol",
+      "variant": "serif",
+      "tex": "\\forall x\\in\\mathbb{R},x^2\\ge0",
+      "width": 313,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "rare-symbol-19-sans",
+      "file": "rare-symbol-19-sans.svg",
+      "category": "rare-symbol",
+      "variant": "sans",
+      "tex": "\\forall x\\in\\mathbb{R},x^2\\ge0",
+      "width": 296,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "rare-symbol-19-compact",
+      "file": "rare-symbol-19-compact.svg",
+      "category": "rare-symbol",
+      "variant": "compact",
+      "tex": "\\forall x\\in\\mathbb{R},x^2\\ge0",
+      "width": 256,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "equation-number-20-serif",
+      "file": "equation-number-20-serif.svg",
+      "category": "equation-number",
+      "variant": "serif",
+      "tex": "y=mx+b",
+      "width": 720,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "equation-number-20-sans",
+      "file": "equation-number-20-sans.svg",
+      "category": "equation-number",
+      "variant": "sans",
+      "tex": "y=mx+b",
+      "width": 720,
+      "height": 88,
+      "maxTokens": 128
+    },
+    {
+      "id": "equation-number-20-compact",
+      "file": "equation-number-20-compact.svg",
+      "category": "equation-number",
+      "variant": "compact",
+      "tex": "y=mx+b",
+      "width": 720,
+      "height": 88,
+      "maxTokens": 128
+    }
+  ]
+}

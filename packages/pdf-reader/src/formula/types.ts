@@ -9,7 +9,14 @@ export interface PdfBounds {
 
 export type PdfFormulaConfidence = 'low' | 'medium' | 'high';
 export type PdfFormulaSource =
-  'heron' | 'geometry' | 'font' | 'symbols' | 'tagged-structure';
+  'heron' | 'geometry' | 'font' | 'symbols' | 'tagged-structure' | 'manual';
+
+export interface PdfManualFormulaRegion {
+  id: string;
+  page: number;
+  bounds: PdfBounds;
+  kind: 'inline' | 'display';
+}
 
 export interface PdfMathFeatures {
   mathFontRatio: number;
