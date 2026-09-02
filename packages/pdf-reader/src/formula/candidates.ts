@@ -128,6 +128,8 @@ function isFormulaGroup(
     !isSubordinateScript(spans, pageSpans) &&
     /[=<>≤≥]/u.test(text) &&
     !/^\s*[A-Za-z]{3,}(?:\s+[A-Za-z]{3,})+\s*$/u.test(text) &&
+    features.dictionaryLikeWordRatio <=
+      PDF_FORMULA_THRESHOLDS.maxGeometryDictionaryWordRatio &&
     features.score >= PDF_FORMULA_THRESHOLDS.geometryScore
   );
 }

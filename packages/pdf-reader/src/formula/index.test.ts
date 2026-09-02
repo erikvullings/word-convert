@@ -142,6 +142,52 @@ describe('PDF formula domain', () => {
     ).toEqual({ x: 0, top: 0, width: 1, height: 1 });
   });
 
+  it('does not promote multiline prose containing inline equations', () => {
+    const architectureProse = [
+      span(
+        'architecture-1',
+        'The encoder has repeated layers. Each layer contains two sub-layers.',
+        0.17,
+        0.62,
+        { width: 0.66 },
+      ),
+      span(
+        'architecture-2',
+        'The stack uses N = 6 identical layers with residual connections.',
+        0.17,
+        0.64,
+        { width: 0.66 },
+      ),
+    ];
+    const dotProductProse = [
+      span(
+        'dot-product-1',
+        'To explain why products grow, assume independent variables with mean 0 and variance 1.',
+        0.17,
+        0.7,
+        { width: 0.66 },
+      ),
+      span('dot-product-2', 'Then q · k =', 0.39, 0.72, { width: 0.14 }),
+      span('sum', 'Σ', 0.54, 0.712, { width: 0.02 }),
+      span('upper', 'd', 0.56, 0.706, { width: 0.01, fontSize: 7 }),
+      span('lower', 'i=1', 0.56, 0.728, { width: 0.02, fontSize: 7 }),
+      span(
+        'dot-product-3',
+        'q i k i and the result has mean 0 and variance d.',
+        0.59,
+        0.72,
+        { width: 0.24 },
+      ),
+    ];
+
+    expect(
+      createFormulaCandidates({ page: 3, spans: architectureProse }),
+    ).toEqual([]);
+    expect(
+      createFormulaCandidates({ page: 4, spans: dotProductProse }),
+    ).toEqual([]);
+  });
+
   it('turns a manual region into the same reconstructable candidate shape', () => {
     const candidate = createManualFormulaCandidate(
       {
