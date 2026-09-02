@@ -242,4 +242,91 @@ describe('browser controller', () => {
       expect.any(Array),
     );
   });
+
+  it('guards an unsaved output before resetting to a fresh home state', () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    const replacementWorker = new WorkerStub();
+    stubWorkers(worker, replacementWorker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    const controller = createBrowserController();
+    controller.state.stage = 2;
+    controller.state.selectedFilename = 'report.pdf';
+    controller.state.output = {
+      filename: 'report.epub',
+      mediaType: 'application/epub+zip',
+      data: new ArrayBuffer(1),
+    };
+    controller.state.outputSaved = false;
+
+    controller.reset();
+
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(controller.state.stage).toBe(2);
+    expect(controller.state.output?.filename).toBe('report.epub');
+    expect(worker.terminate).not.toHaveBeenCalled();
+  });
+
+  it('resets downloaded output without prompting and preserves preferences', () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    const replacementWorker = new WorkerStub();
+    stubWorkers(worker, replacementWorker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    const controller = createBrowserController();
+    controller.state.preferences.theme = 'dark';
+    controller.state.stage = 2;
+    controller.state.selectedFilename = 'report.pdf';
+    controller.state.output = {
+      filename: 'report.epub',
+      mediaType: 'application/epub+zip',
+      data: new ArrayBuffer(1),
+    };
+    controller.state.outputSaved = true;
+
+    controller.reset();
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(controller.state).toMatchObject({
+      stage: 0,
+      status: 'idle',
+      preferences: expect.objectContaining({ theme: 'dark' }),
+    });
+    expect(controller.state.output).toBeUndefined();
+    expect(controller.state.selectedFilename).toBeUndefined();
+    expect(worker.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('normalizes a custom output filename while retaining its extension', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.state.output = {
+      filename: 'report.epub',
+      mediaType: 'application/epub+zip',
+      data: new ArrayBuffer(1),
+    };
+
+    controller.setOutputFilename('../ Final handbook ');
+
+    expect(controller.state.output.filename).toBe('Final handbook.epub');
+
+    controller.setOutputFilename('Final handbook.epub');
+
+    expect(controller.state.output.filename).toBe('Final handbook.epub');
+  });
 });

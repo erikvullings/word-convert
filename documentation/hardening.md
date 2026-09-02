@@ -45,7 +45,7 @@ deeply equal analysis and `DocumentModel` values.
 
 ## Browser support policy
 
-WordConvert targets the current and immediately previous major releases of Chrome, Edge, Firefox, and Safari on desktop, plus the corresponding current mobile engines. The production build targets ES2022 and relies on standards available in those releases: Web Workers, transferable `ArrayBuffer`, `Blob`, `File`, object URLs, structured cloning, HTML canvas, CSS Grid/Flexbox, and module scripts.
+WordConvert targets the current and immediately previous major releases of Chrome, Edge, Firefox, and Safari on desktop, plus the corresponding current mobile engines. The production build targets ES2022 and relies on standards available in those releases: Web Workers, transferable `ArrayBuffer`, `Blob`, `File`, object URLs, structured cloning, HTML canvas, CSS Grid/Flexbox, and module scripts. Browsers exposing the File System Access API use their native save picker so the user can choose the output filename and folder. Other browsers retain the generated filename and use the standard browser download flow.
 
 PDF source-page previews are loaded only on request and rasterized on an HTML canvas with a maximum width of 1,200 pixels and a 4-megapixel budget. The browser-canvas path supports embedded fonts that PDF.js cannot reliably draw on `OffscreenCanvas` for some legacy PDFs. Preview rendering is best-effort so recoverable legacy-font errors do not produce blank pages; extraction remains strict. Preview tasks and PNG object URLs are released when replaced, when another source is selected, and when the page unloads.
 
@@ -66,6 +66,18 @@ widen them into surrounding prose. Learned crops preserve the detected bounds
 without adding safety margins, avoiding capture of adjacent text lines.
 Deterministic geometry remains the fallback where no accepted learned region
 overlaps. Sample cleanup analysis does not execute the model.
+
+Standalone equations with fragmented fraction geometry are rendered to tightly
+bounded passive PNG assets under the existing image-count and pixel budgets.
+Analysis replaces only the covered equation spans with a baseline-aligned
+inline image and preserves surrounding prose. Equation candidates are assembled
+from connected formula glyphs, exclude adjacent text lines, and are rejected
+when they exceed half the page width. Sentence-like lines containing inline
+expressions remain PDF.js text. HTML and EPUB retain responsive equation width
+classes; Markdown emits an escaped passive `img` element with the same class and
+percentage width. Validated equation crops take precedence over overlapping
+learned picture/table proposals; learned proposals enclosing sentence-like
+prose are rejected so paragraphs are not duplicated as image strips.
 
 The FP16 model is approximately 82.5 MiB and the emitted ONNX WASM runtime is
 approximately 25 MiB. Both are same-origin, content-hashed build assets. After

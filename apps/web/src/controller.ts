@@ -34,7 +34,7 @@ import {
   prepareCoverImage,
   titleTextWarning,
 } from '@wordconvert/cover-generator';
-import { deliverDownload } from './download/index.ts';
+import { saveDownload } from './download/index.ts';
 import { withMarkdownContent } from './content-editor.ts';
 import { fetchRemotePdf } from './remote-pdf.ts';
 import { inferDocumentLanguage } from './language.ts';
@@ -135,6 +135,7 @@ export function createBrowserController(): AppController {
     if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
     epubRefreshTimer = undefined;
     delete state.markdownEdit;
+    state.outputSaved = false;
     state.status = 'converting';
     state.operationId = operationId('convert');
     const metadata = state.model.metadata;
@@ -178,6 +179,12 @@ export function createBrowserController(): AppController {
   };
 
   const handlePopState = (event: PopStateEvent): void => {
+    if (!state.model) {
+      state.stage = 0;
+      delete state.review;
+      m.redraw();
+      return;
+    }
     const stage =
       typeof event.state?.stage === 'number' ? event.state.stage : 1;
     state.review =
@@ -280,6 +287,34 @@ export function createBrowserController(): AppController {
         window.removeEventListener('popstate', handlePopState);
       }
     },
+    reset() {
+      if (
+        state.outputSaved === false &&
+        !confirm(
+          'This document has changes that have not been downloaded. Discard everything and return home?',
+        )
+      )
+        return;
+      remotePdfAbort?.abort();
+      remotePdfAbort = undefined;
+      if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
+      epubRefreshTimer = undefined;
+      disposePdfPreview();
+      replaceWorker();
+      sourceInput = undefined;
+      sourceFilename = undefined;
+      autoPreviewOperationId = undefined;
+      pdfLayoutOperationId = undefined;
+      const freshState = createInitialState(
+        state.conversionDate,
+        state.preferences,
+      );
+      for (const key of Object.keys(state)) Reflect.deleteProperty(state, key);
+      Object.assign(state, freshState);
+      if (typeof history !== 'undefined')
+        history.replaceState({ stage: 0 }, '', window.location.href);
+      m.redraw();
+    },
     selectFiles(files) {
       const file = files[0];
       if (!file) return;
@@ -306,6 +341,7 @@ export function createBrowserController(): AppController {
       }
       delete state.error;
       delete state.output;
+      state.outputSaved = false;
       delete state.selectedEpubFile;
       delete state.epubContentEdit;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
@@ -394,6 +430,7 @@ export function createBrowserController(): AppController {
         state.stage = 0;
         delete state.selectedFilename;
         delete state.sourceFormat;
+        delete state.outputSaved;
       }
       m.redraw();
     },
@@ -449,18 +486,55 @@ export function createBrowserController(): AppController {
                 .buffer as ArrayBuffer,
             }
           : state.output;
-      deliverDownload(
+      void saveDownload(
         output,
         {
           createObjectURL: (blob) => URL.createObjectURL(blob),
           revokeObjectURL: (url) => URL.revokeObjectURL(url),
           createAnchor: () => document.createElement('a'),
+          ...('showSaveFilePicker' in window
+            ? {
+                showSaveFilePicker: (options: unknown) =>
+                  (
+                    window as unknown as {
+                      showSaveFilePicker: (
+                        pickerOptions: unknown,
+                      ) => Promise<never>;
+                    }
+                  ).showSaveFilePicker(options),
+              }
+            : {}),
         },
         () => {
           if (state.preferences.outputFormat !== 'epub') delete state.output;
           delete state.markdownEdit;
         },
-      );
+      )
+        .then((saved) => {
+          if (saved) state.outputSaved = true;
+          m.redraw();
+        })
+        .catch(() => {
+          state.error = {
+            code: 'conversion-failed',
+            message: 'The converted document could not be saved.',
+            recoverable: true,
+          };
+          state.status = 'error';
+          m.redraw();
+        });
+    },
+    setOutputFilename(filename) {
+      if (!state.output) return;
+      state.output = {
+        ...state.output,
+        filename: normalizeOutputFilename(filename, state.output.filename),
+      };
+      state.outputSaved = false;
+    },
+    setMarkdownContent(content) {
+      state.markdownEdit = content;
+      state.outputSaved = false;
     },
     setTheme(theme: ThemePreference) {
       state.preferences.theme = theme;
@@ -504,6 +578,7 @@ export function createBrowserController(): AppController {
     },
     setEpubContent(content) {
       state.epubContentEdit = content;
+      state.outputSaved = false;
       if (state.preferences.outputFormat !== 'epub' || state.stage !== 2)
         return;
       if (state.operationId && state.status === 'converting')
@@ -522,12 +597,14 @@ export function createBrowserController(): AppController {
     },
     setStyleMapping(styleId: string, mapping: StyleMapping) {
       state.styleMappings = { ...state.styleMappings, [styleId]: mapping };
+      state.outputSaved = false;
     },
     acceptHighConfidence() {
       state.styleMappings = acceptHighConfidenceMappings(
         state.model?.styles ?? [],
         state.styleMappings,
       );
+      state.outputSaved = false;
     },
     rerunAnalysis() {
       if (!sourceInput || !sourceFilename) return;
@@ -594,6 +671,7 @@ export function createBrowserController(): AppController {
       const amount = Math.min(0.45, Math.max(0, value));
       if (edge === 'top') state.pdfImport.cropTop = amount;
       else state.pdfImport.cropBottom = amount;
+      state.outputSaved = false;
     },
     setPdfPreviewPage(pageNumber) {
       requestPdfPage(pageNumber);
@@ -633,9 +711,11 @@ export function createBrowserController(): AppController {
         ({ id }) => id === candidateId,
       );
       if (candidate) candidate.removed = remove;
+      state.outputSaved = false;
     },
     setPdfAutomaticFurnitureRemoval(remove) {
       state.pdfImport.removeDetectedFurniture = remove;
+      state.outputSaved = false;
     },
     setPresetText(value: string) {
       state.presetText = value;
@@ -671,6 +751,7 @@ export function createBrowserController(): AppController {
         ...state.model,
         metadata: setMetadataField(state.model.metadata, field, value),
       };
+      state.outputSaved = false;
       refreshEpubPreview();
     },
     setSubjects(value: string) {
@@ -679,6 +760,7 @@ export function createBrowserController(): AppController {
         ...state.model,
         metadata: setSubjects(state.model.metadata, value.split(',')),
       };
+      state.outputSaved = false;
       refreshEpubPreview();
     },
     setAuthors(value: string) {
@@ -687,6 +769,7 @@ export function createBrowserController(): AppController {
         ...state.model,
         metadata: setAuthors(state.model.metadata, parseAuthors(value)),
       };
+      state.outputSaved = false;
       refreshEpubPreview();
     },
     addAuthor() {
@@ -695,6 +778,7 @@ export function createBrowserController(): AppController {
         ...state.model,
         metadata: addAuthor(state.model.metadata),
       };
+      state.outputSaved = false;
       refreshEpubPreview();
     },
     updateAuthor(index: number, person: Person) {
@@ -703,6 +787,7 @@ export function createBrowserController(): AppController {
         ...state.model,
         metadata: updateAuthor(state.model.metadata, index, person),
       };
+      state.outputSaved = false;
       refreshEpubPreview();
     },
     removeAuthor(index: number) {
@@ -711,14 +796,17 @@ export function createBrowserController(): AppController {
         ...state.model,
         metadata: removeAuthor(state.model.metadata, index),
       };
+      state.outputSaved = false;
       refreshEpubPreview();
     },
     setCoverSource(source: CoverSource) {
       state.cover = { ...state.cover, source };
+      state.outputSaved = false;
       refreshEpubPreview();
     },
     updateCover(patch: Partial<CoverSettings>) {
       state.cover = { ...state.cover, ...patch };
+      state.outputSaved = false;
       refreshEpubPreview();
     },
     selectCoverFile(file: File) {
@@ -747,6 +835,7 @@ export function createBrowserController(): AppController {
           };
           if (!warning) delete next.warning;
           state.cover = next;
+          state.outputSaved = false;
           refreshEpubPreview();
           m.redraw();
         } catch (cause) {
@@ -786,6 +875,7 @@ export function createBrowserController(): AppController {
       };
       if (!warning) delete next.warning;
       state.cover = next;
+      state.outputSaved = false;
       refreshEpubPreview();
     },
   };
@@ -820,6 +910,7 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
 
   if (response.type === 'output') {
     state.output = response;
+    state.outputSaved = false;
     if (response.files?.[0]) state.selectedEpubFile = response.files[0];
     else delete state.selectedEpubFile;
     state.stage = 2;
@@ -831,6 +922,23 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
     state.status = 'error';
     delete state.progress;
   }
+}
+
+function normalizeOutputFilename(value: string, fallback: string): string {
+  const expectedExtension = /\.[^.]+$/.exec(fallback)?.[0] ?? '';
+  const leaf = value.split(/[\\/]/).at(-1) ?? '';
+  const cleaned = [...leaf]
+    .filter((character) => {
+      const code = character.charCodeAt(0);
+      return code >= 32 && code !== 127;
+    })
+    .join('')
+    .trim();
+  if (!cleaned || cleaned === '.' || cleaned === '..') return fallback;
+  const basename =
+    cleaned.replace(/\.(?:epub|html?|md|markdown|zip)$/i, '').trim() ||
+    'document';
+  return `${basename}${expectedExtension}`;
 }
 
 function pdfWorkerOptions(

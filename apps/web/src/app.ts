@@ -12,8 +12,10 @@ import {
   FlatButton,
   InputCheckbox,
   LinearProgress,
+  NumberInput,
   RadioButtons,
   Select,
+  TextInput,
 } from 'mithril-materialized';
 import { MarkdownEditor } from 'mithril-markdown-wysiwyg';
 import DOMPurify from 'dompurify';
@@ -38,6 +40,7 @@ import {
 import { createCoverSvg } from '@wordconvert/cover-generator';
 import type { MathOutputMode } from '@wordconvert/math-converter';
 import { writeMarkdown } from '@wordconvert/markdown-writer';
+import { writeHtml } from '@wordconvert/html-writer';
 import { previewSanitizeConfig, warningDestination } from './preview/index.ts';
 import type { HtmlOutputMode, MarkdownOutputMode } from './output.ts';
 
@@ -61,10 +64,13 @@ const epubPreviewModeOptions = [
 export interface AppController {
   state: AppState;
   dispose?(): void;
+  reset(): void;
   selectFiles(files: FileList | File[]): void;
   cancel(): void;
   convert(): void;
   download(): void;
+  setOutputFilename(filename: string): void;
+  setMarkdownContent?(content: string): void;
   setTheme(theme: ThemePreference): void;
   setRemotePdfUrl?(url: string): void;
   loadRemotePdf?(): void;
@@ -126,17 +132,26 @@ export function renderApp(
 ): m.Vnode {
   return m('.app', { 'data-theme': controller.state.preferences.theme }, [
     m('header.app-header', [
-      m('.brand', [
-        m('img.brand-logo', {
-          src: './wc.svg',
-          alt: '',
-          'aria-hidden': 'true',
-        }),
-        m('div', [
-          m('p.eyebrow', 'Private document conversion'),
-          m('h1', 'WordConvert'),
-        ]),
-      ]),
+      m(
+        'button.brand.brand-home',
+        {
+          type: 'button',
+          title: 'Go to WordConvert home',
+          'aria-label': 'Go to WordConvert home',
+          onclick: () => controller.reset(),
+        },
+        [
+          m('img.brand-logo', {
+            src: './wc.svg',
+            alt: '',
+            'aria-hidden': 'true',
+          }),
+          m('div', [
+            m('p.eyebrow', 'Private document conversion'),
+            m('h1', 'WordConvert'),
+          ]),
+        ],
+      ),
       themeToggle(controller),
     ]),
     m(
@@ -365,7 +380,7 @@ function pdfImportEditor(controller: AppController): m.Vnode {
   return m('section#pdf-import-settings.pdf-import-editor', [
     m('h3', 'PDF page cleanup'),
     m(
-      'p',
+      'p.pdf-import-summary',
       `Only ${analysedPages.length} representative pages were scanned. Adjust the sample if needed, then process the full document once with your cleanup choices.`,
     ),
     state.pdfLayoutStatus
@@ -379,19 +394,14 @@ function pdfImportEditor(controller: AppController): m.Vnode {
         )
       : null,
     m('.pdf-sample-controls', [
-      m('label', [
-        'Pages to sample',
-        m('input', {
-          type: 'number',
-          min: Math.min(5, pageCount),
-          max: pageCount,
-          value: state.pdfImport.samplePageCount,
-          onchange: (event: Event) =>
-            controller.setPdfSamplePageCount?.(
-              Number((event.currentTarget as HTMLInputElement).value),
-            ),
-        }),
-      ]),
+      m(NumberInput, {
+        className: 'pdf-sample-count',
+        label: 'Pages to sample',
+        min: Math.min(5, pageCount),
+        max: pageCount,
+        value: state.pdfImport.samplePageCount,
+        oninput: (value) => controller.setPdfSamplePageCount?.(value),
+      }),
       m(FlatButton, {
         label: 'Rescan representative pages',
         onclick: () => controller.rescanPdfSample?.(),
@@ -411,22 +421,7 @@ function pdfImportEditor(controller: AppController): m.Vnode {
                 cropControl(controller, 'top', 'Top crop', top),
                 cropControl(controller, 'bottom', 'Bottom crop', bottom),
               ]),
-              m(
-                'small',
-                'Crop bands remove text only. Images are always retained.',
-              ),
               pdfPaginationControls(controller, pageCount),
-              m('label', [
-                m('input', {
-                  type: 'checkbox',
-                  checked: state.pdfImport.removeDetectedFurniture,
-                  onchange: (event: Event) =>
-                    controller.setPdfAutomaticFurnitureRemoval?.(
-                      (event.currentTarget as HTMLInputElement).checked,
-                    ),
-                }),
-                'Automatically remove high-confidence repeated content',
-              ]),
             ]),
           ]),
         ])
@@ -1024,7 +1019,7 @@ function preview(controller: AppController): m.Vnode {
                 'article.document-preview',
                 m.trust(
                   DOMPurify.sanitize(
-                    renderMarkdown(source),
+                    epubRenderedPreview(state, source),
                     previewSanitizeConfig(),
                   ),
                 ),
@@ -1111,7 +1106,7 @@ function preview(controller: AppController): m.Vnode {
             return m(MarkdownEditor, {
               content: state.markdownEdit,
               onContentChange: (newContent: string) => {
-                state.markdownEdit = newContent;
+                controller.setMarkdownContent?.(newContent);
               },
               markdownToHtml: renderMarkdown,
               placeholder: 'Edit markdown…',
@@ -1134,19 +1129,33 @@ function preview(controller: AppController): m.Vnode {
   ]);
 }
 
+export function epubRenderedPreview(state: AppState, source: string): string {
+  if (state.epubContentEdit !== undefined || !state.model)
+    return renderMarkdown(source);
+  const metadata = { ...state.model.metadata };
+  delete metadata.title;
+  return writeHtml(
+    { ...state.model, metadata },
+    {
+      conversionDate: state.conversionDate,
+      mode: 'fragment',
+      formulaMode: state.preferences.formulaMode,
+    },
+  );
+}
+
 function epubContentSource(state: AppState): string {
   if (state.epubContentEdit !== undefined) return state.epubContentEdit;
   if (!state.model) return '';
   const metadata = { ...state.model.metadata };
   delete metadata.title;
-  state.epubContentEdit = writeMarkdown(
+  return writeMarkdown(
     { ...state.model, metadata },
     {
       conversionDate: state.conversionDate,
       formulaMode: 'source',
     },
   );
-  return state.epubContentEdit;
 }
 
 function outputPreviewWorkspace(
@@ -1351,6 +1360,7 @@ export function extractHtmlBody(source: string): string {
 function previewActions(controller: AppController): m.Vnode {
   const state = controller.state;
   return m('.preview-actions', [
+    outputFilenameField(controller),
     m(Button, {
       label: `Download ${state.output?.filename ?? 'output'}`,
       disabled: !state.output,
@@ -1529,11 +1539,28 @@ function navigateToWarning(
 function downloadPanel(controller: AppController): m.Vnode {
   return m('div', [
     m('p', 'Your converted document is ready.'),
+    outputFilenameField(controller),
     m(Button, {
       label: `Download ${controller.state.output?.filename ?? 'document'}`,
       onclick: () => controller.download(),
     }),
   ]);
+}
+
+function outputFilenameField(controller: AppController): m.Vnode | null {
+  const output = controller.state.output;
+  if (!output) return null;
+  return m(TextInput, {
+    className: 'output-filename',
+    label: 'Output filename',
+    value: outputBasename(output.filename),
+    autocomplete: 'off',
+    oninput: (value) => controller.setOutputFilename(value),
+  });
+}
+
+function outputBasename(filename: string): string {
+  return filename.replace(/\.[^.]*$/, '');
 }
 
 function themeToggle(controller: AppController): m.Vnode {

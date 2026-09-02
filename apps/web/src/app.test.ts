@@ -8,6 +8,7 @@ import { strToU8, zipSync } from 'fflate';
 
 import {
   dateInputValue,
+  epubRenderedPreview,
   extractHtmlBody,
   markdownSourcePreview,
   outputPreviewSource,
@@ -64,13 +65,31 @@ describe('App', () => {
     ).toBe('<h1>Report</h1><p>Body</p>');
   });
 
+  it('allows the generated output filename to be edited before download', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 3;
+    state.output = {
+      filename: 'report.epub',
+      mediaType: 'application/epub+zip',
+      data: new ArrayBuffer(1),
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('Output filename');
+    expect(rendered).toContain('"value":"report"');
+    expect(rendered).not.toContain('"value":"report.epub"');
+  });
+
   it('renders a focused local workflow with accessible file selection', () => {
     const controller: AppController = {
       state: createInitialState('2026-07-15'),
+      reset: () => undefined,
       selectFiles: () => undefined,
       cancel: () => undefined,
       convert: () => undefined,
       download: () => undefined,
+      setOutputFilename: () => undefined,
       setTheme: () => undefined,
       setOutputFormat: () => undefined,
       setStyleMapping: () => undefined,
@@ -97,6 +116,7 @@ describe('App', () => {
 
     expect(rendered).not.toContain('Conversion workflow');
     expect(rendered).not.toContain('Current document');
+    expect(rendered).toContain('Go to WordConvert home');
     expect(rendered).toContain('All processing stays on this device');
     expect(rendered).toContain('Choose a DOCX or PDF document');
     expect(rendered).toContain('Open a PDF from a URL');
@@ -152,6 +172,7 @@ describe('App', () => {
     expect(rendered).toContain('Page 3 of 12');
     expect(rendered).not.toContain('Showing 3 to 3 of 12 pages');
     expect(rendered).toContain('Pages to sample');
+    expect(rendered).toContain('"label":"Pages to sample"');
     expect(rendered).toContain('Currently scanned: 1, 4, 8, 12');
     expect(rendered).toContain('Top crop: 8%');
     expect(rendered).toContain('Bottom crop: 6%');
@@ -323,12 +344,11 @@ describe('App', () => {
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
     expect(rendered).toContain('one-time model download on first use');
-    expect(rendered.indexOf('Crop bands remove text only')).toBeLessThan(
-      rendered.indexOf('Page 1 of 44'),
+    expect(rendered).not.toContain('Crop bands remove text only');
+    expect(rendered).not.toContain(
+      'Automatically remove high-confidence repeated content',
     );
-    expect(rendered.indexOf('Page 1 of 44')).toBeLessThan(
-      rendered.indexOf('Automatically remove high-confidence'),
-    );
+    expect(rendered).toContain('Page 1 of 44');
   });
 
   it('shows the document title quietly and uses radio buttons for Markdown preview mode', () => {
@@ -366,10 +386,12 @@ describe('App', () => {
     state.model = editorModel();
     const controller: AppController = {
       state,
+      reset: () => undefined,
       selectFiles: () => undefined,
       cancel: () => undefined,
       convert: () => undefined,
       download: () => undefined,
+      setOutputFilename: () => undefined,
       setTheme: () => undefined,
       setOutputFormat: () => undefined,
       setStyleMapping: () => undefined,
@@ -639,6 +661,44 @@ describe('App', () => {
     expect(rendered).toContain('Show original');
   });
 
+  it('preserves inline equation image presentation in the EPUB preview', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.preferences.outputFormat = 'epub';
+    state.previewMode = 'rendered';
+    state.model = editorModel();
+    state.model.blocks = [
+      {
+        type: 'paragraph',
+        children: [
+          { type: 'text', text: 'Before' },
+          {
+            type: 'image',
+            assetId: 'equation-image',
+            presentation: 'equation',
+            width: 0.47,
+          },
+          { type: 'text', text: 'After' },
+        ],
+      },
+    ];
+    state.model.assets['equation-image'] = {
+      id: 'equation-image',
+      mediaType: 'image/png',
+      data: Uint8Array.from([137, 80, 78, 71]),
+    };
+    state.output = {
+      filename: 'fixture.epub',
+      mediaType: 'application/epub+zip',
+      data: epubFixtureBuffer(),
+    };
+
+    const rendered = epubRenderedPreview(state, '');
+
+    expect(rendered).toContain('equation-image image-width-45');
+  });
+
   it('renders preview actions both above and below preview content', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 2;
@@ -742,10 +802,12 @@ function controllerFor(
 ): AppController {
   return {
     state,
+    reset: () => undefined,
     selectFiles: () => undefined,
     cancel: () => undefined,
     convert: () => undefined,
     download: () => undefined,
+    setOutputFilename: () => undefined,
     setTheme: () => undefined,
     setOutputFormat: () => undefined,
     setStyleMapping: () => undefined,

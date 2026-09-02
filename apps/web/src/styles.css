@@ -161,6 +161,24 @@ textarea {
   gap: 1rem;
 }
 
+.brand-home {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.brand-home:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 0.35rem;
+}
+.output-filename {
+  width: min(100%, 18rem);
+  margin: 0;
+}
+
 .brand-logo {
   width: clamp(3rem, 8vw, 5rem);
   height: clamp(3rem, 8vw, 5rem);
@@ -372,6 +390,14 @@ h1 {
   margin-top: 0;
 }
 
+.pdf-import-summary {
+  margin-block: 0 0.25rem;
+}
+
+.pdf-layout-status {
+  margin-block: 0.25rem 0.5rem;
+}
+
 .pdf-crop-layout {
   min-width: 0;
 }
@@ -380,17 +406,17 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   gap: 0.65rem;
-  align-items: end;
-  margin: 1rem 0;
+  align-items: start;
+  margin: 1.5rem 0 1rem;
 }
 
-.pdf-sample-controls label {
-  display: grid;
-  gap: 0.3rem;
+.pdf-sample-count {
+  width: 10rem;
+  margin: 0;
 }
 
-.pdf-sample-controls input {
-  width: 7rem;
+.pdf-sample-controls > .btn-flat {
+  transform: translateY(-1rem);
 }
 
 .pdf-sample-controls small {
@@ -415,6 +441,7 @@ h1 {
 .pdf-pagination {
   justify-content: center;
   margin-top: 0.35rem;
+  border-top: 0;
   background: transparent;
 }
 
@@ -725,6 +752,7 @@ h1 {
 .preview-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.75rem;
   margin: 1rem 0;
 }
@@ -901,10 +929,47 @@ h1 {
   margin-inline: 0 !important;
 }
 
-.document-preview :is(img, svg, video, canvas, iframe) {
+.document-preview :is(img:not(.equation-image), svg, video, canvas, iframe) {
   width: 100%;
   max-width: 100% !important;
   height: auto;
+}
+
+.document-preview img.equation-image {
+  width: var(--equation-image-width, auto);
+  max-width: 100% !important;
+  height: auto;
+}
+
+.equation-image.image-width-5 {
+  --equation-image-width: 5%;
+}
+.equation-image.image-width-10 {
+  --equation-image-width: 10%;
+}
+.equation-image.image-width-15 {
+  --equation-image-width: 15%;
+}
+.equation-image.image-width-20 {
+  --equation-image-width: 20%;
+}
+.equation-image.image-width-25 {
+  --equation-image-width: 25%;
+}
+.equation-image.image-width-30 {
+  --equation-image-width: 30%;
+}
+.equation-image.image-width-35 {
+  --equation-image-width: 35%;
+}
+.equation-image.image-width-40 {
+  --equation-image-width: 40%;
+}
+.equation-image.image-width-45 {
+  --equation-image-width: 45%;
+}
+.equation-image.image-width-50 {
+  --equation-image-width: 50%;
 }
 
 .document-preview :is(h1, h2, h3, h4, h5, h6) {
@@ -966,6 +1031,23 @@ h1 {
   display: block;
   clear: both;
   margin-block: 1.25em;
+}
+
+.document-preview p > img.equation-image {
+  display: inline-block;
+  clear: none;
+  margin: 0 0.12em;
+  vertical-align: middle;
+}
+
+.md-editable-area img.equation-image,
+.editor-wysiwyg img.equation-image {
+  display: inline-block;
+  width: var(--equation-image-width, auto);
+  max-width: 100%;
+  height: auto;
+  margin: 0 0.12em;
+  vertical-align: middle;
 }
 
 .document-preview figure {

@@ -85,6 +85,7 @@ export interface AppState {
   pdfPreviewLoading?: boolean;
   pdfPreviewError?: string;
   output?: DownloadOutput;
+  outputSaved?: boolean;
   selectedEpubFile?: string;
   markdownEdit?: string;
   epubContentEdit?: string;
