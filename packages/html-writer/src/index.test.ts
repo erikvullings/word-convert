@@ -52,6 +52,18 @@ describe('writeHtml', () => {
 
     expect(html).toContain(sourceHtml);
     expect(html).toContain('.source-html .ltx_equation');
+    expect(html).toContain('.source-html .ltx_creator');
+    expect(html).toContain('.source-html .ltx_title.ltx_title_document');
+    expect(html).toContain('.source-html .ltx_title.ltx_title_paragraph');
+    expect(html).toContain('font-size:1.15em;font-weight:600');
+    expect(html).toContain('.source-html .ltx_abstract');
+    expect(html).toContain('.source-html .ltx_eqn_row');
+    expect(html).toContain(
+      'grid-template-columns:minmax(0,1fr) auto minmax(0,1fr)',
+    );
+    expect(html).toContain('.ltx_eqn_eqno{grid-column:3');
+    expect(html).toContain('>.ltx_item,.source-html .ltx_enumerate>.ltx_item');
+    expect(html).toContain('.source-html .ltx_graphics');
     expect(html).not.toContain('| --- |');
   });
 

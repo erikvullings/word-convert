@@ -402,6 +402,84 @@ describe('browser controller', () => {
     expect(controller.state.output.filename).toBe('Final handbook.epub');
   });
 
+  it('mails the ready EPUB using its document metadata title', async () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const share = vi.fn<(data: ShareData) => Promise<void>>(
+      async () => undefined,
+    );
+    vi.stubGlobal('navigator', {
+      canShare: () => true,
+      share,
+    });
+    const controller = createBrowserController();
+    controller.state.model = model();
+    controller.state.model.metadata.title = {
+      value: 'Attention Is All You Need [1706.03762]',
+      provenance: {
+        source: 'https://arxiv.org/html/1706.03762v7',
+        method: 'extracted',
+        confidence: 'high',
+      },
+    };
+    controller.state.output = {
+      filename: '1706.03762v7.epub',
+      mediaType: 'application/epub+zip',
+      data: new ArrayBuffer(1),
+    };
+
+    controller.mailDocument?.();
+    await vi.waitFor(() => expect(share).toHaveBeenCalledOnce());
+
+    expect(share.mock.calls[0]?.[0]).toMatchObject({
+      title: 'Attention Is All You Need [1706.03762]',
+      files: [expect.objectContaining({ name: '1706.03762v7.epub' })],
+    });
+  });
+
+  it('uses the enriched arXiv title as the EPUB output filename', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.state.sourceFormat = 'html';
+    controller.state.selectedFilename = '1706.03762v7.html';
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.model = model();
+    controller.state.model.metadata.title = {
+      value: 'Attention Is All You Need [1706.03762]',
+      provenance: {
+        source: 'https://arxiv.org/html/1706.03762v7',
+        method: 'extracted',
+        confidence: 'high',
+      },
+    };
+    controller.state.model.metadata.identifier = {
+      value: 'https://arxiv.org/html/1706.03762v7',
+      provenance: {
+        source: 'https://arxiv.org/html/1706.03762v7',
+        method: 'extracted',
+        confidence: 'high',
+      },
+    };
+
+    controller.convert();
+
+    expect(worker.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'convert',
+        filename: 'Attention Is All You Need [1706.03762].epub',
+      }),
+    );
+  });
+
   it('retains formula decisions across PDF reruns and prunes disappeared candidates', async () => {
     vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
     const worker = new WorkerStub();

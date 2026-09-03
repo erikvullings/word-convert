@@ -86,6 +86,22 @@ describe('App', () => {
     expect(rendered).toContain('Output filename');
     expect(rendered).toContain('"value":"report"');
     expect(rendered).not.toContain('"value":"report.epub"');
+    expect(rendered).toContain('Mail document');
+  });
+
+  it('does not offer mail delivery for non-EPUB output', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 3;
+    state.preferences.outputFormat = 'html';
+    state.output = {
+      filename: 'report.html',
+      mediaType: 'text/html',
+      data: new ArrayBuffer(1),
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).not.toContain('Mail document');
   });
 
   it('renders a focused local workflow with accessible file selection', () => {
@@ -127,6 +143,9 @@ describe('App', () => {
     expect(rendered).toContain('All processing stays on this device');
     expect(rendered).toContain('Choose a DOCX or PDF document');
     expect(rendered).toContain('Open a document from a URL');
+    expect(rendered).toContain('browser-default');
+    expect(rendered).toContain('Formula recognition. ');
+    expect(rendered).toContain('approximately 245 MiB model');
     expect(rendered).toContain('https://arxiv.org/abs/1706.03762');
     expect(rendered).toContain('arXiv links automatically use');
     expect(rendered).toContain(
@@ -873,6 +892,33 @@ describe('App', () => {
     expect(rendered).toContain('equation-image image-width-45');
   });
 
+  it('shows source HTML editing beside an isolated styled preview', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.sourceFormat = 'html';
+    state.preferences.outputFormat = 'epub';
+    state.preferences.theme = 'light';
+    state.previewMode = 'edit';
+    state.model = editorModel();
+    state.sourceHtml = {
+      html: '<article class="ltx_document"><h1>Source article</h1></article>',
+      xhtml:
+        '<article xmlns="http://www.w3.org/1999/xhtml" class="ltx_document"><h1>Source article</h1></article>',
+      css: '.ltx_document{max-width:42rem}',
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('source-edit-comparison');
+    expect(rendered).toContain('html-source-editor');
+    expect(rendered).toContain('source-html-preview');
+    expect(rendered).toContain('sandbox');
+    expect(rendered).toContain('.ltx_document{max-width:42rem}');
+    expect(rendered).toContain('color-scheme:light');
+    expect(rendered).toContain('body{background:#fff;color:#202124}');
+  });
+
   it('renders preview actions both above and below preview content', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 2;
@@ -889,7 +935,8 @@ describe('App', () => {
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
     expect((rendered.match(/Choose another format/g) ?? []).length).toBe(2);
     expect((rendered.match(/Review metadata/g) ?? []).length).toBe(2);
-    expect((rendered.match(/Download report.md/g) ?? []).length).toBe(2);
+    expect((rendered.match(/"label":"Download"/g) ?? []).length).toBe(2);
+    expect(rendered).not.toContain('Download report.md');
   });
 
   it('places a collapsed, actionable warning panel after the preview', () => {

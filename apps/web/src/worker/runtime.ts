@@ -131,7 +131,10 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                   formulaMode: request.formulaMode ?? 'mathml',
                   ...(request.cover ? { cover: request.cover } : {}),
                   ...(request.sourceHtml
-                    ? { sourceXhtml: request.sourceHtml.xhtml }
+                    ? {
+                        sourceXhtml: request.sourceHtml.xhtml,
+                        sourceCss: request.sourceHtml.css,
+                      }
                     : {}),
                 })
               : request.format === 'html' && request.mode === 'zip'
@@ -139,7 +142,10 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                     conversionDate: request.conversionDate,
                     formulaMode: request.formulaMode ?? 'mathml',
                     ...(request.sourceHtml
-                      ? { sourceHtml: request.sourceHtml.html }
+                      ? {
+                          sourceHtml: request.sourceHtml.html,
+                          sourceCss: request.sourceHtml.css,
+                        }
                       : {}),
                   })
                 : request.format === 'markdown' && request.mode === 'zip'
@@ -154,7 +160,10 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                             conversionDate: request.conversionDate,
                             formulaMode: request.formulaMode ?? 'mathml',
                             ...(request.sourceHtml
-                              ? { sourceHtml: request.sourceHtml.html }
+                              ? {
+                                  sourceHtml: request.sourceHtml.html,
+                                  sourceCss: request.sourceHtml.css,
+                                }
                               : {}),
                           })
                         : writeMarkdown(request.model, {

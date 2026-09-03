@@ -2,24 +2,31 @@ import {
   DOCUMENT_MODEL_SCHEMA,
   DOCUMENT_MODEL_VERSION,
   type BlockNode,
+  type DocumentAsset,
   type DocumentModel,
   type Equation,
   type InlineNode,
 } from '@wordconvert/document-model';
 import { builtinHtmlToMarkdown } from 'mithril-markdown-wysiwyg';
 import DOMPurify from 'dompurify';
+import type { CssNode, List, ListItem } from 'css-tree';
 
 import { markdownToBlocks } from './content-editor.ts';
-import type { RemoteTextFormat } from './remote-document.ts';
+import type {
+  RemoteImageResource,
+  RemoteTextFormat,
+} from './remote-document.ts';
 
 export interface TextDocumentImportOptions {
   filename: string;
   conversionDate: string;
   sourceUrl?: string;
+  resources?: readonly RemoteImageResource[];
+  stylesheets?: readonly string[];
 }
 export interface ImportedTextDocument {
   model: DocumentModel;
-  sourceHtml?: { html: string; xhtml: string };
+  sourceHtml?: { html: string; xhtml: string; css: string };
 }
 
 interface PreparedContent {
@@ -27,7 +34,8 @@ interface PreparedContent {
   title?: string;
   language?: string;
   authors?: string[];
-  sourceHtml?: { html: string; xhtml: string };
+  sourceHtml?: { html: string; xhtml: string; css: string };
+  assets?: Record<string, DocumentAsset>;
 }
 
 export function importTextDocument(
@@ -43,18 +51,48 @@ export function importTextDocumentWithSource(
   format: RemoteTextFormat,
   options: TextDocumentImportOptions,
 ): ImportedTextDocument {
+  return importTextDocumentWithCss(content, format, options, () => '');
+}
+
+export async function importRemoteTextDocumentWithSource(
+  content: string,
+  format: RemoteTextFormat,
+  options: TextDocumentImportOptions,
+): Promise<ImportedTextDocument> {
+  if (format !== 'html')
+    return importTextDocumentWithSource(content, format, options);
+  const cssTree = await import('css-tree');
+  return importTextDocumentWithCss(content, format, options, (styles) =>
+    sanitizeEmbeddedCss(styles, cssTree),
+  );
+}
+
+function importTextDocumentWithCss(
+  content: string,
+  format: RemoteTextFormat,
+  options: TextDocumentImportOptions,
+  sanitizeCss: (styles: readonly string[]) => string,
+): ImportedTextDocument {
   if (format === 'text') return { model: plainTextModel(content, options) };
 
   const equations: Record<string, Equation> = {};
   const metadata: PreparedContent =
     format === 'html'
-      ? prepareHtml(content, options.sourceUrl, equations)
+      ? prepareHtml(
+          content,
+          options.sourceUrl,
+          equations,
+          options.resources,
+          options.stylesheets,
+          sanitizeCss,
+        )
       : { markdown: prepareMarkdown(content, equations) };
   const base = createModel(options, {
     ...(metadata.title ? { title: metadata.title } : {}),
     ...(metadata.language ? { language: metadata.language } : {}),
     authors: metadata.authors ?? [],
     equations,
+    ...(metadata.assets ? { assets: metadata.assets } : {}),
   });
   const blocks = replaceEquationPlaceholders(
     markdownToBlocks(metadata.markdown, base),
@@ -66,12 +104,48 @@ export function importTextDocumentWithSource(
   };
 }
 
+export function sanitizeEditedSourceHtml(
+  source: string,
+  assets: Readonly<Record<string, DocumentAsset>>,
+  css: string,
+): ImportedTextDocument['sourceHtml'] {
+  const document = new DOMParser().parseFromString(source, 'text/html');
+  const root = document.body.firstElementChild ?? document.body;
+  const assetIdsByDataUrl = new Map(
+    Object.values(assets).map((asset) => [assetDataUrl(asset), asset.id]),
+  );
+  root.querySelectorAll<HTMLImageElement>('img[src]').forEach((image) => {
+    const value = image.getAttribute('src') ?? '';
+    const marker = /^wordconvert-asset:([A-Za-z0-9._-]+)$/.exec(value)?.[1];
+    const id = marker ?? assetIdsByDataUrl.get(value);
+    if (!id || !assets[id]) {
+      image.removeAttribute('src');
+      return;
+    }
+    image.dataset.wordconvertAsset = id;
+  });
+  root
+    .querySelectorAll('annotation, annotation-xml')
+    .forEach((annotation) => annotation.remove());
+  return sanitizedSourceHtml(root as HTMLElement, assets, css);
+}
+
 function prepareHtml(
   html: string,
   sourceUrl: string | undefined,
   equations: Record<string, Equation>,
-): PreparedContent & { sourceHtml: { html: string; xhtml: string } } {
+  resources: readonly RemoteImageResource[] = [],
+  stylesheets: readonly string[] = [],
+  sanitizeCss: (styles: readonly string[]) => string,
+): PreparedContent & {
+  sourceHtml: { html: string; xhtml: string; css: string };
+} {
   const document = new DOMParser().parseFromString(html, 'text/html');
+  const css = sanitizeCss(
+    [...document.querySelectorAll('style')]
+      .map((style) => style.textContent ?? '')
+      .concat(stylesheets),
+  );
   const root =
     document.querySelector<HTMLElement>('article.ltx_document') ??
     document.querySelector<HTMLElement>('main, article') ??
@@ -84,7 +158,27 @@ function prepareHtml(
     if (resolved) anchor.href = resolved;
     else anchor.removeAttribute('href');
   });
+  const assets: Record<string, DocumentAsset> = {};
+  const resourcesByUrl = new Map(
+    resources.map((resource) => [resource.url, resource]),
+  );
   root.querySelectorAll<HTMLImageElement>('img[src]').forEach((image) => {
+    const source = safeImageUrl(image.getAttribute('src') ?? '', sourceUrl);
+    const resource = source ? resourcesByUrl.get(source) : undefined;
+    if (resource) {
+      const id = `remote-image-${String(Object.keys(assets).length + 1).padStart(4, '0')}`;
+      const filename = new URL(resource.url).pathname.split('/').at(-1);
+      const asset: DocumentAsset = {
+        id,
+        mediaType: resource.mediaType,
+        data: resource.data,
+        ...(filename ? { filename } : {}),
+      };
+      assets[id] = asset;
+      image.dataset.wordconvertAsset = id;
+      image.src = assetDataUrl(asset);
+      return;
+    }
     const placeholder = image.ownerDocument.createElement('span');
     placeholder.className = 'source-image-placeholder';
     placeholder.textContent = image.alt.trim() || 'Image omitted';
@@ -93,7 +187,7 @@ function prepareHtml(
   root
     .querySelectorAll('annotation, annotation-xml')
     .forEach((annotation) => annotation.remove());
-  const sourceHtml = sanitizedSourceHtml(root);
+  const sourceHtml = sanitizedSourceHtml(root, assets, css);
   root.querySelectorAll<MathMLElement>('math[alttext]').forEach((math) => {
     const tex = math.getAttribute('alttext')?.trim();
     if (!tex) return;
@@ -114,13 +208,16 @@ function prepareHtml(
     math.replaceWith(placeholder);
   });
 
-  const title =
-    document
-      .querySelector<HTMLMetaElement>('meta[name="citation_title"]')
-      ?.content.trim() ||
-    root.querySelector('h1')?.textContent?.trim() ||
-    document.title.trim() ||
-    undefined;
+  const title = documentTitle(
+    [
+      document
+        .querySelector<HTMLMetaElement>('meta[name="citation_title"]')
+        ?.content.trim(),
+      root.querySelector('h1')?.textContent?.trim(),
+      document.title.trim(),
+    ],
+    sourceUrl,
+  );
   const authors = [
     ...document.querySelectorAll<HTMLMetaElement>(
       'meta[name="citation_author"]',
@@ -131,6 +228,7 @@ function prepareHtml(
   return {
     markdown: builtinHtmlToMarkdown(root.innerHTML),
     sourceHtml,
+    assets,
     ...(title ? { title } : {}),
     ...(document.documentElement.lang
       ? { language: document.documentElement.lang }
@@ -139,9 +237,51 @@ function prepareHtml(
   };
 }
 
-function sanitizedSourceHtml(root: HTMLElement): {
+function documentTitle(
+  candidates: readonly (string | undefined)[],
+  sourceUrl: string | undefined,
+): string | undefined {
+  const titles = candidates.filter((value): value is string => Boolean(value));
+  const arxivId = arxivIdentifier(sourceUrl);
+  if (!arxivId) return titles[0];
+  const escapedId = arxivId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const identifierOnly = new RegExp(
+    `^(?:\\[?arxiv:\\s*)?${escapedId}(?:v\\d+)?\\]?$`,
+    'i',
+  );
+  const leadingIdentifier = new RegExp(
+    `^\\[?(?:arxiv:\\s*)?${escapedId}(?:v\\d+)?\\]?\\s*[-:|]?\\s*`,
+    'i',
+  );
+  const title = titles
+    .map((value) => value.replace(leadingIdentifier, '').trim())
+    .find((value) => value && !identifierOnly.test(value));
+  return title ? `${title} [${arxivId}]` : arxivId;
+}
+
+function arxivIdentifier(sourceUrl: string | undefined): string | undefined {
+  if (!sourceUrl) return undefined;
+  try {
+    const url = new URL(sourceUrl);
+    if (url.hostname !== 'arxiv.org' && url.hostname !== 'www.arxiv.org')
+      return undefined;
+    const identifier = /^\/(?:abs|html|pdf)\/(.+?)(?:\.pdf)?$/i.exec(
+      url.pathname,
+    )?.[1];
+    return identifier?.replace(/v\d+$/i, '');
+  } catch {
+    return undefined;
+  }
+}
+
+function sanitizedSourceHtml(
+  root: HTMLElement,
+  assets: Readonly<Record<string, DocumentAsset>>,
+  css: string,
+): {
   html: string;
   xhtml: string;
+  css: string;
 } {
   const html = DOMPurify.sanitize(root.outerHTML, {
     FORBID_TAGS: [
@@ -169,10 +309,107 @@ function sanitizedSourceHtml(root: HTMLElement): {
   element
     ?.querySelectorAll('math')
     .forEach((math) => removeWhitespaceTextNodes(math));
+  const htmlElement = element?.cloneNode(true) as Element | undefined;
+  const xhtmlElement = element?.cloneNode(true) as Element | undefined;
+  applyAssetSources(htmlElement, assets, 'html');
+  applyAssetSources(xhtmlElement, assets, 'xhtml');
   return {
-    html,
-    xhtml: element ? new XMLSerializer().serializeToString(element) : '',
+    html: htmlElement?.outerHTML ?? html,
+    xhtml: xhtmlElement
+      ? new XMLSerializer().serializeToString(xhtmlElement)
+      : '',
+    css,
   };
+}
+
+function applyAssetSources(
+  root: Element | undefined,
+  assets: Readonly<Record<string, DocumentAsset>>,
+  format: 'html' | 'xhtml',
+): void {
+  root
+    ?.querySelectorAll<HTMLImageElement>('img[data-wordconvert-asset]')
+    .forEach((image) => {
+      const id = image.dataset.wordconvertAsset;
+      const asset = id ? assets[id] : undefined;
+      if (!id || !asset) {
+        image.remove();
+        return;
+      }
+      image.setAttribute(
+        'src',
+        format === 'html' ? assetDataUrl(asset) : `wordconvert-asset:${id}`,
+      );
+      delete image.dataset.wordconvertAsset;
+    });
+}
+
+function sanitizeEmbeddedCss(
+  styles: readonly string[],
+  cssTree: typeof import('css-tree'),
+): string {
+  const output: string[] = [];
+  for (const style of styles) {
+    try {
+      const ast = cssTree.parse(style, { context: 'stylesheet' });
+      cssTree.walk(ast, {
+        enter(node: CssNode, item: ListItem<CssNode>, list: List<CssNode>) {
+          if (
+            node.type === 'Atrule' &&
+            ['font-face', 'import', 'namespace'].includes(
+              node.name.toLowerCase(),
+            )
+          ) {
+            if (item && list) list.remove(item);
+            return;
+          }
+          if (node.type !== 'Declaration') return;
+          const property = node.property.toLowerCase();
+          const unsafeProperty =
+            property === 'behavior' || property === '-moz-binding';
+          const unsafeValue = cssTree.find(
+            node.value,
+            (value) =>
+              value.type === 'Url' ||
+              (value.type === 'Function' &&
+                value.name.toLowerCase() === 'expression'),
+          );
+          if ((unsafeProperty || unsafeValue) && item && list)
+            list.remove(item);
+        },
+      });
+      output.push(cssTree.generate(ast).replaceAll('<', '\\3c '));
+    } catch {
+      // Invalid source styles are omitted rather than repaired heuristically.
+    }
+  }
+  return output.join('\n');
+}
+
+function safeImageUrl(
+  value: string,
+  base: string | undefined,
+): string | undefined {
+  if (!base) return undefined;
+  try {
+    const source = new URL(base);
+    const url = new URL(value, source);
+    url.hash = '';
+    return url.protocol === 'https:' && url.origin === source.origin
+      ? url.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function assetDataUrl(asset: DocumentAsset): string {
+  let binary = '';
+  for (let offset = 0; offset < asset.data.length; offset += 0x8000)
+    binary += String.fromCharCode(
+      ...asset.data.subarray(offset, offset + 0x8000),
+    );
+  return `data:${asset.mediaType};base64,${btoa(binary)}`;
 }
 
 function removeWhitespaceTextNodes(element: Element): void {
@@ -228,6 +465,7 @@ function createModel(
     language?: string;
     authors: string[];
     equations: Record<string, Equation>;
+    assets?: Record<string, DocumentAsset>;
   },
 ): DocumentModel {
   const source = options.sourceUrl ?? options.filename;
@@ -262,7 +500,7 @@ function createModel(
         : {}),
     },
     blocks: [],
-    assets: {},
+    assets: values.assets ?? {},
     equations: values.equations,
     notes: {},
     styles: [],

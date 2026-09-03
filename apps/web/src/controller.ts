@@ -34,10 +34,17 @@ import {
   prepareCoverImage,
   titleTextWarning,
 } from '@wordconvert/cover-generator';
-import { saveDownload } from './download/index.ts';
+import { mailEpub, saveDownload } from './download/index.ts';
 import { withMarkdownContent } from './content-editor.ts';
-import { fetchRemoteDocument } from './remote-document.ts';
-import { importTextDocumentWithSource } from './text-document-import.ts';
+import {
+  fetchRemoteDocument,
+  fetchRemoteHtmlImages,
+  fetchRemoteHtmlStylesheets,
+} from './remote-document.ts';
+import {
+  importRemoteTextDocumentWithSource,
+  sanitizeEditedSourceHtml,
+} from './text-document-import.ts';
 import { inferDocumentLanguage } from './language.ts';
 import { isValidTex } from '@wordconvert/math-converter';
 import {
@@ -174,6 +181,16 @@ export function createBrowserController(): AppController {
         : {}),
       authors: metadata.authors.map(({ value }) => value.name),
     });
+    const sourceHtml =
+      state.sourceFormat === 'html' && state.sourceHtml
+        ? state.epubSourceEdit === undefined
+          ? state.sourceHtml
+          : sanitizeEditedSourceHtml(
+              state.epubSourceEdit,
+              state.model.assets,
+              state.sourceHtml.css,
+            )
+        : undefined;
     worker.postMessage({
       type: 'convert',
       operationId: state.operationId,
@@ -182,7 +199,7 @@ export function createBrowserController(): AppController {
         state.epubContentEdit !== undefined
           ? withMarkdownContent(state.model, state.epubContentEdit)
           : state.model,
-      filename: sourceFilename ?? state.selectedFilename ?? 'document.docx',
+      filename: conversionSourceFilename(state, sourceFilename),
       format: state.preferences.outputFormat,
       conversionDate: state.conversionDate,
       formulaMode: state.preferences.formulaMode,
@@ -193,11 +210,7 @@ export function createBrowserController(): AppController {
             ? state.preferences.markdownMode
             : 'epub',
       ...(cover && state.preferences.epubIncludeCover ? { cover } : {}),
-      ...(state.sourceFormat === 'html' &&
-      state.epubContentEdit === undefined &&
-      state.sourceHtml
-        ? { sourceHtml: state.sourceHtml }
-        : {}),
+      ...(sourceHtml ? { sourceHtml } : {}),
     } satisfies WorkerRequest);
   };
   const refreshEpubPreview = (): void => {
@@ -378,6 +391,7 @@ export function createBrowserController(): AppController {
       state.outputSaved = false;
       delete state.selectedEpubFile;
       delete state.epubContentEdit;
+      delete state.epubSourceEdit;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
       delete state.model;
@@ -495,11 +509,11 @@ export function createBrowserController(): AppController {
       state.remoteDocumentLoading = true;
       delete state.error;
       void fetchRemoteDocument(url, fetch, abort.signal)
-        .then((remoteDocument) => {
+        .then(async (remoteDocument) => {
           if (remoteDocumentAbort !== abort) return;
-          remoteDocumentAbort = undefined;
-          delete state.remoteDocumentLoading;
           if (remoteDocument.format === 'pdf') {
+            remoteDocumentAbort = undefined;
+            delete state.remoteDocumentLoading;
             controller.selectFiles([remoteDocument.file]);
             m.redraw();
             return;
@@ -508,15 +522,36 @@ export function createBrowserController(): AppController {
           sourceFilename = remoteDocument.filename;
           state.selectedFilename = remoteDocument.filename;
           state.sourceFormat = remoteDocument.format;
-          const imported = importTextDocumentWithSource(
+          const [resources, stylesheets] =
+            remoteDocument.format === 'html'
+              ? await Promise.all([
+                  fetchRemoteHtmlImages(
+                    remoteDocument.content,
+                    remoteDocument.sourceUrl,
+                    fetch,
+                    abort.signal,
+                  ),
+                  fetchRemoteHtmlStylesheets(
+                    remoteDocument.content,
+                    remoteDocument.sourceUrl,
+                    fetch,
+                    abort.signal,
+                  ),
+                ])
+              : [[], []];
+          if (remoteDocumentAbort !== abort) return;
+          const imported = await importRemoteTextDocumentWithSource(
             remoteDocument.content,
             remoteDocument.format,
             {
               filename: remoteDocument.filename,
               sourceUrl: remoteDocument.sourceUrl,
               conversionDate: state.conversionDate,
+              resources,
+              stylesheets,
             },
           );
+          if (remoteDocumentAbort !== abort) return;
           state.model = imported.model;
           if (imported.sourceHtml) state.sourceHtml = imported.sourceHtml;
           else delete state.sourceHtml;
@@ -525,6 +560,8 @@ export function createBrowserController(): AppController {
           delete state.progress;
           state.stage = 1;
           state.status = 'ready';
+          remoteDocumentAbort = undefined;
+          delete state.remoteDocumentLoading;
           m.redraw();
         })
         .catch((cause: unknown) => {
@@ -596,6 +633,34 @@ export function createBrowserController(): AppController {
           state.status = 'error';
           m.redraw();
         });
+    },
+    mailDocument() {
+      const output = state.output;
+      if (output?.mediaType !== 'application/epub+zip') return;
+      const title =
+        state.model?.metadata.title?.value.trim() ||
+        output.filename.replace(/\.epub$/i, '');
+      void mailEpub(output, title, {
+        ...(typeof navigator.canShare === 'function' &&
+        typeof navigator.share === 'function'
+          ? {
+              canShare: (data) => navigator.canShare(data),
+              share: (data) => navigator.share(data),
+            }
+          : {}),
+        openMailto: (url) => {
+          window.location.href = url;
+        },
+      }).catch((cause: unknown) => {
+        if (cause instanceof DOMException && cause.name === 'AbortError')
+          return;
+        state.error = {
+          code: 'conversion-failed',
+          message: 'The converted EPUB could not be opened for mailing.',
+          recoverable: true,
+        };
+        m.redraw();
+      });
     },
     setOutputFilename(filename) {
       if (!state.output) return;
@@ -680,6 +745,25 @@ export function createBrowserController(): AppController {
         refreshEpubPreview();
       }, 300);
     },
+    setEpubSourceContent(content) {
+      state.epubSourceEdit = content;
+      state.outputSaved = false;
+      if (state.preferences.outputFormat !== 'epub' || state.stage !== 2)
+        return;
+      if (state.operationId && state.status === 'converting')
+        worker.postMessage({
+          type: 'cancel',
+          operationId: state.operationId,
+        } satisfies WorkerRequest);
+      state.operationId = operationId('epub-source-edit-pending');
+      state.status = 'converting';
+      delete state.output;
+      if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
+      epubRefreshTimer = setTimeout(() => {
+        epubRefreshTimer = undefined;
+        refreshEpubPreview();
+      }, 300);
+    },
     setStyleMapping(styleId: string, mapping: StyleMapping) {
       state.styleMappings = { ...state.styleMappings, [styleId]: mapping };
       state.outputSaved = false;
@@ -694,6 +778,7 @@ export function createBrowserController(): AppController {
     rerunAnalysis() {
       if (!sourceInput || !sourceFilename) return;
       delete state.epubContentEdit;
+      delete state.epubSourceEdit;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
       if (state.sourceFormat === 'pdf') {
@@ -730,6 +815,7 @@ export function createBrowserController(): AppController {
       if (!sourceInput || !sourceFilename || state.sourceFormat !== 'pdf')
         return;
       delete state.epubContentEdit;
+      delete state.epubSourceEdit;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
       disposePdfPreview();
@@ -1421,6 +1507,29 @@ function normalizeOutputFilename(value: string, fallback: string): string {
     cleaned.replace(/\.(?:epub|html?|md|markdown|zip)$/i, '').trim() ||
     'document';
   return `${basename}${expectedExtension}`;
+}
+
+function conversionSourceFilename(
+  state: AppState,
+  sourceFilename: string | undefined,
+): string {
+  const fallback = sourceFilename ?? state.selectedFilename ?? 'document.docx';
+  if (state.preferences.outputFormat !== 'epub') return fallback;
+  const identifier = state.model?.metadata.identifier?.value;
+  const title = state.model?.metadata.title?.value.trim();
+  if (!title || !isArxivUrl(identifier)) return fallback;
+  const safeTitle = title.replace(/[<>:"/\\|?*]/g, '-');
+  return normalizeOutputFilename(safeTitle, 'document.epub');
+}
+
+function isArxivUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const hostname = new URL(value).hostname;
+    return hostname === 'arxiv.org' || hostname === 'www.arxiv.org';
+  } catch {
+    return false;
+  }
 }
 
 function pdfWorkerOptions(

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { deliverDownload, saveDownload } from './index.ts';
+import { deliverDownload, mailEpub, saveDownload } from './index.ts';
 
 describe('download lifecycle', () => {
   it('revokes the object URL and releases the output after starting the download', () => {
@@ -91,5 +91,56 @@ describe('download lifecycle', () => {
 
     expect(saved).toBe(false);
     expect(release).not.toHaveBeenCalled();
+  });
+
+  it('shares an EPUB file with the document title for mail clients', async () => {
+    const share = vi.fn<(data: ShareData) => Promise<void>>(
+      async () => undefined,
+    );
+    const openMailto = vi.fn();
+
+    await mailEpub(
+      {
+        filename: 'attention.epub',
+        mediaType: 'application/epub+zip',
+        data: new Uint8Array([1, 2, 3]).buffer,
+      },
+      'Attention Is All You Need [1706.03762]',
+      {
+        canShare: ({ files }) => files?.[0]?.name === 'attention.epub',
+        share,
+        openMailto,
+      },
+    );
+
+    expect(share).toHaveBeenCalledOnce();
+    expect(share.mock.calls[0]?.[0]).toMatchObject({
+      title: 'Attention Is All You Need [1706.03762]',
+      files: [
+        expect.objectContaining({
+          name: 'attention.epub',
+          type: 'application/epub+zip',
+        }),
+      ],
+    });
+    expect(openMailto).not.toHaveBeenCalled();
+  });
+
+  it('falls back to an empty mailto draft when file sharing is unavailable', async () => {
+    const openMailto = vi.fn();
+
+    await mailEpub(
+      {
+        filename: 'attention.epub',
+        mediaType: 'application/epub+zip',
+        data: new ArrayBuffer(1),
+      },
+      'Attention & Transformers',
+      { openMailto },
+    );
+
+    expect(openMailto).toHaveBeenCalledWith(
+      'mailto:?subject=Attention%20%26%20Transformers',
+    );
   });
 });

@@ -1,12 +1,14 @@
 # Third-party notices
 
 This audit covers the direct third-party runtime dependencies bundled by the
-WordConvert web application at `pnpm-lock.yaml` as reviewed on 2 September 2026.
+WordConvert web application at `pnpm-lock.yaml` as reviewed on 3 September 2026.
 Workspace packages are part of WordConvert; development-only dependencies are not
 distributed in its browser bundle.
 
 | Package | Reviewed version | Licence | Copyright / attribution | Source |
 | --- | --- | --- | --- | --- |
+| CodeMirror 6 (`codemirror`, `@codemirror/lang-html`, `@codemirror/search`, `@codemirror/state`, `@codemirror/theme-one-dark`) | 6.0.2, 6.4.12, 6.7.2, 6.7.2, 6.1.3 | MIT | Copyright (c) 2018–2021 Marijn Haverbeke and others | <https://codemirror.net/> |
+| css-tree | 3.2.1 | MIT | Copyright (c) 2016–2026 Roman Dvornov | <https://github.com/csstree/csstree> |
 | DOMPurify | 3.4.14 | Apache-2.0 OR MPL-2.0 | Cure53 and other contributors | <https://github.com/cure53/DOMPurify> |
 | fflate | 0.8.3 | MIT | Copyright (c) 2026 Arjun Barrett | <https://github.com/101arrowz/fflate> |
 | KaTeX | 0.16.47 | MIT | Copyright (c) 2013–2020 Khan Academy and other contributors | <https://github.com/KaTeX/KaTeX> |

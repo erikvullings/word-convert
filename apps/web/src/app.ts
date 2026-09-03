@@ -41,7 +41,12 @@ import {
 import { createCoverSvg } from '@wordconvert/cover-generator';
 import type { MathOutputMode } from '@wordconvert/math-converter';
 import { writeMarkdown } from '@wordconvert/markdown-writer';
-import { writeHtml } from '@wordconvert/html-writer';
+import {
+  SOURCE_HTML_EQUATION_LAYOUT_STYLES,
+  SOURCE_HTML_PARAGRAPH_TITLE_STYLES,
+  SOURCE_HTML_STYLES,
+  writeHtml,
+} from '@wordconvert/html-writer';
 import { previewSanitizeConfig, warningDestination } from './preview/index.ts';
 import type { HtmlOutputMode, MarkdownOutputMode } from './output.ts';
 import type { PdfFormulaDecision } from '@wordconvert/pdf-reader';
@@ -49,6 +54,8 @@ import type { PdfBounds } from '@wordconvert/pdf-reader';
 import type { FormulaSelectionPoint } from './formula-selection.ts';
 import { formulaReviewEditor } from './formula-review.ts';
 import { renderMarkdownPreview as renderMarkdown } from './markdown-preview.ts';
+import { HtmlSourceEditor } from './html-source-editor.ts';
+import { sanitizeEditedSourceHtml } from './text-document-import.ts';
 
 const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
   id: mapping,
@@ -75,6 +82,7 @@ export interface AppController {
   cancel(): void;
   convert(): void;
   download(): void;
+  mailDocument?(): void;
   setOutputFilename(filename: string): void;
   setMarkdownContent?(content: string): void;
   setTheme(theme: ThemePreference): void;
@@ -88,6 +96,7 @@ export interface AppController {
   setMarkdownMode?(mode: MarkdownOutputMode): void;
   setEpubIncludeCover?(include: boolean): void;
   setEpubContent?(content: string): void;
+  setEpubSourceContent?(content: string): void;
   setStyleMapping(styleId: string, mapping: StyleMapping): void;
   acceptHighConfidence(): void;
   rerunAnalysis(): void;
@@ -251,11 +260,10 @@ function filePicker(
   const state = controller.state;
   return m('.source-picker', [
     m('section.formula-model-settings', [
-      m('strong', 'Formula recognition'),
-      m(
-        'p',
-        'TexTeller improves formula conversion. Its model downloads once on first use, adds to this site’s cache, and makes PDF conversion take longer.',
-      ),
+      m('p', [
+        m('strong', 'Formula recognition. '),
+        'TexTeller improves complex formulas; its approximately 245 MiB model downloads on first use, is cached on this device, and makes PDF conversion take longer.',
+      ]),
       m(InputCheckbox, {
         checked: state.preferences.formulaRecognitionEnabled,
         onchange: (enabled) =>
@@ -304,7 +312,7 @@ function filePicker(
       [
         m('label[for="remote-document-url"]', 'Open a document from a URL'),
         m('.remote-document-row', [
-          m('input#remote-document-url', {
+          m('input#remote-document-url.browser-default', {
             type: 'url',
             inputmode: 'url',
             placeholder: 'https://arxiv.org/abs/1706.03762',
@@ -1124,32 +1132,60 @@ function preview(controller: AppController): m.Vnode {
     const source = epubContentSource(state);
     const converted =
       state.previewMode === 'edit'
-        ? m(MarkdownEditor, {
-            content: source,
-            mode: 'wysiwyg',
-            onContentChange: (newContent: string) => {
-              state.epubContentEdit = newContent;
-              controller.setEpubContent?.(newContent);
-            },
-            markdownToHtml: renderMarkdown,
-            placeholder: 'Edit document content…',
-            theme: state.preferences.theme === 'dark' ? 'dark' : 'light',
-            toolbar: true,
-            showTabs: true,
-          })
+        ? state.sourceHtml
+          ? m('.source-edit-comparison', [
+              m('section.preview-pane', [
+                m('h3', 'HTML'),
+                m(
+                  '.html-source-editor-pane',
+                  m(HtmlSourceEditor, {
+                    content: source,
+                    theme:
+                      state.preferences.theme === 'dark' ? 'dark' : 'light',
+                    onContentChange: (newContent: string) => {
+                      state.epubSourceEdit = newContent;
+                      controller.setEpubSourceContent?.(newContent);
+                      m.redraw();
+                    },
+                  }),
+                ),
+              ]),
+              m('section.preview-pane', [
+                m('h3', 'Rendered'),
+                sourceHtmlPreview(state, source),
+              ]),
+            ])
+          : m(MarkdownEditor, {
+              content: source,
+              mode: 'wysiwyg',
+              onContentChange: (newContent: string) => {
+                state.epubContentEdit = newContent;
+                controller.setEpubContent?.(newContent);
+              },
+              markdownToHtml: renderMarkdown,
+              placeholder: 'Edit document content…',
+              theme: state.preferences.theme === 'dark' ? 'dark' : 'light',
+              toolbar: true,
+              showTabs: true,
+            })
         : state.previewMode === 'source'
-          ? m('pre.markdown-source', markdownSourcePreview(source))
+          ? m(
+              'pre.markdown-source',
+              state.sourceHtml ? source : markdownSourcePreview(source),
+            )
           : state.previewMode === 'package'
             ? epubLayoutPreview(controller)
-            : m(
-                'article.document-preview',
-                m.trust(
-                  DOMPurify.sanitize(
-                    epubRenderedPreview(state, source),
-                    previewSanitizeConfig(),
+            : state.sourceHtml
+              ? sourceHtmlPreview(state, source)
+              : m(
+                  'article.document-preview',
+                  m.trust(
+                    DOMPurify.sanitize(
+                      epubRenderedPreview(state, source),
+                      previewSanitizeConfig(),
+                    ),
                   ),
-                ),
-              );
+                );
     return m('.preview-panel', [
       previewActions(controller),
       epubConfiguration(controller),
@@ -1158,7 +1194,13 @@ function preview(controller: AppController): m.Vnode {
           '.preview-mode',
           m(RadioButtons<PreviewMode>, {
             id: 'epub-preview-mode',
-            options: epubPreviewModeOptions,
+            options: state.sourceHtml
+              ? epubPreviewModeOptions.map((option) =>
+                  option.id === 'source'
+                    ? { ...option, label: 'HTML' }
+                    : option,
+                )
+              : epubPreviewModeOptions,
             checkedId: state.previewMode,
             className: 'row',
             checkboxClass: 'col s3',
@@ -1257,8 +1299,14 @@ function preview(controller: AppController): m.Vnode {
 }
 
 export function epubRenderedPreview(state: AppState, source: string): string {
-  if (state.epubContentEdit === undefined && state.sourceHtml)
-    return state.sourceHtml.html;
+  if (state.sourceHtml)
+    return state.epubSourceEdit === undefined
+      ? state.sourceHtml.html
+      : (sanitizeEditedSourceHtml(
+          state.epubSourceEdit,
+          state.model?.assets ?? {},
+          state.sourceHtml.css,
+        )?.html ?? '');
   if (state.epubContentEdit !== undefined || !state.model)
     return renderMarkdown(source);
   const metadata = { ...state.model.metadata };
@@ -1273,7 +1321,29 @@ export function epubRenderedPreview(state: AppState, source: string): string {
   );
 }
 
+function sourceHtmlPreview(state: AppState, source: string): m.Vnode {
+  const markup = epubRenderedPreview(state, source);
+  const css = state.sourceHtml?.css ?? '';
+  const srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;padding:1rem}img{max-width:100%;height:auto}${SOURCE_HTML_STYLES}${SOURCE_HTML_EQUATION_LAYOUT_STYLES}${SOURCE_HTML_PARAGRAPH_TITLE_STYLES}${css}${sourcePreviewThemeCss(state.preferences.theme)}</style></head><body><div class="source-html">${markup}</div></body></html>`;
+  return m('iframe.source-html-preview', {
+    sandbox: '',
+    srcdoc,
+    title: 'Rendered HTML preview',
+  });
+}
+
+function sourcePreviewThemeCss(theme: ThemePreference): string {
+  const light =
+    'html{color-scheme:light;background:#fff;color:#202124}body{background:#fff;color:#202124}a{color:#0759b6}';
+  const dark =
+    'html{color-scheme:dark;background:#181a1b;color:#eee}body{background:#181a1b;color:#eee}a{color:#8ab4f8}';
+  if (theme === 'light') return light;
+  if (theme === 'dark') return dark;
+  return `${light}@media (prefers-color-scheme:dark){${dark}}`;
+}
+
 function epubContentSource(state: AppState): string {
+  if (state.sourceHtml) return state.epubSourceEdit ?? state.sourceHtml.xhtml;
   if (state.epubContentEdit !== undefined) return state.epubContentEdit;
   if (!state.model) return '';
   const metadata = { ...state.model.metadata };
@@ -1491,10 +1561,11 @@ function previewActions(controller: AppController): m.Vnode {
   return m('.preview-actions', [
     outputFilenameField(controller),
     m(Button, {
-      label: `Download ${state.output?.filename ?? 'output'}`,
+      label: 'Download',
       disabled: !state.output,
       onclick: () => controller.download(),
     }),
+    mailDocumentButton(controller),
     m(FlatButton, {
       label: 'Review style mapping',
       onclick: () => openReview(state, 'styles'),
@@ -1687,10 +1758,20 @@ function downloadPanel(controller: AppController): m.Vnode {
     m('p', 'Your converted document is ready.'),
     outputFilenameField(controller),
     m(Button, {
-      label: `Download ${controller.state.output?.filename ?? 'document'}`,
+      label: 'Download',
       onclick: () => controller.download(),
     }),
+    mailDocumentButton(controller),
   ]);
+}
+
+function mailDocumentButton(controller: AppController): m.Vnode | null {
+  if (controller.state.output?.mediaType !== 'application/epub+zip')
+    return null;
+  return m(Button, {
+    label: 'Mail document',
+    onclick: () => controller.mailDocument?.(),
+  });
 }
 
 function outputFilenameField(controller: AppController): m.Vnode | null {

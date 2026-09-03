@@ -13,6 +13,12 @@ export interface DownloadEnvironment {
   showSaveFilePicker?(options: SaveFilePickerOptions): Promise<SaveFileHandle>;
 }
 
+export interface MailEnvironment {
+  canShare?(data: ShareData): boolean;
+  share?(data: ShareData): Promise<void>;
+  openMailto(url: string): void;
+}
+
 interface SaveFilePickerOptions {
   suggestedName: string;
   types: Array<{
@@ -77,4 +83,26 @@ export async function saveDownload(
       return false;
     throw cause;
   }
+}
+
+export async function mailEpub(
+  output: DownloadOutput,
+  title: string,
+  environment: MailEnvironment,
+): Promise<void> {
+  const file = new File([output.data], output.filename, {
+    type: output.mediaType,
+  });
+  const shareData: ShareData = { title, files: [file] };
+  let supportsFileSharing = false;
+  try {
+    supportsFileSharing = environment.canShare?.(shareData) === true;
+  } catch {
+    supportsFileSharing = false;
+  }
+  if (environment.share && supportsFileSharing) {
+    await environment.share(shareData);
+    return;
+  }
+  environment.openMailto(`mailto:?subject=${encodeURIComponent(title)}`);
 }

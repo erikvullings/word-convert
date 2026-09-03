@@ -239,7 +239,11 @@ describe('worker runtime', () => {
         filename: 'source.html',
         format,
         conversionDate: '2026-09-03',
-        sourceHtml: { html: source, xhtml: source },
+        sourceHtml: {
+          html: source,
+          xhtml: source,
+          css: '.ltx_document{max-width:40em}',
+        },
       });
 
       const output = sent.at(-1);
@@ -254,6 +258,15 @@ describe('worker runtime', () => {
             );
       expect(content).toContain(source);
       expect(content).not.toContain('| --- |');
+      if (format === 'html')
+        expect(content).toContain('.ltx_document{max-width:40em}');
+      else {
+        const styles = strFromU8(
+          unzipSync(new Uint8Array(output.data))['EPUB/styles.css'] ??
+            new Uint8Array(),
+        );
+        expect(styles).toContain('.ltx_document{max-width:40em}');
+      }
     },
   );
 

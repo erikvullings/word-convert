@@ -17,6 +17,7 @@ export interface HtmlWriterOptions extends WriterOptions {
   mode?: 'standalone' | 'fragment';
   formulaMode?: MathOutputMode;
   sourceHtml?: string;
+  sourceCss?: string;
 }
 
 interface HeadingEntry {
@@ -39,7 +40,11 @@ const IMAGE_WIDTH_STYLES = Array.from(
   { length: 20 },
   (_, index) => `.image-width-${(index + 1) * 5}{width:${(index + 1) * 5}%}`,
 ).join('');
-const SOURCE_HTML_STYLES = `.source-html .ltx_equation{display:table;width:100%;border:0;margin:1em 0}.source-html .ltx_equation tbody,.source-html .ltx_equation tr{border:0}.source-html .ltx_equation td{border:0;padding:0;vertical-align:middle}.source-html .ltx_eqn_cell{width:100%;text-align:center}.source-html .ltx_eqn_eqno{width:1%;padding-left:1em;white-space:nowrap;text-align:right}.source-html math{vertical-align:baseline}.source-html math[display="block"]{display:block;margin:0 auto}.source-html .ltx_Math{white-space:nowrap}`;
+export const SOURCE_HTML_STYLES = `.source-html .ltx_document{max-width:52rem;margin-left:auto;margin-right:auto}.source-html .ltx_title.ltx_title_document{margin-top:0;margin-bottom:1.5rem;text-align:center;font-size:1.7rem;font-weight:400}.source-html .ltx_abstract{margin:2rem auto;font-size:1em;line-height:1.6}.source-html .ltx_title_abstract{margin:0 0 .75rem;text-align:center;font-size:1.25em}.source-html .ltx_abstract .ltx_p{font-size:1em}.source-html .ltx_authors{text-align:center}.source-html .ltx_creator{display:inline-flex;flex-direction:column;width:16rem;max-width:calc(100% - 2rem);margin:.75rem 1rem;vertical-align:top}.source-html .ltx_personname{font-weight:600}.source-html .ltx_author_notes{font-size:.875em}.source-html .ltx_itemize,.source-html .ltx_enumerate{list-style:none}.source-html .ltx_itemize>.ltx_item,.source-html .ltx_enumerate>.ltx_item{list-style:none}.source-html .ltx_graphics{display:block;max-width:100%;height:auto;margin-left:auto;margin-right:auto}.source-html .ltx_figure{max-width:100%;margin-left:auto;margin-right:auto;text-align:center}.source-html .ltx_equation,.source-html .ltx_equationgroup{display:table;width:100%;margin:.75rem auto;border:0}.source-html .ltx_eqn_row{display:table-row}.source-html .ltx_equation tbody,.source-html .ltx_equationgroup tbody,.source-html .ltx_equation tr{border:0}.source-html .ltx_equation td,.source-html .ltx_equationgroup td{display:table-cell;border:0;padding:.3rem .2rem;vertical-align:middle}.source-html .ltx_eqn_cell{width:100%;text-align:center}.source-html .ltx_eqn_eqno{width:3em;padding-left:1em;white-space:nowrap;text-align:right}.source-html math{vertical-align:baseline}.source-html math[display="block"]{display:block;margin:0 auto}.source-html .ltx_Math{white-space:nowrap}`;
+export const SOURCE_HTML_EQUATION_LAYOUT_STYLES =
+  '.source-html table.ltx_equation>tbody,.source-html table.ltx_equationgroup>tbody{display:block}.source-html table.ltx_equation>tbody>.ltx_eqn_row,.source-html table.ltx_equationgroup>tbody>.ltx_eqn_row{display:grid;width:100%;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center}.source-html .ltx_eqn_center_padleft,.source-html .ltx_eqn_center_padright{display:none!important}.source-html .ltx_eqn_row>.ltx_eqn_cell:not(.ltx_eqn_eqno):not(.ltx_eqn_center_padleft):not(.ltx_eqn_center_padright){grid-column:2;width:auto;justify-self:center;text-align:center}.source-html .ltx_eqn_row>.ltx_eqn_eqno{grid-column:3;grid-row:1;width:auto;justify-self:end;text-align:right}';
+export const SOURCE_HTML_PARAGRAPH_TITLE_STYLES =
+  '.source-html .ltx_title.ltx_title_paragraph{font-size:1.15em;font-weight:600}';
 const SAFE_EMBEDDED_MEDIA = new Set([
   'image/avif',
   'image/gif',
@@ -74,7 +79,7 @@ export function writeHtml(
   const title = escapeHtml(model.metadata.title?.value ?? 'Untitled document');
   const language = sanitizeLanguage(model.metadata.language?.value ?? 'en');
   const metadata = renderMetadata(model);
-  return `<!doctype html><html lang="${language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="WordConvert">${metadata}<title>${title}</title><style>${embeddedFontCss(model)}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${IMAGE_WIDTH_STYLES}${options.sourceHtml ? SOURCE_HTML_STYLES : ''}</style></head><body>${fragment}</body></html>`;
+  return `<!doctype html><html lang="${language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="WordConvert">${metadata}<title>${title}</title><style>${embeddedFontCss(model)}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${IMAGE_WIDTH_STYLES}${options.sourceHtml ? SOURCE_HTML_STYLES + SOURCE_HTML_EQUATION_LAYOUT_STYLES + SOURCE_HTML_PARAGRAPH_TITLE_STYLES : ''}${options.sourceCss ?? ''}</style></head><body>${fragment}</body></html>`;
 }
 
 export async function writeHtmlZip(
@@ -101,7 +106,7 @@ export async function writeHtmlZip(
   const files: Zippable = {
     'document.html': strToU8(html),
     'styles.css': strToU8(
-      `${fontCss}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${IMAGE_WIDTH_STYLES}${options.sourceHtml ? SOURCE_HTML_STYLES : ''}`,
+      `${fontCss}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${IMAGE_WIDTH_STYLES}${options.sourceHtml ? SOURCE_HTML_STYLES + SOURCE_HTML_EQUATION_LAYOUT_STYLES + SOURCE_HTML_PARAGRAPH_TITLE_STYLES : ''}${options.sourceCss ?? ''}`,
     ),
   };
   for (const { asset, path } of registry.entries) files[path] = asset.data;

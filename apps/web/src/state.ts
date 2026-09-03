@@ -75,6 +75,7 @@ export interface DownloadOutput {
 export interface SourceHtmlDocument {
   html: string;
   xhtml: string;
+  css: string;
 }
 
 export interface AppState {
@@ -105,6 +106,7 @@ export interface AppState {
   selectedEpubFile?: string;
   markdownEdit?: string;
   epubContentEdit?: string;
+  epubSourceEdit?: string;
   error?: ConversionError;
   styleMappings: Record<string, StyleMapping>;
   presetText: string;
