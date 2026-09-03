@@ -1,6 +1,14 @@
-import { defineConfig } from 'vite';
-import { readFile } from 'node:fs/promises';
+import { defineConfig, type Plugin } from 'vite';
+import { existsSync } from 'node:fs';
+import { copyFile, mkdir, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import {
+  textTellerAssetPath,
+  type TexTellerAsset,
+} from './src/worker/texteller-assets.ts';
 
 const repositoryName = 'word-convert';
 const browserFixture = fileURLToPath(
@@ -12,6 +20,35 @@ const browserFixture = fileURLToPath(
 const pdfBrowserFixture = fileURLToPath(
   new URL('../../tests/fixtures/pdf/one-column-book.pdf', import.meta.url),
 );
+const configuredRecognizer = fileURLToPath(
+  new URL(
+    './src/worker/configured-formula-recognizer.texteller.ts',
+    import.meta.url,
+  ),
+);
+
+export function resolveTexTellerDevModelDirectory(
+  configured: string | undefined,
+  exists: (path: string) => boolean = existsSync,
+): string | undefined {
+  if (configured) return configured;
+  const candidates = [
+    resolve(tmpdir(), 'texteller-q4'),
+    resolve('/tmp', 'texteller-q4'),
+  ];
+  return candidates.find((candidate) => exists(candidate));
+}
+
+function formulaRecognizerPlugin(): Plugin {
+  return {
+    name: 'wordconvert-formula-recognizer',
+    resolveId(source) {
+      return source === 'virtual:wordconvert-formula-recognizer'
+        ? configuredRecognizer
+        : undefined;
+    },
+  };
+}
 
 function serviceWorkerSource(
   bundle: Record<string, { fileName: string }>,
@@ -82,55 +119,124 @@ self.addEventListener('fetch', (event) => {
 `;
 }
 
-export default defineConfig(({ command }) => ({
-  base:
+export default defineConfig(({ command }) => {
+  const base =
     process.env.WORDCONVERT_BASE_PATH ??
-    (command === 'build' ? `/${repositoryName}/` : '/'),
-  build: {
-    target: 'es2022',
-  },
-  worker: {
-    format: 'es',
-  },
-  plugins: [
-    {
-      name: 'wordconvert-service-worker',
-      apply: 'build',
-      generateBundle(_options, bundle) {
-        this.emitFile({
-          type: 'asset',
-          fileName: 'sw.js',
-          source: serviceWorkerSource(bundle),
-        });
-      },
+    (command === 'build' ? `/${repositoryName}/` : '/');
+  const configuredTexTellerDirectory =
+    process.env.WORDCONVERT_TEXTELLER_MODEL_DIR;
+  const texTellerModelDirectory =
+    command === 'serve'
+      ? resolveTexTellerDevModelDirectory(configuredTexTellerDirectory)
+      : configuredTexTellerDirectory;
+  if (command === 'build' && !texTellerModelDirectory)
+    throw new Error(
+      'WORDCONVERT_TEXTELLER_MODEL_DIR is required for a TexTeller build.',
+    );
+  return {
+    base,
+    define: {
+      __WORDCONVERT_BASE_PATH__: JSON.stringify(base),
     },
-    {
-      name: 'wordconvert-browser-fixture',
-      configureServer(server) {
-        server.middlewares.use(
-          '/__wordconvert_browser_fixture__.docx',
-          (_request, response) => {
-            void readFile(browserFixture).then((fixture) => {
-              response.statusCode = 200;
-              response.setHeader(
-                'Content-Type',
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    build: {
+      target: 'es2022',
+    },
+    worker: {
+      format: 'es',
+      plugins: () => [formulaRecognizerPlugin()],
+    },
+    plugins: [
+      formulaRecognizerPlugin(),
+      {
+        name: 'wordconvert-service-worker',
+        apply: 'build',
+        generateBundle(_options, bundle) {
+          this.emitFile({
+            type: 'asset',
+            fileName: 'sw.js',
+            source: serviceWorkerSource(bundle),
+          });
+        },
+      },
+      {
+        name: 'wordconvert-browser-fixture',
+        configureServer(server) {
+          for (const file of [
+            'encoder.onnx',
+            'decoder.onnx',
+            'tokenizer.json',
+          ] satisfies TexTellerAsset[])
+            server.middlewares.use(
+              `/${textTellerAssetPath(file)}`,
+              (_request, response) => {
+                if (!texTellerModelDirectory) {
+                  response.statusCode = 404;
+                  response.end();
+                  return;
+                }
+                void readFile(resolve(texTellerModelDirectory, file)).then(
+                  (asset) => {
+                    response.statusCode = 200;
+                    response.setHeader(
+                      'Content-Type',
+                      file.endsWith('.json')
+                        ? 'application/json'
+                        : 'application/octet-stream',
+                    );
+                    response.end(asset);
+                  },
+                  () => {
+                    response.statusCode = 404;
+                    response.end();
+                  },
+                );
+              },
+            );
+          server.middlewares.use(
+            '/__wordconvert_browser_fixture__.docx',
+            (_request, response) => {
+              void readFile(browserFixture).then((fixture) => {
+                response.statusCode = 200;
+                response.setHeader(
+                  'Content-Type',
+                  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                );
+                response.end(fixture);
+              });
+            },
+          );
+          server.middlewares.use(
+            '/__wordconvert_browser_fixture__.pdf',
+            (_request, response) => {
+              void readFile(pdfBrowserFixture).then((fixture) => {
+                response.statusCode = 200;
+                response.setHeader('Content-Type', 'application/pdf');
+                response.end(fixture);
+              });
+            },
+          );
+        },
+      },
+      texTellerModelDirectory
+        ? {
+            name: 'wordconvert-texteller-build-assets',
+            async writeBundle(options) {
+              const outputDirectory = resolve(
+                String(options.dir ?? 'dist'),
+                'texteller',
               );
-              response.end(fixture);
-            });
-          },
-        );
-        server.middlewares.use(
-          '/__wordconvert_browser_fixture__.pdf',
-          (_request, response) => {
-            void readFile(pdfBrowserFixture).then((fixture) => {
-              response.statusCode = 200;
-              response.setHeader('Content-Type', 'application/pdf');
-              response.end(fixture);
-            });
-          },
-        );
-      },
-    },
-  ],
-}));
+              await mkdir(outputDirectory, { recursive: true });
+              await Promise.all(
+                ['encoder.onnx', 'decoder.onnx', 'tokenizer.json'].map((file) =>
+                  copyFile(
+                    resolve(texTellerModelDirectory, file),
+                    resolve(outputDirectory, file),
+                  ),
+                ),
+              );
+            },
+          }
+        : undefined,
+    ],
+  };
+});

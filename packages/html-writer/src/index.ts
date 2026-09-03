@@ -16,6 +16,7 @@ import {
 export interface HtmlWriterOptions extends WriterOptions {
   mode?: 'standalone' | 'fragment';
   formulaMode?: MathOutputMode;
+  sourceHtml?: string;
 }
 
 interface HeadingEntry {
@@ -38,6 +39,7 @@ const IMAGE_WIDTH_STYLES = Array.from(
   { length: 20 },
   (_, index) => `.image-width-${(index + 1) * 5}{width:${(index + 1) * 5}%}`,
 ).join('');
+const SOURCE_HTML_STYLES = `.source-html .ltx_equation{display:table;width:100%;border:0;margin:1em 0}.source-html .ltx_equation tbody,.source-html .ltx_equation tr{border:0}.source-html .ltx_equation td{border:0;padding:0;vertical-align:middle}.source-html .ltx_eqn_cell{width:100%;text-align:center}.source-html .ltx_eqn_eqno{width:1%;padding-left:1em;white-space:nowrap;text-align:right}.source-html math{vertical-align:baseline}.source-html math[display="block"]{display:block;margin:0 auto}.source-html .ltx_Math{white-space:nowrap}`;
 const SAFE_EMBEDDED_MEDIA = new Set([
   'image/avif',
   'image/gif',
@@ -61,16 +63,18 @@ export function writeHtml(
   model: DocumentModel,
   options: HtmlWriterOptions,
 ): string {
-  const fragment = writeFragment(
-    model,
-    (asset) => dataUrl(asset),
-    options.formulaMode ?? 'source',
-  );
+  const fragment = options.sourceHtml
+    ? `<div class="source-html">${options.sourceHtml}</div>`
+    : writeFragment(
+        model,
+        (asset) => dataUrl(asset),
+        options.formulaMode ?? 'source',
+      );
   if (options.mode === 'fragment') return fragment;
   const title = escapeHtml(model.metadata.title?.value ?? 'Untitled document');
   const language = sanitizeLanguage(model.metadata.language?.value ?? 'en');
   const metadata = renderMetadata(model);
-  return `<!doctype html><html lang="${language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="WordConvert">${metadata}<title>${title}</title><style>${embeddedFontCss(model)}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${IMAGE_WIDTH_STYLES}</style></head><body>${fragment}</body></html>`;
+  return `<!doctype html><html lang="${language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="WordConvert">${metadata}<title>${title}</title><style>${embeddedFontCss(model)}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${IMAGE_WIDTH_STYLES}${options.sourceHtml ? SOURCE_HTML_STYLES : ''}</style></head><body>${fragment}</body></html>`;
 }
 
 export async function writeHtmlZip(
@@ -78,11 +82,13 @@ export async function writeHtmlZip(
   options: HtmlWriterOptions,
 ): Promise<Uint8Array> {
   const registry = createZipAssetRegistry(model);
-  const fragment = writeFragment(
-    model,
-    (asset) => registry.paths.get(asset.id),
-    options.formulaMode ?? 'source',
-  );
+  const fragment = options.sourceHtml
+    ? `<div class="source-html">${options.sourceHtml}</div>`
+    : writeFragment(
+        model,
+        (asset) => registry.paths.get(asset.id),
+        options.formulaMode ?? 'source',
+      );
   const title = escapeHtml(model.metadata.title?.value ?? 'Untitled document');
   const language = sanitizeLanguage(model.metadata.language?.value ?? 'en');
   const html = `<!doctype html><html lang="${language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="WordConvert">${renderMetadata(model)}<title>${title}</title><link rel="stylesheet" href="styles.css"></head><body>${fragment}</body></html>`;
@@ -95,7 +101,7 @@ export async function writeHtmlZip(
   const files: Zippable = {
     'document.html': strToU8(html),
     'styles.css': strToU8(
-      `${fontCss}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${IMAGE_WIDTH_STYLES}`,
+      `${fontCss}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${IMAGE_WIDTH_STYLES}${options.sourceHtml ? SOURCE_HTML_STYLES : ''}`,
     ),
   };
   for (const { asset, path } of registry.entries) files[path] = asset.data;

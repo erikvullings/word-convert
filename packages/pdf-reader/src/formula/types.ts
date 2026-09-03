@@ -9,13 +9,28 @@ export interface PdfBounds {
 
 export type PdfFormulaConfidence = 'low' | 'medium' | 'high';
 export type PdfFormulaSource =
-  'heron' | 'geometry' | 'font' | 'symbols' | 'tagged-structure' | 'manual';
+  | 'heron'
+  | 'geometry'
+  | 'font'
+  | 'symbols'
+  | 'tagged-structure'
+  | 'rasterized-equation'
+  | 'manual';
 
 export interface PdfManualFormulaRegion {
   id: string;
   page: number;
   bounds: PdfBounds;
   kind: 'inline' | 'display';
+  forceRecognition?: boolean;
+  skipRecognition?: boolean;
+  sourceImageId?: string;
+}
+
+export interface PdfFormulaImageRegion {
+  id: string;
+  page: number;
+  bounds: PdfBounds;
 }
 
 export interface PdfMathFeatures {
@@ -48,6 +63,7 @@ export interface PdfFormulaCandidate {
   score: number;
   confidence: PdfFormulaConfidence;
   sources: PdfFormulaSource[];
+  sourceImageId?: string;
   tex?: string;
   requiresRecognition: boolean;
   recognition?: PdfFormulaRecognition & {
@@ -79,11 +95,12 @@ export interface PdfFormulaRecognizer {
     image: PdfFormulaImage,
     options?: { cancellation?: CancellationSignal },
   ): Promise<PdfFormulaRecognition>;
+  dispose?(): Promise<void>;
 }
 
 export interface PdfFormulaDecision {
   equationId: string;
-  decision: 'formula' | 'text';
+  decision: 'formula' | 'text' | 'image';
   tex?: string;
   display?: 'inline' | 'block';
   accepted?: boolean;

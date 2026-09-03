@@ -29,6 +29,7 @@ const HERON_LABELS = [
 
 export interface HeronLayoutDetector extends PdfLayoutDetector {
   prepare(): Promise<boolean>;
+  dispose(): Promise<void>;
 }
 
 export function createHeronLayoutDetector(
@@ -58,23 +59,41 @@ export function createHeronLayoutDetector(
         const inferenceSession = session ? await session : undefined;
         if (!inferenceSession) return [];
         if (cancellation?.cancelled) return [];
-        const input = rgbaToHeronInput(image.rgba, image.width, image.height);
-        const result = await inferenceSession.run({
-          pixel_values: new ort.Tensor('float16', float32ToFloat16(input), [
-            1,
-            3,
-            image.height,
-            image.width,
-          ]),
-        });
-        if (cancellation?.cancelled) return [];
-        const logits = tensorToFloat32(result.logits);
-        const boxes = tensorToFloat32(result.pred_boxes);
-        return decodeHeronDetections(logits, boxes, HERON_THRESHOLD);
+        const inputData = rgbaToHeronInput(
+          image.rgba,
+          image.width,
+          image.height,
+        );
+        const input = new ort.Tensor('float16', float32ToFloat16(inputData), [
+          1,
+          3,
+          image.height,
+          image.width,
+        ]);
+        let result: ort.InferenceSession.OnnxValueMapType | undefined;
+        try {
+          result = await inferenceSession.run({ pixel_values: input });
+          if (cancellation?.cancelled) return [];
+          const logits = Float32Array.from(tensorToFloat32(result.logits));
+          const boxes = Float32Array.from(tensorToFloat32(result.pred_boxes));
+          return decodeHeronDetections(logits, boxes, HERON_THRESHOLD);
+        } finally {
+          input.dispose();
+          for (const tensor of Object.values(result ?? {})) tensor.dispose();
+        }
       } catch {
         disabled = true;
         return [];
       }
+    },
+    async dispose() {
+      const active = session;
+      session = undefined;
+      disabled = false;
+      const inferenceSession = active
+        ? await active.catch(() => undefined)
+        : undefined;
+      inferenceSession?.release();
     },
   };
 }
@@ -204,11 +223,13 @@ async function createSession(
   model: string | Uint8Array,
 ): Promise<ort.InferenceSession> {
   ort.env.wasm.numThreads = 1;
+  ort.env.logLevel = 'error';
   const webGpuAvailable =
     typeof navigator !== 'undefined' && 'gpu' in navigator;
   const options: ort.InferenceSession.SessionOptions = {
     executionProviders: webGpuAvailable ? ['webgpu', 'wasm'] : ['wasm'],
     graphOptimizationLevel: 'all',
+    logSeverityLevel: 3,
   };
   return typeof model === 'string'
     ? ort.InferenceSession.create(model, options)

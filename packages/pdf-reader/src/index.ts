@@ -18,6 +18,7 @@ import {
   createFormulaCandidates,
   type PdfFormulaCandidate,
   type PdfFormulaDecision,
+  type PdfFormulaImageRegion,
   type PdfFormulaLimits,
   type PdfFormulaRecognizer,
   type PdfManualFormulaRegion,
@@ -168,6 +169,7 @@ export interface PdfAnalysisSummary {
   candidates: PdfFurnitureCandidate[];
   scannedPages: number[];
   formulaCandidates?: PdfFormulaCandidate[];
+  formulaImageRegions?: PdfFormulaImageRegion[];
 }
 
 export interface PdfAnalysisResult {
@@ -445,10 +447,16 @@ export async function analysePdf(
   for (const candidate of formulaCandidates) {
     await analysisCheckpoint(options);
     const decision = options.formulaDecisions?.[candidate.id];
-    if (decision?.decision === 'text') continue;
-    let tex = decision?.tex ?? candidate.tex;
+    if (decision?.decision === 'text' || decision?.decision === 'image')
+      continue;
+    let tex = decision?.tex;
     let recognitionMethod: 'pdf-text' | 'pdf-geometry' | 'pdf-onnx' | 'user' =
       decision?.tex ? 'user' : 'pdf-text';
+    if (!tex && candidate.requiresRecognition && candidate.recognition) {
+      tex = candidate.recognition.tex.trim() || undefined;
+      recognitionMethod = 'pdf-onnx';
+    }
+    if (!tex) tex = candidate.tex;
     if (!tex && candidate.recognition) {
       tex = candidate.recognition.tex.trim() || undefined;
       recognitionMethod = 'pdf-onnx';
@@ -526,6 +534,21 @@ export async function analysePdf(
       ),
     ),
   );
+  const formulaImageRegions = retainedPages.flatMap((page) =>
+    page.images
+      .filter(
+        (image) =>
+          image.source === 'rendered-equation' &&
+          !semanticCandidates.some((candidate) =>
+            coversRenderedEquation(candidate, page.number, image),
+          ),
+      )
+      .map(({ id, x, top, width, height }) => ({
+        id,
+        page: page.number,
+        bounds: { x, top, width, height },
+      })),
+  );
   return {
     model: {
       schema: DOCUMENT_MODEL_SCHEMA,
@@ -558,6 +581,7 @@ export async function analysePdf(
       candidates,
       scannedPages,
       formulaCandidates,
+      formulaImageRegions,
     },
   };
 }
@@ -1133,6 +1157,7 @@ async function linesToBlocks(
       .map(({ id }) => id),
   );
   const blocks: BlockNode[] = [];
+  const placedFormulaIds = new Set<string>();
   const bodySize = bodyFontSize(lines);
   let previousLine: PdfLine | undefined;
   let contentPages = 0;
@@ -1145,7 +1170,11 @@ async function linesToBlocks(
         line.page === page.number && !isDetachedMathFragment(line, bodySize),
     );
     const equationImages = page.images.filter(
-      ({ source }) => source === 'rendered-equation',
+      (image) =>
+        image.source === 'rendered-equation' &&
+        !formulaCandidates.some((candidate) =>
+          coversRenderedEquation(candidate, page.number, image),
+        ),
     );
     const equationHosts = equationHostLines(allPageLines, equationImages);
     const pageLines = allPageLines.filter(
@@ -1191,8 +1220,16 @@ async function linesToBlocks(
       const line = pageLines[index];
       if (!line) continue;
       if (processed++ % 250 === 0) await analysisCheckpoint(options);
+      const placedLineFormula = formulaCandidates.find(
+        (candidate) =>
+          placedFormulaIds.has(candidate.id) &&
+          candidate.page === line.page &&
+          line.spans.every((span) => candidate.spanIds.includes(span.id)),
+      );
+      if (placedLineFormula) continue;
       const lineFormulaCandidates = formulaCandidates.filter(
         (candidate) =>
+          !placedFormulaIds.has(candidate.id) &&
           candidate.page === line.page &&
           candidate.spanIds.some((id) =>
             line.spans.some((span) => span.id === id),
@@ -1210,6 +1247,7 @@ async function linesToBlocks(
           type: 'equationBlock',
           equationId: displayFormula.id,
         });
+        placedFormulaIds.add(displayFormula.id);
         previousLine = line;
         continue;
       }
@@ -1222,6 +1260,8 @@ async function linesToBlocks(
           equationHosts.get(line) ?? [],
           lineFormulaCandidates,
         );
+        for (const candidate of lineFormulaCandidates)
+          placedFormulaIds.add(candidate.id);
         const taggedRole = taggedRoleForLine(rolesByMarkedContentId, line);
         const taggedHeading = /^H([1-6])$/i.exec(taggedRole ?? '');
         const mappedHeading = /^heading([1-6])$/.exec(mapped);
@@ -1304,6 +1344,19 @@ async function linesToBlocks(
     }
   }
   return blocks;
+}
+
+function coversRenderedEquation(
+  candidate: PdfFormulaCandidate,
+  page: number,
+  image: RawPdfImage,
+): boolean {
+  return (
+    candidate.page === page &&
+    (candidate.sources.includes('rasterized-equation') ||
+      candidate.sources.includes('manual')) &&
+    intersectsBounds(candidate.bounds, image)
+  );
 }
 
 function imageBlock(
@@ -1410,9 +1463,11 @@ function lineInlines(
         Math.max(previous.height * 0.25, 0.003)
     )
       output.push({ type: 'text', text: ' ' });
+    const script = scriptMark(span, line);
     const marks = [
       ...(span.bold ? ([{ type: 'bold' as const }] as const) : []),
       ...(span.italic ? ([{ type: 'italic' as const }] as const) : []),
+      ...(script ? ([{ type: script }] as const) : []),
     ];
     const text: InlineNode = {
       type: 'text',
@@ -1428,6 +1483,24 @@ function lineInlines(
     previous = span;
   }
   return output;
+}
+
+function scriptMark(
+  span: RawPdfTextSpan,
+  line: PdfLine,
+): 'subscript' | 'superscript' | undefined {
+  if (span.fontSize >= line.fontSize * 0.85) return undefined;
+  const normalBaseline = median(
+    line.spans
+      .filter(({ fontSize }) => fontSize >= line.fontSize * 0.85)
+      .map(({ baseline, top, height }) => baseline ?? top + height * 0.8),
+  );
+  if (normalBaseline === undefined) return undefined;
+  const baseline = span.baseline ?? span.top + span.height * 0.8;
+  const minimumDisplacement = Math.max(line.height * 0.08, 0.001);
+  if (baseline - normalBaseline >= minimumDisplacement) return 'subscript';
+  if (normalBaseline - baseline >= minimumDisplacement) return 'superscript';
+  return undefined;
 }
 
 function equationHostLines(

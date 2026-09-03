@@ -168,7 +168,7 @@ function renderBlock(block: BlockNode, context: RenderContext): string {
     case 'thematicBreak':
       return '---';
     case 'pageBreak':
-      return '<!-- page break -->';
+      return '';
     case 'equationBlock':
       return renderEquation(block.equationId, true, context);
     case 'imageBlock': {

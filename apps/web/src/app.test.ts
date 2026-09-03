@@ -14,6 +14,7 @@ import {
   navigateToWarning,
   outputPreviewSource,
   renderApp,
+  scaledPreviewScrollOffset,
   type AppController,
 } from './app.ts';
 import { createInitialState } from './state.ts';
@@ -33,6 +34,11 @@ describe('App', () => {
     ).toBe(
       'Before ![Diagram](data:image/png;base64,…) [site](https://example.com) after',
     );
+  });
+
+  it('keeps the original PDF horizontally centred while scaling', () => {
+    expect(scaledPreviewScrollOffset(0, 800, 800, 1_200)).toBe(200);
+    expect(scaledPreviewScrollOffset(300, 800, 1_600, 2_400)).toBe(650);
   });
 
   it.each([
@@ -120,9 +126,9 @@ describe('App', () => {
     expect(rendered).toContain('Go to WordConvert home');
     expect(rendered).toContain('All processing stays on this device');
     expect(rendered).toContain('Choose a DOCX or PDF document');
-    expect(rendered).toContain('Open a PDF from a URL');
+    expect(rendered).toContain('Open a document from a URL');
     expect(rendered).toContain('https://arxiv.org/abs/1706.03762');
-    expect(rendered).toContain('Some websites block browser access (CORS)');
+    expect(rendered).toContain('arXiv links automatically use');
     expect(rendered).toContain(
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     );
@@ -474,7 +480,7 @@ describe('App', () => {
         recognition: {
           method: 'pdf-onnx',
           confidence: 0.9,
-          model: 'rapid-latex-ocr-onnx',
+          model: 'texteller-onnx-q4',
         },
         location: {
           kind: 'pdf',
@@ -525,7 +531,7 @@ describe('App', () => {
           requiresRecognition: true,
           recognition: {
             tex: 'x^2',
-            model: 'rapid-latex-ocr-onnx',
+            model: 'texteller-onnx-q4',
             reviewConfidence: 'high',
             diagnostics: { backend: 'wasm', tokens: 3 },
           },
@@ -546,7 +552,6 @@ describe('App', () => {
     for (const text of [
       'Formula Review',
       'Needs review',
-      'Page 2',
       'high confidence',
       'ONNX recognition',
       'Block formula',
@@ -564,8 +569,44 @@ describe('App', () => {
       'Next formula',
       'Accept all high-confidence formulas',
       'Add missed formula',
+      'Review Done, return',
     ])
       expect(review).toContain(text);
+    expect(review).not.toContain('secondary-actions');
+    expect(review.match(/blob:formula-source-page/g)).toHaveLength(1);
+
+    state.pdfAnalysis.formulaImageRegions = [
+      {
+        id: 'pdf-equation-2-0',
+        page: 2,
+        bounds: { x: 0.1, top: 0.2, width: 0.3, height: 0.1 },
+      },
+    ];
+    state.formulaReviewSelectedId = 'pdf-equation-2-0';
+    const imageReview = JSON.stringify(renderApp(controllerFor(state)));
+    expect(imageReview).toContain('Detected image');
+    expect(imageReview).toContain('Original PDF image region on page 2');
+    expect(imageReview).toContain('Extract images');
+    expect(imageReview).toContain('Adjust region');
+    expect(imageReview).toContain('Keep the image');
+    expect(imageReview).toContain('maxWidth":"522px');
+    expect(imageReview).not.toContain('Rendered formula');
+    expect(imageReview).toContain('Enter LaTeX or reuse a previous formula');
+    expect(imageReview).toContain('Use previous formula');
+    expect(imageReview).toContain('Use typed formula');
+
+    state.formulaSelectionOpen = true;
+    state.formulaSelectionKind = 'display';
+    state.formulaSelectionBounds = {
+      x: 0.1,
+      top: 0.2,
+      width: 0.3,
+      height: 0.1,
+    };
+    const selection = JSON.stringify(renderApp(controllerFor(state)));
+    expect(selection).toContain('formula-selection-box');
+    expect(selection).toContain('formula-selection-handle--se');
+    expect(selection).not.toContain('Region percentages');
   });
 
   it('routes formula warnings to the referenced Formula Review item', () => {

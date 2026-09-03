@@ -33,9 +33,11 @@ import {
   createManualFormulaCandidate,
 } from './formula/index.ts';
 import type {
+  PdfBounds,
   PdfFormulaCandidate,
   PdfFormulaLimits,
   PdfManualFormulaRegion,
+  PdfFormulaRecognition,
   PdfFormulaRecognizer,
 } from './formula/index.ts';
 import { rgbaToPng } from './png.ts';
@@ -115,6 +117,7 @@ export interface PdfLayoutDetector {
     image: PdfLayoutImage,
     cancellation?: CancellationSignal,
   ): Promise<readonly PdfLayoutRegion[]>;
+  dispose?(): Promise<void>;
 }
 
 interface PdfJsImage {
@@ -218,47 +221,78 @@ export async function extractPdfWithPdfJs(
       cropPixels: 0,
       recognized: 0,
     };
-    for (const [index, pageNumber] of pageNumbers.entries()) {
-      throwIfCancelled(options.cancellation);
-      options.onProgress?.({
-        phase: 'read',
-        completed: index,
-        total: pageNumbers.length,
-        message: `Reading PDF page ${pageNumber}.`,
-      });
-      const page = await document.getPage(pageNumber);
-      try {
-        const extracted = await readPage(
-          page,
-          pageNumber,
-          options.limits,
-          imageBudget,
-          options.cancellation,
-          !isSample,
-          options.figureRasterizer,
-          options.layoutDetector,
-          options.formulaRecognizer,
-          options.formulaLimits,
-          options.manualFormulaRegions,
-          formulaBudget,
-          options.onProgress,
-        );
-        textItems += extracted.spans.length;
-        if (textItems > options.limits.maxTextItems)
-          throw new PdfReadError(
-            'resource-limit',
-            'PDF exceeds the text item limit.',
-            {
-              phase: 'read',
-              details: {
-                limit: options.limits.maxTextItems,
-                actual: textItems,
-              },
-            },
+    try {
+      for (const [index, pageNumber] of pageNumbers.entries()) {
+        throwIfCancelled(options.cancellation);
+        options.onProgress?.({
+          phase: 'read',
+          completed: index,
+          total: pageNumbers.length,
+          message: `Reading PDF page ${pageNumber}.`,
+        });
+        const page = await document.getPage(pageNumber);
+        try {
+          const extracted = await readPage(
+            page,
+            pageNumber,
+            options.limits,
+            imageBudget,
+            options.cancellation,
+            !isSample,
+            options.figureRasterizer,
+            options.layoutDetector,
+            options.formulaLimits,
+            options.manualFormulaRegions,
+            formulaBudget,
           );
-        pages.push(extracted);
-      } finally {
-        page.cleanup();
+          textItems += extracted.spans.length;
+          if (textItems > options.limits.maxTextItems)
+            throw new PdfReadError(
+              'resource-limit',
+              'PDF exceeds the text item limit.',
+              {
+                phase: 'read',
+                details: {
+                  limit: options.limits.maxTextItems,
+                  actual: textItems,
+                },
+              },
+            );
+          pages.push(extracted);
+        } finally {
+          page.cleanup();
+        }
+      }
+    } finally {
+      await options.layoutDetector?.dispose?.();
+    }
+    if (
+      options.formulaRecognizer &&
+      options.figureRasterizer &&
+      options.formulaLimits
+    ) {
+      for (const [index, rawPage] of pages.entries()) {
+        if (!rawPage.formulaCandidates?.length) continue;
+        throwIfCancelled(options.cancellation);
+        const page = await document.getPage(rawPage.number);
+        try {
+          pages[index] = {
+            ...rawPage,
+            formulaCandidates: await recognizeFormulaCandidates(
+              page,
+              rawPage.formulaCandidates,
+              options.figureRasterizer,
+              options.formulaRecognizer,
+              options.formulaLimits,
+              formulaBudget,
+              options.cancellation,
+              options.onProgress,
+              rawPage.spans,
+            ),
+          };
+        } finally {
+          page.cleanup();
+        }
       }
     }
     options.onProgress?.({
@@ -332,7 +366,6 @@ async function readPage(
   includeImages = true,
   figureRasterizer?: PdfFigureRasterizer,
   layoutDetector?: PdfLayoutDetector,
-  formulaRecognizer?: PdfFormulaRecognizer,
   formulaLimits?: PdfFormulaLimits,
   manualFormulaRegions: readonly PdfManualFormulaRegion[] = [],
   formulaBudget: PdfFormulaBudget = {
@@ -340,7 +373,6 @@ async function readPage(
     cropPixels: 0,
     recognized: 0,
   },
-  onProgress?: (progress: ConversionProgress) => void,
 ): Promise<RawPdfPage> {
   const viewport = page.getViewport({ scale: 1 });
   const [text, annotations, structure] = await Promise.all([
@@ -401,6 +433,9 @@ async function readPage(
     page: pageNumber,
     spans,
     layoutRegions,
+    renderedEquationRegions: images.filter(
+      ({ source }) => source === 'rendered-equation',
+    ),
   });
   for (const region of manualFormulaRegions.filter(
     ({ page: regionPage }) => regionPage === pageNumber,
@@ -426,17 +461,6 @@ async function readPage(
       );
     formulaBudget.candidates += retained;
   }
-  if (formulaRecognizer && figureRasterizer && formulaLimits)
-    formulaCandidates = await recognizeFormulaCandidates(
-      page,
-      formulaCandidates,
-      figureRasterizer,
-      formulaRecognizer,
-      formulaLimits,
-      formulaBudget,
-      cancellation,
-      onProgress,
-    );
   return {
     number: pageNumber,
     width: viewport.width,
@@ -1323,6 +1347,7 @@ export async function recognizeFormulaCandidates(
   },
   cancellation?: CancellationSignal,
   onProgress?: (progress: ConversionProgress) => void,
+  pageSpans: readonly RawPdfTextSpan[] = [],
 ): Promise<PdfFormulaCandidate[]> {
   const output: PdfFormulaCandidate[] = [];
   const pending = candidates.filter(
@@ -1335,81 +1360,37 @@ export async function recognizeFormulaCandidates(
       continue;
     }
     throwIfCancelled(cancellation);
-    const base = page.getViewport({ scale: 1 });
-    const logicalPixels =
-      base.width *
-      candidate.bounds.width *
-      base.height *
-      candidate.bounds.height;
-    const remainingPixels = limits.maxTotalCropPixels - budget.cropPixels;
-    if (logicalPixels <= 0 || remainingPixels <= 0) {
-      output.push({ ...candidate, recognitionFailure: 'limit-exceeded' });
-      continue;
-    }
-    const scale = Math.min(
-      3,
-      Math.sqrt(limits.maxCropPixels / logicalPixels),
-      Math.sqrt(remainingPixels / logicalPixels),
-    );
-    if (!Number.isFinite(scale) || scale <= 0) {
-      output.push({ ...candidate, recognitionFailure: 'limit-exceeded' });
-      continue;
-    }
-    const viewport = page.getViewport({ scale });
-    const pixelWidth = Math.max(
-      1,
-      Math.ceil(viewport.width * candidate.bounds.width),
-    );
-    const pixelHeight = Math.max(
-      1,
-      Math.ceil(viewport.height * candidate.bounds.height),
-    );
-    const pixels = pixelWidth * pixelHeight;
-    if (
-      pixels > limits.maxCropPixels ||
-      budget.cropPixels + pixels > limits.maxTotalCropPixels
-    ) {
-      output.push({ ...candidate, recognitionFailure: 'limit-exceeded' });
-      continue;
-    }
-    const surface = rasterizer.createSurface(pixelWidth, pixelHeight);
-    let rgba: Uint8ClampedArray;
     try {
-      await renderFigureSurface(page, viewport, candidate.bounds, surface);
-      throwIfCancelled(cancellation);
-      const rendered = surface.readRgba?.();
-      if (!rendered || rendered.length !== pixels * 4)
-        throw new Error('Formula crop pixels are unavailable.');
-      rgba = Uint8ClampedArray.from(rendered);
-    } catch {
-      throwIfCancelled(cancellation);
-      output.push({ ...candidate, recognitionFailure: 'failed' });
-      continue;
-    } finally {
-      surface.dispose();
-    }
-    budget.cropPixels += pixels;
-    onProgress?.({
-      phase: 'read',
-      completed: budget.recognized,
-      message: `Recognizing formula ${budget.recognized + 1}.`,
-    });
-    try {
-      const recognition = await recognizer.recognize(
-        { width: pixelWidth, height: pixelHeight, rgba },
-        cancellation ? { cancellation } : {},
+      const recognitions = [];
+      for (const bounds of formulaRecognitionBounds(candidate, pageSpans))
+        recognitions.push(
+          await recognizeFormulaRegion(
+            page,
+            bounds,
+            rasterizer,
+            recognizer,
+            limits,
+            budget,
+            cancellation,
+            onProgress,
+          ),
+        );
+      const recognition = postprocessFormulaRecognition(
+        combineFormulaRecognitions(recognitions),
+        candidate,
+        pageSpans,
+      );
+      const tokens = recognitions.reduce(
+        (total, value) => total + (value.diagnostics?.tokens ?? 0),
+        0,
       );
       throwIfCancelled(cancellation);
-      budget.recognized++;
       if (
         !recognition.tex.trim() ||
         recognition.tex.length > limits.maxRecognitionTokens * 32
       ) {
         output.push({ ...candidate, recognitionFailure: 'invalid-tex' });
-      } else if (
-        recognition.diagnostics?.tokens !== undefined &&
-        recognition.diagnostics.tokens > limits.maxRecognitionTokens
-      ) {
+      } else if (tokens > limits.maxRecognitionTokens) {
         output.push({ ...candidate, recognitionFailure: 'limit-exceeded' });
       } else {
         output.push({
@@ -1440,18 +1421,243 @@ export async function recognizeFormulaCandidates(
     onProgress?.({
       phase: 'read',
       completed: budget.recognized,
+      total: budget.candidates,
       message: 'Formula recognition complete.',
     });
   return output;
 }
 
+async function recognizeFormulaRegion(
+  page: PDFPageProxy,
+  bounds: PdfBounds,
+  rasterizer: PdfFigureRasterizer,
+  recognizer: PdfFormulaRecognizer,
+  limits: PdfFormulaLimits,
+  budget: PdfFormulaBudget,
+  cancellation?: CancellationSignal,
+  onProgress?: (progress: ConversionProgress) => void,
+): Promise<PdfFormulaRecognition> {
+  const base = page.getViewport({ scale: 1 });
+  const logicalPixels = base.width * bounds.width * base.height * bounds.height;
+  const remainingPixels = limits.maxTotalCropPixels - budget.cropPixels;
+  if (logicalPixels <= 0 || remainingPixels <= 0)
+    throw new Error('Formula crop exceeds the resource limit.');
+  const scale = Math.min(
+    3,
+    Math.sqrt(limits.maxCropPixels / logicalPixels),
+    Math.sqrt(remainingPixels / logicalPixels),
+  );
+  if (!Number.isFinite(scale) || scale <= 0)
+    throw new Error('Formula crop exceeds the resource limit.');
+  const viewport = page.getViewport({ scale });
+  const pixelWidth = Math.max(1, Math.ceil(viewport.width * bounds.width));
+  const pixelHeight = Math.max(1, Math.ceil(viewport.height * bounds.height));
+  const pixels = pixelWidth * pixelHeight;
+  if (
+    pixels > limits.maxCropPixels ||
+    budget.cropPixels + pixels > limits.maxTotalCropPixels
+  )
+    throw new Error('Formula crop exceeds the resource limit.');
+  const surface = rasterizer.createSurface(pixelWidth, pixelHeight);
+  let rgba: Uint8ClampedArray;
+  try {
+    await renderFigureSurface(page, viewport, bounds, surface);
+    throwIfCancelled(cancellation);
+    const rendered = surface.readRgba?.();
+    if (!rendered || rendered.length !== pixels * 4)
+      throw new Error('Formula crop pixels are unavailable.');
+    rgba = Uint8ClampedArray.from(rendered);
+  } finally {
+    surface.dispose();
+  }
+  budget.cropPixels += pixels;
+  onProgress?.({
+    phase: 'read',
+    completed: budget.recognized,
+    total: budget.candidates,
+    message: `Recognizing formula ${budget.recognized + 1}.`,
+  });
+  const recognition = await recognizer.recognize(
+    { width: pixelWidth, height: pixelHeight, rgba },
+    cancellation ? { cancellation } : {},
+  );
+  budget.recognized++;
+  return recognition;
+}
+
+function formulaRecognitionBounds(
+  candidate: PdfFormulaCandidate,
+  pageSpans: readonly RawPdfTextSpan[],
+): readonly PdfBounds[] {
+  if (candidate.kind !== 'display') return [candidate.bounds];
+  const spans = pageSpans
+    .filter((span) => candidate.spanIds.includes(span.id))
+    .sort((left, right) => left.top - right.top || left.x - right.x);
+  const rows: RawPdfTextSpan[][] = [];
+  for (const span of spans) {
+    const row = rows.findLast((value) => {
+      const bounds = spanBounds(value);
+      const gap = Math.max(
+        0,
+        span.top - (bounds.top + bounds.height),
+        bounds.top - (span.top + span.height),
+      );
+      return (
+        gap <= Math.min(0.008, Math.max(span.height, bounds.height) * 0.35)
+      );
+    });
+    if (row) row.push(span);
+    else rows.push([span]);
+  }
+  if (rows.length < 2)
+    return [boundsWithoutEquationNumber(candidate.bounds, pageSpans)];
+  const bounds = rows.map(spanBounds);
+  if (
+    bounds.some(
+      (row) => row.width < Math.max(0.04, candidate.bounds.width * 0.35),
+    )
+  )
+    return [boundsWithoutEquationNumber(candidate.bounds, pageSpans)];
+  return bounds.map((row) => padFormulaRow(row));
+}
+
+function boundsWithoutEquationNumber(
+  bounds: PdfBounds,
+  pageSpans: readonly RawPdfTextSpan[],
+): PdfBounds {
+  const number = equationNumberSpan(bounds, pageSpans);
+  if (!number) return bounds;
+  const right = Math.max(
+    bounds.x,
+    Math.min(bounds.x + bounds.width, number.x - 0.004),
+  );
+  return { ...bounds, width: right - bounds.x };
+}
+
+function equationNumberSpan(
+  bounds: PdfBounds,
+  pageSpans: readonly RawPdfTextSpan[],
+): RawPdfTextSpan | undefined {
+  return pageSpans.find(
+    (span) =>
+      /^\(\d+[a-z]?\)$/i.test(span.text.trim()) &&
+      span.x >= bounds.x + bounds.width * 0.6 &&
+      span.top < bounds.top + bounds.height &&
+      span.top + span.height > bounds.top,
+  );
+}
+
+function spanBounds(spans: readonly RawPdfTextSpan[]): PdfBounds {
+  const x = Math.min(...spans.map((span) => span.x));
+  const top = Math.min(...spans.map((span) => span.top));
+  const right = Math.max(...spans.map((span) => span.x + span.width));
+  const bottom = Math.max(...spans.map((span) => span.top + span.height));
+  return { x, top, width: right - x, height: bottom - top };
+}
+
+function padFormulaRow(bounds: PdfBounds): PdfBounds {
+  const padding = 0.004;
+  const x = Math.max(0, bounds.x - padding);
+  const top = Math.max(0, bounds.top - padding);
+  const right = Math.min(1, bounds.x + bounds.width + padding);
+  const bottom = Math.min(1, bounds.top + bounds.height + padding);
+  return { x, top, width: right - x, height: bottom - top };
+}
+
+function combineFormulaRecognitions(
+  recognitions: readonly PdfFormulaRecognition[],
+): PdfFormulaRecognition {
+  if (recognitions.length === 1) return recognitions[0]!;
+  const tokens = recognitions.reduce(
+    (total, value) => total + (value.diagnostics?.tokens ?? 0),
+    0,
+  );
+  const backend = recognitions.find(({ diagnostics }) => diagnostics?.backend)
+    ?.diagnostics?.backend;
+  return {
+    tex: `\\begin{aligned}${recognitions
+      .map(({ tex }) => tex.trim())
+      .join(' \\\\ ')}\\end{aligned}`,
+    diagnostics: {
+      tokens,
+      ...(backend ? { backend } : {}),
+    },
+  };
+}
+
+function postprocessFormulaRecognition(
+  recognition: PdfFormulaRecognition,
+  candidate: PdfFormulaCandidate,
+  pageSpans: readonly RawPdfTextSpan[],
+): PdfFormulaRecognition {
+  const sourceWords = pageSpans
+    .filter((span) => candidate.spanIds.includes(span.id))
+    .flatMap(({ text }) => text.match(/[A-Za-z]{3,}/g) ?? []);
+  let tex = correctOcrIdentifiers(recognition.tex, sourceWords);
+  const number = equationNumberSpan(candidate.bounds, pageSpans)
+    ?.text.trim()
+    .match(/^\((\d+[a-z]?)\)$/i)?.[1];
+  if (number) {
+    tex = tex
+      .replace(
+        /(?:\\qquad\s*)*(?:\\text\{\(\s*(?:\d+[a-z]?\s*\)?)?\}|\(\s*\d+[a-z]?\s*\))\s*$/i,
+        '',
+      )
+      .trim();
+    tex += `\\tag{${number}}`;
+  }
+  return { ...recognition, tex };
+}
+
+function correctOcrIdentifiers(
+  tex: string,
+  sourceWords: readonly string[],
+): string {
+  const source = [...new Set(sourceWords.map((word) => word.toLowerCase()))];
+  return tex.replace(/(?<!\\)[A-Za-z]{3,}/g, (word) => {
+    const lower = word.toLowerCase();
+    if (source.includes(lower)) return word;
+    const maximumDistance = word.length >= 5 ? 2 : 1;
+    const matches = source
+      .filter((candidate) => candidate.length === lower.length)
+      .map((candidate) => ({
+        candidate,
+        distance: editDistance(lower, candidate),
+      }))
+      .filter(({ distance }) => distance <= maximumDistance)
+      .sort((left, right) => left.distance - right.distance);
+    if (
+      matches.length === 0 ||
+      (matches[1] && matches[1].distance === matches[0]!.distance)
+    )
+      return word;
+    return matches[0]!.candidate;
+  });
+}
+
+function editDistance(left: string, right: string): number {
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= left.length; row++) {
+    const current = [row];
+    for (let column = 1; column <= right.length; column++)
+      current[column] = Math.min(
+        current[column - 1]! + 1,
+        previous[column]! + 1,
+        previous[column - 1]! + Number(left[row - 1] !== right[column - 1]),
+      );
+    previous = current;
+  }
+  return previous[right.length]!;
+}
+
 function recognitionConfidence(
   candidate: PdfFormulaCandidate,
-  recognition: { diagnostics?: { tokens?: number } },
+  recognition: { tex: string; diagnostics?: { tokens?: number } },
 ): 'low' | 'medium' | 'high' {
   if (
     candidate.confidence === 'low' ||
     candidate.features.dictionaryLikeWordRatio > 0.35 ||
+    hasSuspiciousOcrTex(recognition.tex) ||
     (recognition.diagnostics?.tokens ?? 0) > 256
   )
     return 'low';
@@ -1464,6 +1670,13 @@ function recognitionConfidence(
   )
     return 'high';
   return 'medium';
+}
+
+function hasSuspiciousOcrTex(tex: string): boolean {
+  return (
+    /(?:^|[{\s])(?:[A-Za-z]\s+){2,}[A-Za-z](?=[}\s)]|$)/.test(tex) ||
+    /\\underline\{\{\{/.test(tex)
+  );
 }
 
 async function detectPageLayout(

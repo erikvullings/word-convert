@@ -36,19 +36,34 @@ import {
 } from '@wordconvert/cover-generator';
 import { saveDownload } from './download/index.ts';
 import { withMarkdownContent } from './content-editor.ts';
-import { fetchRemotePdf } from './remote-pdf.ts';
+import { fetchRemoteDocument } from './remote-document.ts';
+import { importTextDocumentWithSource } from './text-document-import.ts';
 import { inferDocumentLanguage } from './language.ts';
 import { isValidTex } from '@wordconvert/math-converter';
 import {
+  adjustFormulaSelection,
   manualFormulaRegionId,
   normalizeFormulaSelection,
+  type FormulaSelectionHandle,
+  type FormulaSelectionPoint,
 } from './formula-selection.ts';
+import { normalizeFormulaTex } from './formula-review.ts';
+import {
+  clearCachedTexTellerAssets,
+  hasCachedTexTellerAssets,
+} from './texteller-cache.ts';
 
 export function createBrowserController(): AppController {
   const state: AppState = createInitialState(
     new Date().toLocaleDateString('en-CA'),
     loadPreferences(localStorage),
   );
+  if (typeof caches === 'undefined') state.formulaCacheStatus = 'empty';
+  else
+    void hasCachedTexTellerAssets().then((cached) => {
+      state.formulaCacheStatus = cached ? 'cached' : 'empty';
+      m.redraw();
+    });
   let worker = new Worker(new URL('./worker/index.ts', import.meta.url), {
     type: 'module',
   });
@@ -57,11 +72,19 @@ export function createBrowserController(): AppController {
   let autoPreviewOperationId: string | undefined;
   let pdfLayoutOperationId: string | undefined;
   let epubRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-  let remotePdfAbort: AbortController | undefined;
+  let remoteDocumentAbort: AbortController | undefined;
   let previewRenderer:
     import('./pdf-preview.ts').PdfPagePreviewRenderer | undefined;
   let pendingPdfPreviewPage: number | undefined;
   let pdfPreviewRendering = false;
+  let formulaSelectionAdjustment:
+    | {
+        bounds: import('@wordconvert/pdf-reader').PdfBounds;
+        start: FormulaSelectionPoint;
+        handle: FormulaSelectionHandle;
+      }
+    | undefined;
+  let formulaSelectionSourceImageId: string | undefined;
   let disposed = false;
   const releasePdfPreview = (): void => {
     if (state.pdfPreview) URL.revokeObjectURL(state.pdfPreview.url);
@@ -170,6 +193,11 @@ export function createBrowserController(): AppController {
             ? state.preferences.markdownMode
             : 'epub',
       ...(cover && state.preferences.epubIncludeCover ? { cover } : {}),
+      ...(state.sourceFormat === 'html' &&
+      state.epubContentEdit === undefined &&
+      state.sourceHtml
+        ? { sourceHtml: state.sourceHtml }
+        : {}),
     } satisfies WorkerRequest);
   };
   const refreshEpubPreview = (): void => {
@@ -282,8 +310,8 @@ export function createBrowserController(): AppController {
     dispose() {
       if (disposed) return;
       disposed = true;
-      remotePdfAbort?.abort();
-      remotePdfAbort = undefined;
+      remoteDocumentAbort?.abort();
+      remoteDocumentAbort = undefined;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
       disposePdfPreview();
@@ -301,8 +329,8 @@ export function createBrowserController(): AppController {
         )
       )
         return;
-      remotePdfAbort?.abort();
-      remotePdfAbort = undefined;
+      remoteDocumentAbort?.abort();
+      remoteDocumentAbort = undefined;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
       disposePdfPreview();
@@ -332,9 +360,9 @@ export function createBrowserController(): AppController {
         replaceWorker();
         pdfLayoutOperationId = undefined;
       }
-      remotePdfAbort?.abort();
-      remotePdfAbort = undefined;
-      delete state.remotePdfLoading;
+      remoteDocumentAbort?.abort();
+      remoteDocumentAbort = undefined;
+      delete state.remoteDocumentLoading;
       const validation = validateSourceFile(file);
       if (validation) {
         state.error = {
@@ -353,6 +381,7 @@ export function createBrowserController(): AppController {
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
       delete state.model;
+      delete state.sourceHtml;
       delete state.pdfAnalysis;
       state.pdfImport.formulaDecisions = {};
       state.pdfImport.manualFormulaRegions = [];
@@ -362,6 +391,11 @@ export function createBrowserController(): AppController {
       delete state.formulaSelectionOpen;
       delete state.formulaSelectionAnchor;
       delete state.formulaSelectionBounds;
+      state.formulaSelectionTex = '';
+      formulaSelectionAdjustment = undefined;
+      formulaSelectionSourceImageId = undefined;
+      delete state.formulaExtractionId;
+      delete state.formulaExtractionMessage;
       delete state.pdfLayoutStatus;
       disposePdfPreview();
       state.pdfPreviewPage = 1;
@@ -425,9 +459,9 @@ export function createBrowserController(): AppController {
         });
     },
     cancel() {
-      remotePdfAbort?.abort();
-      remotePdfAbort = undefined;
-      delete state.remotePdfLoading;
+      remoteDocumentAbort?.abort();
+      remoteDocumentAbort = undefined;
+      delete state.remoteDocumentLoading;
       if (!state.operationId) return;
       const cancelledOperationId = state.operationId;
       worker.postMessage({
@@ -448,37 +482,62 @@ export function createBrowserController(): AppController {
       }
       m.redraw();
     },
-    setRemotePdfUrl(url) {
-      state.remotePdfUrl = url;
+    setRemoteDocumentUrl(url) {
+      state.remoteDocumentUrl = url;
       if (state.stage === 0) delete state.error;
     },
-    loadRemotePdf() {
-      const url = state.remotePdfUrl.trim();
-      if (!url || state.remotePdfLoading) return;
-      remotePdfAbort?.abort();
+    loadRemoteDocument() {
+      const url = state.remoteDocumentUrl.trim();
+      if (!url || state.remoteDocumentLoading) return;
+      remoteDocumentAbort?.abort();
       const abort = new AbortController();
-      remotePdfAbort = abort;
-      state.remotePdfLoading = true;
+      remoteDocumentAbort = abort;
+      state.remoteDocumentLoading = true;
       delete state.error;
-      void fetchRemotePdf(url, fetch, abort.signal)
-        .then((file) => {
-          if (remotePdfAbort !== abort) return;
-          remotePdfAbort = undefined;
-          delete state.remotePdfLoading;
-          controller.selectFiles([file]);
+      void fetchRemoteDocument(url, fetch, abort.signal)
+        .then((remoteDocument) => {
+          if (remoteDocumentAbort !== abort) return;
+          remoteDocumentAbort = undefined;
+          delete state.remoteDocumentLoading;
+          if (remoteDocument.format === 'pdf') {
+            controller.selectFiles([remoteDocument.file]);
+            m.redraw();
+            return;
+          }
+          sourceInput = undefined;
+          sourceFilename = remoteDocument.filename;
+          state.selectedFilename = remoteDocument.filename;
+          state.sourceFormat = remoteDocument.format;
+          const imported = importTextDocumentWithSource(
+            remoteDocument.content,
+            remoteDocument.format,
+            {
+              filename: remoteDocument.filename,
+              sourceUrl: remoteDocument.sourceUrl,
+              conversionDate: state.conversionDate,
+            },
+          );
+          state.model = imported.model;
+          if (imported.sourceHtml) state.sourceHtml = imported.sourceHtml;
+          else delete state.sourceHtml;
+          inferDocumentLanguage(state.model);
+          delete state.pdfAnalysis;
+          delete state.progress;
+          state.stage = 1;
+          state.status = 'ready';
           m.redraw();
         })
         .catch((cause: unknown) => {
-          if (remotePdfAbort !== abort) return;
-          remotePdfAbort = undefined;
-          delete state.remotePdfLoading;
+          if (remoteDocumentAbort !== abort) return;
+          remoteDocumentAbort = undefined;
+          delete state.remoteDocumentLoading;
           if (abort.signal.aborted) return;
           state.error = {
             code: 'invalid-input',
             message:
               cause instanceof Error
                 ? cause.message
-                : 'The remote PDF could not be loaded.',
+                : 'The remote document could not be loaded.',
             recoverable: true,
           };
           state.status = 'error';
@@ -573,6 +632,18 @@ export function createBrowserController(): AppController {
       delete state.output;
       if (state.stage === 2) requestConvert();
     },
+    setFormulaRecognitionEnabled(enabled) {
+      state.preferences.formulaRecognitionEnabled = enabled;
+      persistPreferences(localStorage, state.preferences);
+    },
+    clearFormulaRecognitionCache() {
+      if (typeof caches === 'undefined') return;
+      state.formulaCacheStatus = 'clearing';
+      void clearCachedTexTellerAssets().then(() => {
+        state.formulaCacheStatus = 'empty';
+        m.redraw();
+      });
+    },
     setHtmlMode(mode) {
       state.preferences.htmlMode = mode;
       state.preferences.assetMode = mode === 'zip' ? 'folder' : 'embedded';
@@ -638,6 +709,7 @@ export function createBrowserController(): AppController {
       const sourceFormat =
         state.sourceFormat ??
         (sourceFilename.toLowerCase().endsWith('.pdf') ? 'pdf' : 'docx');
+      if (sourceFormat !== 'docx' && sourceFormat !== 'pdf') return;
       worker.postMessage(
         {
           type: 'analyse',
@@ -742,14 +814,21 @@ export function createBrowserController(): AppController {
       const candidate = state.pdfAnalysis?.formulaCandidates?.find(
         ({ id }) => id === equationId,
       );
-      if (candidate) requestPdfPage(candidate.page);
+      const image = state.pdfAnalysis?.formulaImageRegions?.find(
+        ({ id }) => id === equationId,
+      );
+      const page = candidate?.page ?? image?.page;
+      if (page) requestPdfPage(page);
     },
     setFormulaDraft(equationId, tex) {
+      const candidate = state.pdfAnalysis?.formulaCandidates?.find(
+        ({ id }) => id === equationId,
+      );
       state.formulaDrafts = { ...state.formulaDrafts, [equationId]: tex };
-      const trimmed = tex.trim();
-      const error = !trimmed
+      const normalized = normalizeFormulaTex(tex);
+      const error = !normalized
         ? 'LaTeX is required.'
-        : isValidTex(trimmed)
+        : isValidTex(normalized, candidate?.kind === 'display')
           ? undefined
           : 'Enter valid LaTeX before saving.';
       const errors = { ...state.formulaValidationErrors };
@@ -757,18 +836,54 @@ export function createBrowserController(): AppController {
       else delete errors[equationId];
       state.formulaValidationErrors = errors;
     },
+    saveFormulaImage(imageId, enteredTex) {
+      const image = state.pdfAnalysis?.formulaImageRegions?.find(
+        ({ id }) => id === imageId,
+      );
+      if (!image) return;
+      const tex = normalizeFormulaTex(enteredTex);
+      if (!tex || !isValidTex(tex, true)) {
+        controller.setFormulaDraft?.(imageId, enteredTex);
+        return;
+      }
+      state.pdfImport.manualFormulaRegions = [
+        ...state.pdfImport.manualFormulaRegions.filter(
+          ({ id }) => id !== imageId,
+        ),
+        {
+          id: image.id,
+          page: image.page,
+          bounds: { ...image.bounds },
+          kind: 'display',
+          skipRecognition: true,
+          sourceImageId: image.id,
+        },
+      ];
+      state.formulaDrafts = { ...state.formulaDrafts, [imageId]: tex };
+      controller.setFormulaDecision?.({
+        equationId: imageId,
+        decision: 'formula',
+        tex,
+        display: 'block',
+      });
+      state.formulaReviewSelectedId = imageId;
+      delete state.formulaExtractionId;
+      state.formulaExtractionMessage =
+        'Formula saved from manual LaTeX. Review the result below.';
+      controller.rerunAnalysis();
+    },
     saveFormulaEdit(equationId) {
       const candidate = state.pdfAnalysis?.formulaCandidates?.find(
         ({ id }) => id === equationId,
       );
-      const tex = (
+      const tex = normalizeFormulaTex(
         state.formulaDrafts[equationId] ??
-        state.model?.equations[equationId]?.tex ??
-        candidate?.tex ??
-        candidate?.recognition?.tex ??
-        ''
-      ).trim();
-      if (!tex || !isValidTex(tex)) {
+          state.model?.equations[equationId]?.tex ??
+          candidate?.tex ??
+          candidate?.recognition?.tex ??
+          '',
+      );
+      if (!tex || !isValidTex(tex, candidate?.kind === 'display')) {
         controller.setFormulaDraft?.(equationId, tex);
         return;
       }
@@ -834,26 +949,113 @@ export function createBrowserController(): AppController {
       state.outputSaved = false;
       controller.rerunAnalysis();
     },
+    processFormulaImage(imageId) {
+      const image = state.pdfAnalysis?.formulaImageRegions?.find(
+        ({ id }) => id === imageId,
+      );
+      if (!image) return;
+      state.pdfImport.manualFormulaRegions = [
+        ...state.pdfImport.manualFormulaRegions.filter(
+          ({ id }) => id !== imageId,
+        ),
+        {
+          id: image.id,
+          page: image.page,
+          bounds: { ...image.bounds },
+          kind: 'display',
+          forceRecognition: true,
+          sourceImageId: image.id,
+        },
+      ];
+      controller.setFormulaDecision?.({
+        equationId: image.id,
+        decision: 'formula',
+      });
+      controller.setFormulaRecognitionEnabled?.(true);
+      state.formulaReviewSelectedId = image.id;
+      state.formulaExtractionId = image.id;
+      state.formulaExtractionMessage = 'Extracting image with TexTeller...';
+      controller.rerunAnalysis();
+    },
+    adjustFormulaImageRegion(imageId) {
+      const image = state.pdfAnalysis?.formulaImageRegions?.find(
+        ({ id }) => id === imageId,
+      );
+      if (!image) return;
+      state.formulaSelectionOpen = true;
+      state.formulaSelectionKind = 'display';
+      state.formulaSelectionBounds = { ...image.bounds };
+      delete state.formulaSelectionAnchor;
+      formulaSelectionAdjustment = undefined;
+      formulaSelectionSourceImageId = image.id;
+      state.formulaSelectionTex = state.formulaDrafts[image.id] ?? '';
+      state.pdfPreviewPage = image.page;
+      requestPdfPage(image.page);
+    },
+    keepFormulaImage(imageId) {
+      const region = state.pdfImport.manualFormulaRegions.find(
+        ({ id, sourceImageId }) => id === imageId || sourceImageId === imageId,
+      );
+      const detected = state.pdfAnalysis?.formulaImageRegions?.some(
+        ({ id }) => id === imageId,
+      );
+      if (!region && !detected) return;
+      state.pdfImport.manualFormulaRegions =
+        state.pdfImport.manualFormulaRegions.filter(
+          ({ id }) => id !== region?.id,
+        );
+      controller.setFormulaDecision?.({
+        equationId: imageId,
+        decision: 'image',
+        accepted: true,
+      });
+      controller.rerunAnalysis();
+    },
     openFormulaSelection() {
       state.formulaSelectionOpen = true;
       state.formulaSelectionKind = 'inline';
       delete state.formulaSelectionAnchor;
       delete state.formulaSelectionBounds;
+      formulaSelectionAdjustment = undefined;
+      formulaSelectionSourceImageId = undefined;
+      state.formulaSelectionTex = '';
       requestPdfPage(state.pdfPreviewPage);
     },
     cancelFormulaSelection() {
       delete state.formulaSelectionOpen;
       delete state.formulaSelectionAnchor;
       delete state.formulaSelectionBounds;
+      formulaSelectionAdjustment = undefined;
+      formulaSelectionSourceImageId = undefined;
     },
     setFormulaSelectionKind(kind) {
       state.formulaSelectionKind = kind;
     },
     beginFormulaSelection(point) {
+      formulaSelectionAdjustment = undefined;
       state.formulaSelectionAnchor = point;
       delete state.formulaSelectionBounds;
     },
+    beginFormulaSelectionAdjustment(handle, point) {
+      const bounds = state.formulaSelectionBounds;
+      if (!bounds) return;
+      formulaSelectionAdjustment = {
+        bounds: { ...bounds },
+        start: point,
+        handle,
+      };
+      delete state.formulaSelectionAnchor;
+    },
     updateFormulaSelection(point) {
+      if (formulaSelectionAdjustment) {
+        state.formulaSelectionBounds = adjustFormulaSelection(
+          formulaSelectionAdjustment.bounds,
+          formulaSelectionAdjustment.start,
+          point,
+          formulaSelectionAdjustment.handle,
+        );
+        return;
+      }
       if (!state.formulaSelectionAnchor) return;
       const bounds = normalizeFormulaSelection(
         state.formulaSelectionAnchor,
@@ -865,23 +1067,63 @@ export function createBrowserController(): AppController {
     endFormulaSelection(point) {
       controller.updateFormulaSelection?.(point);
       delete state.formulaSelectionAnchor;
+      formulaSelectionAdjustment = undefined;
     },
     setFormulaSelectionBounds(bounds) {
       state.formulaSelectionBounds = { ...bounds };
     },
-    addManualFormulaRegion() {
+    setFormulaSelectionTex(tex) {
+      state.formulaSelectionTex = tex;
+    },
+    addManualFormulaRegion(enteredTex) {
       const bounds = state.formulaSelectionBounds;
       const page = state.pdfPreview?.pageNumber ?? state.pdfPreviewPage;
       if (!bounds) return;
-      const id = manualFormulaRegionId(page, bounds);
+      const tex = enteredTex ? normalizeFormulaTex(enteredTex) : undefined;
+      if (
+        enteredTex &&
+        (!tex || !isValidTex(tex, state.formulaSelectionKind === 'display'))
+      )
+        return;
+      const sourceImageId = formulaSelectionSourceImageId;
+      const id = sourceImageId ?? manualFormulaRegionId(page, bounds);
       state.pdfImport.manualFormulaRegions = [
         ...state.pdfImport.manualFormulaRegions.filter(
           (region) => region.id !== id,
         ),
-        { id, page, bounds: { ...bounds }, kind: state.formulaSelectionKind },
+        {
+          id,
+          page,
+          bounds: { ...bounds },
+          kind: state.formulaSelectionKind,
+          ...(tex ? { skipRecognition: true } : { forceRecognition: true }),
+          ...(sourceImageId ? { sourceImageId } : {}),
+        },
       ];
-      controller.setFormulaDecision?.({ equationId: id, decision: 'formula' });
+      controller.setFormulaDecision?.({
+        equationId: id,
+        decision: 'formula',
+        ...(tex
+          ? {
+              tex,
+              display:
+                state.formulaSelectionKind === 'display' ? 'block' : 'inline',
+            }
+          : {}),
+      });
       state.formulaReviewSelectedId = id;
+      if (!tex) {
+        state.formulaExtractionId = id;
+        state.formulaExtractionMessage = sourceImageId
+          ? 'Extracting the adjusted region with TexTeller...'
+          : 'Extracting the selected region with TexTeller...';
+        controller.setFormulaRecognitionEnabled?.(true);
+      } else {
+        state.formulaDrafts = { ...state.formulaDrafts, [id]: tex };
+        delete state.formulaExtractionId;
+        state.formulaExtractionMessage =
+          'Formula saved from manual LaTeX. Review the result below.';
+      }
       controller.cancelFormulaSelection?.();
       controller.rerunAnalysis();
     },
@@ -1089,6 +1331,19 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
   if (response.operationId !== state.operationId) return;
   if (response.type === 'progress') state.progress = response.progress;
   if (response.type === 'analysed') {
+    const extractionId = state.formulaExtractionId;
+    if (extractionId && response.pdfAnalysis) {
+      const extracted = response.pdfAnalysis.formulaCandidates?.find(
+        ({ id, sourceImageId }) =>
+          id === extractionId || sourceImageId === extractionId,
+      );
+      state.formulaExtractionMessage = extracted?.recognition
+        ? 'Formula extracted. Review the result below.'
+        : extracted?.recognitionFailure
+          ? `TexTeller could not extract this region (${extracted.recognitionFailure}). Adjust the region or keep the image.`
+          : 'TexTeller did not return a formula. Adjust the region or keep the image.';
+      delete state.formulaExtractionId;
+    }
     inferDocumentLanguage(response.model);
     state.model = response.model;
     if (response.pdfAnalysis) {
@@ -1098,7 +1353,10 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
         response.pdfAnalysis.pageCount
       ) {
         const candidateIds = new Set(
-          response.pdfAnalysis.formulaCandidates?.map(({ id }) => id) ?? [],
+          [
+            ...(response.pdfAnalysis.formulaCandidates ?? []),
+            ...(response.pdfAnalysis.formulaImageRegions ?? []),
+          ].map(({ id }) => id),
         );
         state.pdfImport.formulaDecisions = Object.fromEntries(
           Object.entries(state.pdfImport.formulaDecisions).filter(([id]) =>
@@ -1137,6 +1395,11 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
     delete state.progress;
   }
   if (response.type === 'error') {
+    if (state.formulaExtractionId) {
+      state.formulaExtractionMessage =
+        'TexTeller extraction failed. Adjust the region or keep the image.';
+      delete state.formulaExtractionId;
+    }
     state.error = response.error;
     state.status = 'error';
     delete state.progress;
@@ -1168,6 +1431,7 @@ function pdfWorkerOptions(
   for (const candidate of state.pdfAnalysis?.candidates ?? [])
     if (candidate.removed) removedCandidateIds.add(candidate.id);
   return {
+    formulaRecognitionEnabled: state.preferences.formulaRecognitionEnabled,
     ...(samplePageCount !== undefined ? { samplePageCount } : {}),
     crop: {
       top: state.pdfImport.cropTop,

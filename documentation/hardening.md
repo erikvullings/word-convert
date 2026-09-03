@@ -24,7 +24,7 @@ This document is the release checklist for security, privacy, performance, and b
 | PDF vector figure rendering | Detect connected path regions, render only bounded regions to passive PNG, and charge them to the existing image-count and pixel budgets | PDF reader figure-region and aggregate-limit tests; browser conversion check |
 | PDF layout model | Run the bundled Apache-2.0 Heron FP16 ONNX model on fixed 640×640 local page renders; accept only bounded, confident picture/table proposals and retain deterministic geometry fallback | Heron preprocessing/decoding tests and PDF proposal-fusion tests |
 | PDF formula recognition | At most 100 candidates per page and 1,000 per document; 4 MP per temporary crop, 40 MP total, and 512 decoder tokens; strict safe KaTeX validation; preserve source on every failure | Formula candidate, real-crop, fake-session adapter, cancellation, and opt-in real-model tests |
-| Remote PDF import | HTTPS only, omit credentials/referrer, enforce 50 MiB while streaming, validate response type and `%PDF-` signature, and keep URL/bytes out of persistence | Remote PDF normalization, validation, limit, and failure tests |
+| Remote document import | HTTPS only, omit credentials/referrer, enforce 50 MiB while streaming, validate HTML/Markdown/text/PDF response types, parse HTML inertly, and keep URL/bytes out of persistence | Remote document normalization, classification, limit, semantic-import, and failure tests |
 | Encrypted or malformed PDF | Reject before semantic analysis with private structured errors | Password-protected and malformed PDF corpus fixtures |
 | PDF external loading | Supply exact bytes; disable range, streaming, auto-fetch, system-font, and external WASM loading | Worker privacy regression spies on `fetch` during DOCX and PDF analysis |
 | False-positive page-furniture removal | Crop bounds are explicit; repeated content is parity/position aware; medium/low confidence remains until user review | PDF layout tests cover crop boundaries, short documents, odd/even headers, and explicit candidate overrides |
@@ -71,18 +71,24 @@ overlaps. Sample cleanup analysis does not execute the model.
 Complex formula candidates that deterministic text reconstruction cannot handle
 are rendered at up to 3× logical resolution on a white temporary worker canvas.
 Crops are page-bounded, charged to configurable per-crop and aggregate pixel
-limits, copied to RGBA, and disposed before inference. A pinned RapidLatexOCR
-resizer, encoder, and autoregressive decoder run with WebGPU preferred and
+limits, copied to RGBA, and disposed before inference. Pinned TexTeller q4
+encoder and autoregressive decoder graphs run with WebGPU preferred and
 single-threaded WASM fallback. Decoder generation is capped at 512 tokens and
 checks cancellation between steps. Strict safe KaTeX parsing validates output;
 detector evidence, decoder diagnostics, parse success, and prose contamination
 produce a discrete review band. Failures preserve the source PDF text and add a
 reviewable warning.
 
-The 60-crop Chromium 146 WebGPU run parsed 48 outputs, failed recoverably on 4,
-and produced only 1 normalized exact result. Median inference was 225.9 ms, p95
-was 498 ms, initialization was 782.8 ms, and observed JavaScript heap peaked at
-82,093,612 bytes. These results keep recognized output reviewable and retain the
+Formula Review renders validated TeX through KaTeX with `trust: false`, then
+passes the generated markup through the shared restrictive DOMPurify policy.
+The formula-only policy retains KaTeX's generated inline positioning styles so
+fractions, scripts, and aligned rows remain legible; active tags, event handlers,
+unknown protocols, and remote resource URLs remain forbidden.
+
+The 60-crop Chromium 146 WebGPU run parsed 48 outputs with no inference failures
+and produced 7 normalized exact results. Median inference was 322.0 ms, p95 was
+595.8 ms, initialization was 3,024.0 ms, and observed JavaScript heap peaked at
+226,651,669 bytes. These results keep recognized output reviewable and retain the
 named 3x crop scale, tight page bounds, and current confidence policy. Full
 methodology, raw measurements, detector precision/recall/IoU, and the TexTeller
 preflight decision are in [formula-benchmarks](formula-benchmarks/README.md).
@@ -94,13 +100,13 @@ removing or marking a region as text removes its semantic equation without
 retaining a UI-owned node. Pointer selection has percentage-field and keyboard
 alternatives.
 
-The three formula graphs total approximately 171 MiB. They and the tokenizer are
-imported only on the first complex formula during full processing, emitted as
-same-origin content-hashed assets, and excluded from install-time precaching.
+The two TexTeller q4 graphs and tokenizer total approximately 245 MiB. They are
+requested only on the first complex formula during full processing, served as
+same-origin assets, and excluded from install-time precaching.
 The service worker caches successful same-origin responses after first use.
 Ordinary PDFs, deterministic formulas, and representative cleanup scans do not
-load the formula model. The pinned revision, sizes, and hashes are recorded in
-the asset manifest and verified by `pnpm assets:formula-ocr`.
+load the formula model. Users can disable formula recognition and delete only
+TexTeller requests from Cache Storage on the home screen.
 
 Standalone equations with fragmented fraction geometry are rendered to tightly
 bounded passive PNG assets under the existing image-count and pixel budgets.
@@ -128,7 +134,9 @@ for long PDFs and should not be presented as part of the one-time setup. This
 runtime and cache budget should be re-measured when the model or ONNX Runtime
 version changes.
 
-Remote PDF import downloads only HTTPS resources using CORS with omitted credentials and no referrer. arXiv abstract URLs are normalized locally to their corresponding `/pdf/` URL. The response is capped at 50 MiB while streaming and must have a PDF-compatible media type and `%PDF-` signature before entering the existing file-analysis path. A remote host can still reject browser access through CORS; WordConvert does not proxy around that policy. Remote URLs and bytes are not persisted.
+Remote document import downloads only HTTPS resources using CORS with omitted credentials and no referrer. arXiv abstract, HTML, and PDF URLs are normalized locally to the source-derived `/html/` version. Responses are capped at 50 MiB while streaming and must resolve to HTML, XHTML, Markdown, plain text, or a valid `%PDF-` signature. PDF responses enter the existing file-analysis path. Textual responses are parsed on the main thread into the semantic model and bypass PDF extraction and formula recognition.
+
+HTML parsing uses an inert `DOMParser` document, scopes arXiv content to its LaTeXML article element, removes active elements, accepts only HTTPS, `mailto:`, and local-fragment links, and converts LaTeXML `math[alttext]` values directly to semantic TeX equations. Remote images are not inserted into previews or generated output; their alternative text is retained. A remote host can still reject browser access through CORS, and WordConvert does not proxy around that policy. Remote source content is not persisted.
 
 Completed PDF conversions can show the original source page beside Markdown, HTML, or EPUB output. The source preview remains opt-in, renders one page at a time under the existing 1,200-pixel/4-megapixel preview budget, and stacks above converted output on narrow viewports. Hiding it retains no additional document persistence and releases replaced page object URLs through the existing preview lifecycle.
 

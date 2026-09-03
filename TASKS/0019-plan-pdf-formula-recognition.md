@@ -44,3 +44,6 @@ the browser. Runtime model files must be pinned, same-origin assets.
   into phased task files. The critical path is `0020` -> `0021` -> `0022` ->
   `0023`; manual region creation and alternative recognizer evaluation remain
   explicit follow-ups.
+- 2026-09-03 GitHub Copilot: TexTeller q4 superseded the planned RapidLatexOCR
+  production adapter after the `0025` comparison. The phase ownership above is
+  retained as the historical implementation plan.

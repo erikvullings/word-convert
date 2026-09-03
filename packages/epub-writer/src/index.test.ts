@@ -40,6 +40,28 @@ function model(blocks: DocumentModel['blocks'] = []): DocumentModel {
 }
 
 describe('writeEpub', () => {
+  it('packages supplied source XHTML without Markdown reconstruction', async () => {
+    const sourceXhtml =
+      '<article xmlns="http://www.w3.org/1999/xhtml" class="ltx_document"><p>Scale <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><msub><mi>d</mi><mi>k</mi></msub></math>.</p><table class="ltx_equation"><tbody><tr><td class="ltx_eqn_cell"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mi>A</mi></math></td><td class="ltx_eqn_eqno">(1)</td></tr></tbody></table></article>';
+    const files = unzipSync(
+      await writeEpub(model(), {
+        conversionDate: '2026-07-15',
+        identifier: 'source-html',
+        title: 'Source HTML',
+        language: 'en',
+        sourceXhtml,
+      }),
+    );
+    const chapter = strFromU8(
+      files['EPUB/chapter-001.xhtml'] ?? new Uint8Array(),
+    );
+    const styles = strFromU8(files['EPUB/styles.css'] ?? new Uint8Array());
+
+    expect(chapter).toContain(sourceXhtml);
+    expect(styles).toContain('.source-html .ltx_equation');
+    expect(Object.keys(files)).not.toContain('EPUB/chapter-002.xhtml');
+  });
+
   it('prefers accessible MathML and supports explicit formula fallbacks', async () => {
     const input = model([{ type: 'equationBlock', equationId: 'eq' }]);
     input.equations.eq = {

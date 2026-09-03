@@ -30,7 +30,7 @@ export const WORKFLOW_STAGES = [
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type OutputFormat = 'html' | 'markdown' | 'epub';
 export type PreviewMode = 'rendered' | 'source' | 'edit' | 'package';
-export type SourceFormat = 'docx' | 'pdf';
+export type SourceFormat = 'docx' | 'pdf' | 'html' | 'markdown' | 'text';
 export type FormulaReviewFilter =
   'all' | 'needs-review' | 'edited' | 'accepted';
 
@@ -56,6 +56,7 @@ export interface Preferences {
   theme: ThemePreference;
   outputFormat: OutputFormat;
   mappingPresets: Record<string, Record<string, StyleMapping>>;
+  formulaRecognitionEnabled: boolean;
   formulaMode: MathOutputMode;
   htmlMode: HtmlOutputMode;
   markdownMode: MarkdownOutputMode;
@@ -71,14 +72,20 @@ export interface DownloadOutput {
   warnings?: ConversionWarning[];
 }
 
+export interface SourceHtmlDocument {
+  html: string;
+  xhtml: string;
+}
+
 export interface AppState {
   stage: number;
   status: 'idle' | 'analysing' | 'ready' | 'converting' | 'complete' | 'error';
   conversionDate: string;
   selectedFilename?: string;
-  remotePdfUrl: string;
-  remotePdfLoading?: boolean;
+  remoteDocumentUrl: string;
+  remoteDocumentLoading?: boolean;
   sourceFormat?: SourceFormat;
+  sourceHtml?: SourceHtmlDocument;
   operationId?: string;
   progress?: ConversionProgress;
   model?: DocumentModel;
@@ -111,6 +118,10 @@ export interface AppState {
   formulaSelectionKind: 'inline' | 'display';
   formulaSelectionAnchor?: { x: number; top: number };
   formulaSelectionBounds?: PdfBounds;
+  formulaSelectionTex: string;
+  formulaExtractionId?: string;
+  formulaExtractionMessage?: string;
+  formulaCacheStatus: 'checking' | 'empty' | 'cached' | 'clearing';
   previewMode: PreviewMode;
   cover: CoverSettings;
   preferences: Preferences;
@@ -134,6 +145,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   theme: 'system',
   outputFormat: 'html',
   mappingPresets: {},
+  formulaRecognitionEnabled: true,
   formulaMode: 'mathml',
   htmlMode: 'standalone',
   markdownMode: 'single',
@@ -149,13 +161,15 @@ export function createInitialState(
     stage: 0,
     status: 'idle',
     conversionDate,
-    remotePdfUrl: '',
+    remoteDocumentUrl: '',
     styleMappings: {},
     presetText: '',
     formulaReviewFilter: 'all',
     formulaDrafts: {},
     formulaValidationErrors: {},
     formulaSelectionKind: 'inline',
+    formulaSelectionTex: '',
+    formulaCacheStatus: 'checking',
     previewMode: 'rendered',
     cover: createCoverSettings(),
     pdfImport: {
@@ -208,6 +222,8 @@ export function loadPreferences(storage: PreferenceStorage): Preferences {
         !['source', 'mathml', 'katex', 'disabled'].includes(
           value.formulaMode,
         )) ||
+      (value.formulaRecognitionEnabled !== undefined &&
+        typeof value.formulaRecognitionEnabled !== 'boolean') ||
       (value.htmlMode !== undefined &&
         !['standalone', 'zip'].includes(value.htmlMode)) ||
       (value.markdownMode !== undefined &&
@@ -220,6 +236,7 @@ export function loadPreferences(storage: PreferenceStorage): Preferences {
       return DEFAULT_PREFERENCES;
     return {
       ...value,
+      formulaRecognitionEnabled: value.formulaRecognitionEnabled ?? true,
       formulaMode: value.formulaMode ?? 'mathml',
       htmlMode: value.htmlMode ?? 'standalone',
       markdownMode: value.markdownMode ?? 'single',

@@ -131,12 +131,14 @@ analysis remains model-free. Regenerate the pinned model with
 `uv run --python 3.12 scripts/export-heron-onnx.py` and validate the browser
 runtime with `pnpm test:heron`.
 
-Complex PDF formulas use a separately lazy-loaded RapidLatexOCR ONNX model only
-after deterministic text reconstruction is insufficient. Formula crops and
-inference remain inside the conversion worker; the three pinned models are
-same-origin assets cached after first use. Install or verify them with
-`pnpm assets:formula-ocr` and check the real ONNX graphs with
-`pnpm test:formula-ocr`. Manual page-bounded formula regions use the same local
+Complex PDF formulas use a separately lazy-loaded TexTeller q4 ONNX model only
+after deterministic text reconstruction is insufficient. Its approximately
+257 MB of same-origin assets are downloaded and cached on first use, and complex
+documents take longer to convert. Formula recognition can be disabled and its
+cache can be cleared from the home screen. Formula crops and inference remain
+inside the conversion worker. Check local real ONNX graphs with
+`WORDCONVERT_TEXTELLER_MODEL_DIR=/path/to/texteller-q4 pnpm test:formula-ocr`.
+Manual page-bounded formula regions use the same local
 recognition, review, cancellation, and resource-limit path; source pixels and
 recognized TeX are never sent to a service. See the
 [formula benchmark](documentation/formula-benchmarks/README.md) for the measured

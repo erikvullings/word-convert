@@ -78,7 +78,10 @@ describe('PDF layout analysis', () => {
         expect(dispose).toHaveBeenCalledOnce();
         expect(image.width * image.height).toBeLessThanOrEqual(20_000);
         expect(image.rgba[0]).toBe(160);
-        return { tex: '\\sqrt{y}', diagnostics: { tokens: 4 } };
+        return {
+          tex: '\\mathrm{M u l t i H e a d}(Q,K,V)',
+          diagnostics: { tokens: 4 },
+        };
       },
     );
 
@@ -114,9 +117,9 @@ describe('PDF layout analysis', () => {
     expect(render).toHaveBeenCalledOnce();
     expect(recognize).toHaveBeenCalledOnce();
     expect(recognized[0]?.recognition).toMatchObject({
-      tex: '\\sqrt{y}',
+      tex: '\\mathrm{M u l t i H e a d}(Q,K,V)',
       model: 'test-model',
-      reviewConfidence: expect.stringMatching(/^(?:low|medium|high)$/),
+      reviewConfidence: 'low',
     });
   });
 
@@ -198,6 +201,240 @@ describe('PDF layout analysis', () => {
       sources: ['manual'],
       recognition: { tex: '\\frac{a}{b}', model: 'test-model' },
     });
+  });
+
+  it('recognizes clearly separated PDF formula rows and joins aligned TeX', async () => {
+    const first = span('a = b', 0.25, 0.3, { width: 0.3 });
+    const second = span('c = d', 0.25, 0.36, { width: 0.3 });
+    const candidate = {
+      id: 'multiline',
+      page: 1,
+      kind: 'display' as const,
+      bounds: { x: 0.24, top: 0.29, width: 0.32, height: 0.1 },
+      spanIds: [first.id, second.id],
+      features: {
+        mathFontRatio: 1,
+        operatorRatio: 0.2,
+        greekRatio: 0,
+        symbolRatio: 0,
+        singleLetterTokenRatio: 0.5,
+        dictionaryLikeWordRatio: 0,
+        superscriptCount: 0,
+        subscriptCount: 0,
+        baselineVariance: 0.001,
+        fontSizeVariance: 0,
+        centered: true,
+        isolated: true,
+        equationNumberAtRight: false,
+        multilineStructure: false,
+        score: 4,
+        confidence: 'high' as const,
+      },
+      score: 4,
+      confidence: 'high' as const,
+      sources: ['heron' as const],
+      requiresRecognition: true,
+    };
+    const recognize = vi
+      .fn()
+      .mockResolvedValueOnce({ tex: 'a = b', diagnostics: { tokens: 3 } })
+      .mockResolvedValueOnce({ tex: 'c = d', diagnostics: { tokens: 3 } });
+
+    const recognized = await recognizeFormulaCandidates(
+      {
+        getViewport: ({ scale }: { scale: number }) => ({
+          width: 600 * scale,
+          height: 800 * scale,
+        }),
+        render: () => ({ promise: Promise.resolve() }),
+      } as never,
+      [candidate],
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          readRgba: () => new Uint8ClampedArray(width * height * 4).fill(255),
+          encodePng: async () => new Uint8Array(),
+          dispose() {},
+        }),
+      },
+      { implementation: 'test-model', recognize },
+      {
+        maxCandidatesPerPage: 10,
+        maxCandidatesTotal: 10,
+        maxCropPixels: 1_000_000,
+        maxTotalCropPixels: 2_000_000,
+        maxRecognitionTokens: 10,
+      },
+      undefined,
+      undefined,
+      undefined,
+      [first, second],
+    );
+
+    expect(recognize).toHaveBeenCalledTimes(2);
+    expect(recognized[0]?.recognition?.tex).toBe(
+      '\\begin{aligned}a = b \\\\ c = d\\end{aligned}',
+    );
+  });
+
+  it('keeps narrow script spans in one formula recognition crop', async () => {
+    const base = span('x = y', 0.25, 0.3, { width: 0.3 });
+    const script = span('2', 0.52, 0.285, { width: 0.01, height: 0.01 });
+    const candidate = {
+      id: 'scripted',
+      page: 1,
+      kind: 'display' as const,
+      bounds: { x: 0.24, top: 0.28, width: 0.32, height: 0.05 },
+      spanIds: [base.id, script.id],
+      features: {
+        mathFontRatio: 1,
+        operatorRatio: 0.2,
+        greekRatio: 0,
+        symbolRatio: 0,
+        singleLetterTokenRatio: 0.5,
+        dictionaryLikeWordRatio: 0,
+        superscriptCount: 1,
+        subscriptCount: 0,
+        baselineVariance: 0.001,
+        fontSizeVariance: 0,
+        centered: true,
+        isolated: true,
+        equationNumberAtRight: false,
+        multilineStructure: true,
+        score: 4,
+        confidence: 'high' as const,
+      },
+      score: 4,
+      confidence: 'high' as const,
+      sources: ['geometry' as const],
+      requiresRecognition: true,
+    };
+    const recognize = vi.fn(async () => ({
+      tex: 'x = y^2',
+      diagnostics: { tokens: 5 },
+    }));
+
+    await recognizeFormulaCandidates(
+      {
+        getViewport: ({ scale }: { scale: number }) => ({
+          width: 600 * scale,
+          height: 800 * scale,
+        }),
+        render: () => ({ promise: Promise.resolve() }),
+      } as never,
+      [candidate],
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          readRgba: () => new Uint8ClampedArray(width * height * 4).fill(255),
+          encodePng: async () => new Uint8Array(),
+          dispose() {},
+        }),
+      },
+      { implementation: 'test-model', recognize },
+      {
+        maxCandidatesPerPage: 10,
+        maxCandidatesTotal: 10,
+        maxCropPixels: 1_000_000,
+        maxTotalCropPixels: 2_000_000,
+        maxRecognitionTokens: 10,
+      },
+      undefined,
+      undefined,
+      undefined,
+      [base, script],
+    );
+
+    expect(recognize).toHaveBeenCalledOnce();
+  });
+
+  it('uses PDF identifiers and keeps equation numbers outside OCR crops', async () => {
+    const formula = span(
+      'lrate = d model min step num warmup steps',
+      0.3,
+      0.4,
+      { width: 0.4 },
+    );
+    const number = span('(3)', 0.82, 0.4, { width: 0.04 });
+    const candidate = {
+      id: 'numbered',
+      page: 1,
+      kind: 'display' as const,
+      bounds: { x: 0.28, top: 0.38, width: 0.58, height: 0.06 },
+      spanIds: [formula.id],
+      features: {
+        mathFontRatio: 1,
+        operatorRatio: 0.2,
+        greekRatio: 0,
+        symbolRatio: 0,
+        singleLetterTokenRatio: 0.5,
+        dictionaryLikeWordRatio: 0,
+        superscriptCount: 0,
+        subscriptCount: 0,
+        baselineVariance: 0,
+        fontSizeVariance: 0,
+        centered: true,
+        isolated: true,
+        equationNumberAtRight: true,
+        multilineStructure: false,
+        score: 4,
+        confidence: 'high' as const,
+      },
+      score: 4,
+      confidence: 'high' as const,
+      sources: ['heron' as const],
+      requiresRecognition: true,
+    };
+    const widths: number[] = [];
+    const recognize = vi.fn(async (image: { width: number }) => {
+      widths.push(image.width);
+      return {
+        tex: 'frace=d_{\\text{nodel}}^{-0.5}\\cdot\\min(step\\_num,warmup\\_steps)',
+        diagnostics: { tokens: 12 },
+      };
+    });
+
+    const recognized = await recognizeFormulaCandidates(
+      {
+        getViewport: ({ scale }: { scale: number }) => ({
+          width: 600 * scale,
+          height: 800 * scale,
+        }),
+        render: () => ({ promise: Promise.resolve() }),
+      } as never,
+      [candidate],
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: (width, height) => ({
+          canvas: { width, height },
+          readRgba: () => new Uint8ClampedArray(width * height * 4).fill(255),
+          encodePng: async () => new Uint8Array(),
+          dispose() {},
+        }),
+      },
+      { implementation: 'test-model', recognize },
+      {
+        maxCandidatesPerPage: 10,
+        maxCandidatesTotal: 10,
+        maxCropPixels: 1_000_000,
+        maxTotalCropPixels: 2_000_000,
+        maxRecognitionTokens: 50,
+      },
+      undefined,
+      undefined,
+      undefined,
+      [formula, number],
+    );
+
+    expect(widths[0]).toBeLessThan(600 * 3 * candidate.bounds.width);
+    expect(recognized[0]?.recognition?.tex).toBe(
+      'lrate=d_{\\text{model}}^{-0.5}\\cdot\\min(step\\_num,warmup\\_steps)\\tag{3}',
+    );
   });
 
   it('constructs a semantic equation from simple PDF text geometry', async () => {
@@ -283,7 +520,7 @@ describe('PDF layout analysis', () => {
               ...detected,
               recognition: {
                 tex: '\\sqrt{y}',
-                model: 'rapid-latex-ocr-onnx',
+                model: 'texteller-onnx-q4',
                 reviewConfidence: 'medium',
               },
             },
@@ -332,6 +569,90 @@ describe('PDF layout analysis', () => {
     expect(result.model.equations['pdf-equation-p1-001']?.display).toBe(
       'block',
     );
+  });
+
+  it('places recognized formulas whose source rows are detached math fragments', async () => {
+    const before = span('Before the equation.', 0.1, 0.2, { width: 0.4 });
+    const numerator = span('QK', 0.4, 0.3, {
+      width: 0.04,
+      fontSize: 7,
+    });
+    const denominator = span('dk', 0.4, 0.32, {
+      width: 0.04,
+      fontSize: 7,
+    });
+    const after = span('After the equation.', 0.1, 0.4, { width: 0.4 });
+    const detected = createFormulaCandidates({
+      page: 1,
+      spans: [span('QK = dk', 0.35, 0.29, { width: 0.2 })],
+    })[0]!;
+    const candidate = {
+      ...detected,
+      bounds: { x: 0.34, top: 0.28, width: 0.22, height: 0.07 },
+      spanIds: [numerator.id, denominator.id],
+      recognition: {
+        tex: '\\frac{QK}{d_k}',
+        model: 'texteller-onnx-q4',
+        reviewConfidence: 'high' as const,
+      },
+      requiresRecognition: true,
+    };
+    delete candidate.tex;
+
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [before, numerator, denominator, after],
+          links: [],
+          images: [],
+          formulaCandidates: [candidate],
+        },
+      ]),
+      { conversionDate: '2026-09-03' },
+    );
+
+    expect(result.model.equations[candidate.id]?.tex).toBe('\\frac{QK}{d_k}');
+    expect(result.model.blocks).toEqual([
+      expect.objectContaining({ type: 'paragraph' }),
+      { type: 'equationBlock', equationId: candidate.id },
+      expect.objectContaining({ type: 'paragraph' }),
+    ]);
+  });
+
+  it('prefers requested TexTeller recognition over stale reconstructed TeX', async () => {
+    const formula = span('QK = dk', 0.35, 0.3, { width: 0.2 });
+    const detected = createFormulaCandidates({ page: 1, spans: [formula] })[0]!;
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [formula],
+          links: [],
+          images: [],
+          formulaCandidates: [
+            {
+              ...detected,
+              requiresRecognition: true,
+              recognition: {
+                tex: '\\frac{QK}{d_k}',
+                model: 'texteller-onnx-q4',
+                reviewConfidence: 'high',
+              },
+            },
+          ],
+        },
+      ]),
+      { conversionDate: '2026-09-03' },
+    );
+
+    expect(result.model.equations[detected.id]?.tex).toBe('\\frac{QK}{d_k}');
   });
 
   it('retains complex source text and warns when an injected recognizer fails', async () => {
@@ -1503,13 +1824,14 @@ describe('PDF layout analysis', () => {
     );
 
     const first = result.model.blocks[0];
-    expect(
-      first && 'children' in first
-        ? first.children
-            .map((child) => ('text' in child ? child.text : ''))
-            .join('')
-        : '',
-    ).toBe('dimension dmodel= 512.');
+    expect(first).toMatchObject({
+      type: 'paragraph',
+      children: [
+        { type: 'text', text: 'dimension d' },
+        { type: 'text', text: 'model', marks: [{ type: 'subscript' }] },
+        { type: 'text', text: '= 512.' },
+      ],
+    });
   });
 
   it('uses tagged structure and whitespace to reconstruct semantic blocks', async () => {
@@ -3028,6 +3350,68 @@ describe('PDF.js extraction helpers', () => {
         ],
       }),
     ]);
+    expect(result.analysis.formulaImageRegions).toEqual([
+      {
+        id: 'pdf-equation-1-0',
+        page: 1,
+        bounds: { x: 0.245, top: 0.285, width: 0.46, height: 0.04 },
+      },
+    ]);
+  });
+
+  it('replaces a promoted equation image with its recognized formula', async () => {
+    const formula = span('x = √y', 0.25, 0.3, { width: 0.3 });
+    const region = {
+      id: 'pdf-equation-1-0',
+      page: 1,
+      bounds: { x: 0.245, top: 0.285, width: 0.31, height: 0.04 },
+      kind: 'display' as const,
+      forceRecognition: true,
+    };
+    const candidate = {
+      ...createManualFormulaCandidate(region, [formula]),
+      recognition: {
+        tex: 'x = \\sqrt{y}',
+        model: 'texteller-onnx-q4',
+        reviewConfidence: 'high' as const,
+      },
+    };
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [formula],
+          links: [],
+          images: [
+            {
+              id: region.id,
+              ...region.bounds,
+              pixelWidth: 372,
+              pixelHeight: 64,
+              mediaType: 'image/png',
+              data: Uint8Array.from([137, 80, 78, 71]),
+              source: 'rendered-equation',
+            },
+          ],
+          formulaCandidates: [candidate],
+        },
+      ]),
+      {
+        conversionDate: '2026-09-03',
+        formulaDecisions: {
+          [region.id]: { equationId: region.id, decision: 'formula' },
+        },
+      },
+    );
+
+    expect(result.model.equations[region.id]?.tex).toBe('x = \\sqrt{y}');
+    expect(JSON.stringify(result.model.blocks)).not.toContain(
+      `"assetId":"${region.id}"`,
+    );
+    expect(result.analysis.formulaImageRegions).toEqual([]);
   });
 
   it('limits aggregate repeated-image placements', async () => {

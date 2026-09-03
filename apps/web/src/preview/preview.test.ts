@@ -1,6 +1,14 @@
+// @vitest-environment jsdom
+
+import { renderTex } from '@wordconvert/math-converter';
+import DOMPurify from 'dompurify';
 import { describe, expect, it } from 'vitest';
 
-import { previewSanitizeConfig, warningDestination } from './index.ts';
+import {
+  formulaPreviewSanitizeConfig,
+  previewSanitizeConfig,
+  warningDestination,
+} from './index.ts';
 
 describe('preview safety and warning navigation', () => {
   it('uses a restrictive DOMPurify policy that forbids active content and remote URLs', () => {
@@ -22,6 +30,24 @@ describe('preview safety and warning navigation', () => {
     expect(allowedUri.test('javascript:alert(1)')).toBe(false);
     expect(allowedUri.test('#chapter-1')).toBe(true);
     expect(allowedUri.test('data:image/png;base64,AA==')).toBe(true);
+  });
+
+  it('preserves KaTeX layout styles without relaxing active-content restrictions', () => {
+    const config = formulaPreviewSanitizeConfig();
+    const container = document.createElement('div');
+    container.innerHTML = DOMPurify.sanitize(
+      `${renderTex(String.raw`\sqrt{d_k}`, true)}
+        <svg><a href="https://tracker.example/pixel">remote</a>
+          <path d="M0 0" onclick="alert(1)"></path>
+        </svg>`,
+      config,
+    );
+
+    const radical = container.querySelector('.sqrt svg');
+    expect(radical?.getAttribute('preserveAspectRatio')).toBe('xMinYMin slice');
+    expect(radical?.querySelector('path')?.getAttribute('d')).toBeTruthy();
+    expect(container.querySelector('a')?.hasAttribute('href')).toBe(false);
+    expect(container.querySelector('path[onclick]')).toBeNull();
   });
 
   it.each([

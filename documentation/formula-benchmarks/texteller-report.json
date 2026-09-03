@@ -1,0 +1,716 @@
+{
+  "schema": "wordconvert.formula-benchmark-report",
+  "version": 1,
+  "model": {
+    "implementation": "texteller-onnx-q4",
+    "revision": "9727784d91d7f8437dc7140941c4335284ce075e",
+    "hashes": {
+      "encoder.onnx": "de5fe45294a00f45af907b783f3f4764dbdc95386676f4e20175d912cfe8e59a",
+      "decoder.onnx": "d937474a36f212cd704acc811b9eef32405f3aa20c5da812d7bf227abbc6004b",
+      "tokenizer.json": "ec4ca954798a092faf6fefcfa47fb5f85d76cdf6ab170b624ae1a683d53dae14"
+    }
+  },
+  "environment": {
+    "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+    "webGpuAvailable": true,
+    "crossOriginIsolated": false,
+    "maxTokens": 128,
+    "corpusCases": 60
+  },
+  "initializationMs": 3024,
+  "transferBytes": 256838602,
+  "peakMemoryBytes": 226651669,
+  "totals": {
+    "cases": 60,
+    "exact": 7,
+    "parseSuccess": 48,
+    "meanNormalizedEditDistance": 0.6107202119118954,
+    "failures": 0
+  },
+  "timing": {
+    "completed": 60,
+    "medianMs": 322,
+    "p95Ms": 595.7999999523163
+  },
+  "categories": {
+    "inline": {
+      "cases": 6,
+      "exact": 3,
+      "parseSuccess": 6,
+      "meanNormalizedEditDistance": 0.16666666666666666,
+      "failures": 0
+    },
+    "scripts": {
+      "cases": 6,
+      "exact": 0,
+      "parseSuccess": 6,
+      "meanNormalizedEditDistance": 0.5454545454545454,
+      "failures": 0
+    },
+    "greek": {
+      "cases": 6,
+      "exact": 3,
+      "parseSuccess": 4,
+      "meanNormalizedEditDistance": 0.25757575757575757,
+      "failures": 0
+    },
+    "operator": {
+      "cases": 6,
+      "exact": 0,
+      "parseSuccess": 6,
+      "meanNormalizedEditDistance": 0.7820512820512819,
+      "failures": 0
+    },
+    "relation": {
+      "cases": 6,
+      "exact": 0,
+      "parseSuccess": 1,
+      "meanNormalizedEditDistance": 0.8111111111111112,
+      "failures": 0
+    },
+    "fraction": {
+      "cases": 6,
+      "exact": 0,
+      "parseSuccess": 6,
+      "meanNormalizedEditDistance": 0.8406130268199234,
+      "failures": 0
+    },
+    "root": {
+      "cases": 6,
+      "exact": 0,
+      "parseSuccess": 6,
+      "meanNormalizedEditDistance": 0.2888888888888889,
+      "failures": 0
+    },
+    "matrix": {
+      "cases": 6,
+      "exact": 0,
+      "parseSuccess": 5,
+      "meanNormalizedEditDistance": 0.8935185185185185,
+      "failures": 0
+    },
+    "multiline": {
+      "cases": 3,
+      "exact": 0,
+      "parseSuccess": 3,
+      "meanNormalizedEditDistance": 0.8431372549019608,
+      "failures": 0
+    },
+    "rare-symbol": {
+      "cases": 6,
+      "exact": 1,
+      "parseSuccess": 2,
+      "meanNormalizedEditDistance": 0.8497536945812808,
+      "failures": 0
+    },
+    "equation-number": {
+      "cases": 3,
+      "exact": 0,
+      "parseSuccess": 3,
+      "meanNormalizedEditDistance": 0.5,
+      "failures": 0
+    }
+  },
+  "cases": [
+    {
+      "id": "inline-01-serif",
+      "category": "inline",
+      "exact": true,
+      "parseSuccess": true,
+      "editDistance": 0,
+      "normalizedEditDistance": 0,
+      "durationMs": 244.70000004768372,
+      "failure": null
+    },
+    {
+      "id": "inline-01-sans",
+      "category": "inline",
+      "exact": true,
+      "parseSuccess": true,
+      "editDistance": 0,
+      "normalizedEditDistance": 0,
+      "durationMs": 200.29999995231628,
+      "failure": null
+    },
+    {
+      "id": "inline-01-compact",
+      "category": "inline",
+      "exact": true,
+      "parseSuccess": true,
+      "editDistance": 0,
+      "normalizedEditDistance": 0,
+      "durationMs": 194.5,
+      "failure": null
+    },
+    {
+      "id": "inline-02-serif",
+      "category": "inline",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 2,
+      "normalizedEditDistance": 0.3333333333333333,
+      "durationMs": 192.89999997615814,
+      "failure": null
+    },
+    {
+      "id": "inline-02-sans",
+      "category": "inline",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 2,
+      "normalizedEditDistance": 0.3333333333333333,
+      "durationMs": 191.5,
+      "failure": null
+    },
+    {
+      "id": "inline-02-compact",
+      "category": "inline",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 2,
+      "normalizedEditDistance": 0.3333333333333333,
+      "durationMs": 192.20000004768372,
+      "failure": null
+    },
+    {
+      "id": "scripts-03-serif",
+      "category": "scripts",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 6,
+      "normalizedEditDistance": 0.5454545454545454,
+      "durationMs": 401,
+      "failure": null
+    },
+    {
+      "id": "scripts-03-sans",
+      "category": "scripts",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 6,
+      "normalizedEditDistance": 0.5454545454545454,
+      "durationMs": 321.8000000715256,
+      "failure": null
+    },
+    {
+      "id": "scripts-03-compact",
+      "category": "scripts",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 6,
+      "normalizedEditDistance": 0.5454545454545454,
+      "durationMs": 323.2999999523163,
+      "failure": null
+    },
+    {
+      "id": "scripts-04-serif",
+      "category": "scripts",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 6,
+      "normalizedEditDistance": 0.5454545454545454,
+      "durationMs": 324,
+      "failure": null
+    },
+    {
+      "id": "scripts-04-sans",
+      "category": "scripts",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 6,
+      "normalizedEditDistance": 0.5454545454545454,
+      "durationMs": 322.5,
+      "failure": null
+    },
+    {
+      "id": "scripts-04-compact",
+      "category": "scripts",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 6,
+      "normalizedEditDistance": 0.5454545454545454,
+      "durationMs": 323.39999997615814,
+      "failure": null
+    },
+    {
+      "id": "greek-05-serif",
+      "category": "greek",
+      "exact": true,
+      "parseSuccess": true,
+      "editDistance": 0,
+      "normalizedEditDistance": 0,
+      "durationMs": 239,
+      "failure": null
+    },
+    {
+      "id": "greek-05-sans",
+      "category": "greek",
+      "exact": true,
+      "parseSuccess": true,
+      "editDistance": 0,
+      "normalizedEditDistance": 0,
+      "durationMs": 239.69999992847443,
+      "failure": null
+    },
+    {
+      "id": "greek-05-compact",
+      "category": "greek",
+      "exact": true,
+      "parseSuccess": true,
+      "editDistance": 0,
+      "normalizedEditDistance": 0,
+      "durationMs": 235.80000007152557,
+      "failure": null
+    },
+    {
+      "id": "greek-06-serif",
+      "category": "greek",
+      "exact": false,
+      "parseSuccess": false,
+      "editDistance": 4,
+      "normalizedEditDistance": 0.36363636363636365,
+      "durationMs": 194.70000004768372,
+      "failure": null
+    },
+    {
+      "id": "greek-06-sans",
+      "category": "greek",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 9,
+      "normalizedEditDistance": 0.8181818181818182,
+      "durationMs": 257.5,
+      "failure": null
+    },
+    {
+      "id": "greek-06-compact",
+      "category": "greek",
+      "exact": false,
+      "parseSuccess": false,
+      "editDistance": 4,
+      "normalizedEditDistance": 0.36363636363636365,
+      "durationMs": 195,
+      "failure": null
+    },
+    {
+      "id": "operator-07-serif",
+      "category": "operator",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 30,
+      "normalizedEditDistance": 2.3076923076923075,
+      "durationMs": 706.6000000238419,
+      "failure": null
+    },
+    {
+      "id": "operator-07-sans",
+      "category": "operator",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 2,
+      "normalizedEditDistance": 0.15384615384615385,
+      "durationMs": 285.2000000476837,
+      "failure": null
+    },
+    {
+      "id": "operator-07-compact",
+      "category": "operator",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 9,
+      "normalizedEditDistance": 0.6923076923076923,
+      "durationMs": 347.3000000715256,
+      "failure": null
+    },
+    {
+      "id": "operator-08-serif",
+      "category": "operator",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 8,
+      "normalizedEditDistance": 0.6153846153846154,
+      "durationMs": 280.2000000476837,
+      "failure": null
+    },
+    {
+      "id": "operator-08-sans",
+      "category": "operator",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 6,
+      "normalizedEditDistance": 0.46153846153846156,
+      "durationMs": 261.60000002384186,
+      "failure": null
+    },
+    {
+      "id": "operator-08-compact",
+      "category": "operator",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 6,
+      "normalizedEditDistance": 0.46153846153846156,
+      "durationMs": 259.89999997615814,
+      "failure": null
+    },
+    {
+      "id": "relation-09-serif",
+      "category": "relation",
+      "exact": false,
+      "parseSuccess": false,
+      "editDistance": 1,
+      "normalizedEditDistance": 0.2,
+      "durationMs": 173.40000009536743,
+      "failure": null
+    },
+    {
+      "id": "relation-09-sans",
+      "category": "relation",
+      "exact": false,
+      "parseSuccess": false,
+      "editDistance": 1,
+      "normalizedEditDistance": 0.2,
+      "durationMs": 173.70000004768372,
+      "failure": null
+    },
+    {
+      "id": "relation-09-compact",
+      "category": "relation",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 19,
+      "normalizedEditDistance": 3.8,
+      "durationMs": 280.7999999523163,
+      "failure": null
+    },
+    {
+      "id": "relation-10-serif",
+      "category": "relation",
+      "exact": false,
+      "parseSuccess": false,
+      "editDistance": 2,
+      "normalizedEditDistance": 0.2222222222222222,
+      "durationMs": 237.39999997615814,
+      "failure": null
+    },
+    {
+      "id": "relation-10-sans",
+      "category": "relation",
+      "exact": false,
+      "parseSuccess": false,
+      "editDistance": 2,
+      "normalizedEditDistance": 0.2222222222222222,
+      "durationMs": 237.19999992847443,
+      "failure": null
+    },
+    {
+      "id": "relation-10-compact",
+      "category": "relation",
+      "exact": false,
+      "parseSuccess": false,
+      "editDistance": 2,
+      "normalizedEditDistance": 0.2222222222222222,
+      "durationMs": 238.70000004768372,
+      "failure": null
+    },
+    {
+      "id": "fraction-11-serif",
+      "category": "fraction",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 10,
+      "normalizedEditDistance": 0.6666666666666666,
+      "durationMs": 435.7999999523163,
+      "failure": null
+    },
+    {
+      "id": "fraction-11-sans",
+      "category": "fraction",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 10,
+      "normalizedEditDistance": 0.6666666666666666,
+      "durationMs": 435.10000002384186,
+      "failure": null
+    },
+    {
+      "id": "fraction-11-compact",
+      "category": "fraction",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 36,
+      "normalizedEditDistance": 2.4,
+      "durationMs": 595.7999999523163,
+      "failure": null
+    },
+    {
+      "id": "fraction-12-serif",
+      "category": "fraction",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 11,
+      "normalizedEditDistance": 0.3793103448275862,
+      "durationMs": 457.2999999523163,
+      "failure": null
+    },
+    {
+      "id": "fraction-12-sans",
+      "category": "fraction",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 16,
+      "normalizedEditDistance": 0.5517241379310345,
+      "durationMs": 345.40000009536743,
+      "failure": null
+    },
+    {
+      "id": "fraction-12-compact",
+      "category": "fraction",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 11,
+      "normalizedEditDistance": 0.3793103448275862,
+      "durationMs": 455.6999999284744,
+      "failure": null
+    },
+    {
+      "id": "root-13-serif",
+      "category": "root",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 2,
+      "normalizedEditDistance": 0.2,
+      "durationMs": 192.10000002384186,
+      "failure": null
+    },
+    {
+      "id": "root-13-sans",
+      "category": "root",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 2,
+      "normalizedEditDistance": 0.2,
+      "durationMs": 194.89999997615814,
+      "failure": null
+    },
+    {
+      "id": "root-13-compact",
+      "category": "root",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 2,
+      "normalizedEditDistance": 0.2,
+      "durationMs": 193.20000004768372,
+      "failure": null
+    },
+    {
+      "id": "root-14-serif",
+      "category": "root",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 4,
+      "normalizedEditDistance": 0.26666666666666666,
+      "durationMs": 280.7000000476837,
+      "failure": null
+    },
+    {
+      "id": "root-14-sans",
+      "category": "root",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 9,
+      "normalizedEditDistance": 0.6,
+      "durationMs": 279.7000000476837,
+      "failure": null
+    },
+    {
+      "id": "root-14-compact",
+      "category": "root",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 4,
+      "normalizedEditDistance": 0.26666666666666666,
+      "durationMs": 279.7999999523163,
+      "failure": null
+    },
+    {
+      "id": "matrix-15-serif",
+      "category": "matrix",
+      "exact": false,
+      "parseSuccess": false,
+      "editDistance": 34,
+      "normalizedEditDistance": 0.9444444444444444,
+      "durationMs": 390.3000000715256,
+      "failure": null
+    },
+    {
+      "id": "matrix-15-sans",
+      "category": "matrix",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 40,
+      "normalizedEditDistance": 1.1111111111111112,
+      "durationMs": 434.2999999523163,
+      "failure": null
+    },
+    {
+      "id": "matrix-15-compact",
+      "category": "matrix",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 55,
+      "normalizedEditDistance": 1.5277777777777777,
+      "durationMs": 728.1000000238419,
+      "failure": null
+    },
+    {
+      "id": "matrix-16-serif",
+      "category": "matrix",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 18,
+      "normalizedEditDistance": 0.5,
+      "durationMs": 502.8000000715256,
+      "failure": null
+    },
+    {
+      "id": "matrix-16-sans",
+      "category": "matrix",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 28,
+      "normalizedEditDistance": 0.7777777777777778,
+      "durationMs": 368,
+      "failure": null
+    },
+    {
+      "id": "matrix-16-compact",
+      "category": "matrix",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 18,
+      "normalizedEditDistance": 0.5,
+      "durationMs": 500.39999997615814,
+      "failure": null
+    },
+    {
+      "id": "multiline-17-serif",
+      "category": "multiline",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 43,
+      "normalizedEditDistance": 0.8431372549019608,
+      "durationMs": 372.6999999284744,
+      "failure": null
+    },
+    {
+      "id": "multiline-17-sans",
+      "category": "multiline",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 43,
+      "normalizedEditDistance": 0.8431372549019608,
+      "durationMs": 369.1999999284744,
+      "failure": null
+    },
+    {
+      "id": "multiline-17-compact",
+      "category": "multiline",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 43,
+      "normalizedEditDistance": 0.8431372549019608,
+      "durationMs": 371.7000000476837,
+      "failure": null
+    },
+    {
+      "id": "rare-symbol-18-serif",
+      "category": "rare-symbol",
+      "exact": true,
+      "parseSuccess": false,
+      "editDistance": 0,
+      "normalizedEditDistance": 0,
+      "durationMs": 235,
+      "failure": null
+    },
+    {
+      "id": "rare-symbol-18-sans",
+      "category": "rare-symbol",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 27,
+      "normalizedEditDistance": 1.9285714285714286,
+      "durationMs": 410.7999999523163,
+      "failure": null
+    },
+    {
+      "id": "rare-symbol-18-compact",
+      "category": "rare-symbol",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 27,
+      "normalizedEditDistance": 1.9285714285714286,
+      "durationMs": 411.2999999523163,
+      "failure": null
+    },
+    {
+      "id": "rare-symbol-19-serif",
+      "category": "rare-symbol",
+      "exact": false,
+      "parseSuccess": false,
+      "editDistance": 12,
+      "normalizedEditDistance": 0.41379310344827586,
+      "durationMs": 369.8000000715256,
+      "failure": null
+    },
+    {
+      "id": "rare-symbol-19-sans",
+      "category": "rare-symbol",
+      "exact": false,
+      "parseSuccess": false,
+      "editDistance": 12,
+      "normalizedEditDistance": 0.41379310344827586,
+      "durationMs": 367,
+      "failure": null
+    },
+    {
+      "id": "rare-symbol-19-compact",
+      "category": "rare-symbol",
+      "exact": false,
+      "parseSuccess": false,
+      "editDistance": 12,
+      "normalizedEditDistance": 0.41379310344827586,
+      "durationMs": 367.10000002384186,
+      "failure": null
+    },
+    {
+      "id": "equation-number-20-serif",
+      "category": "equation-number",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 3,
+      "normalizedEditDistance": 0.5,
+      "durationMs": 323.10000002384186,
+      "failure": null
+    },
+    {
+      "id": "equation-number-20-sans",
+      "category": "equation-number",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 3,
+      "normalizedEditDistance": 0.5,
+      "durationMs": 324.2000000476837,
+      "failure": null
+    },
+    {
+      "id": "equation-number-20-compact",
+      "category": "equation-number",
+      "exact": false,
+      "parseSuccess": true,
+      "editDistance": 3,
+      "normalizedEditDistance": 0.5,
+      "durationMs": 322,
+      "failure": null
+    }
+  ]
+}

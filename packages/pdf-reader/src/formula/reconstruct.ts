@@ -50,6 +50,7 @@ const SUBSCRIPTS: Readonly<Record<string, string>> = {
   '₈': '8',
   '₉': '9',
 };
+const MAX_SIMPLE_SPANS = 8;
 
 export function reconstructSimpleTex(
   spans: readonly RawPdfTextSpan[],
@@ -59,12 +60,14 @@ export function reconstructSimpleTex(
   if (/[∫∑Σ∏Π√]|\\(?:frac|begin)/u.test(source)) return undefined;
   const ordered = [...spans].sort((left, right) => left.x - right.x);
   const ordinary = ordered.filter(({ text }) => text.trim());
+  if (ordinary.length > MAX_SIMPLE_SPANS) return undefined;
   const normalSize = Math.max(...ordinary.map(({ fontSize }) => fontSize));
-  const normalBaseline = Math.max(
-    ...ordinary
-      .filter(({ fontSize }) => fontSize >= normalSize * 0.85)
-      .map((span) => span.baseline ?? span.top + span.height * 0.8),
-  );
+  const normalBaselines = ordinary
+    .filter(({ fontSize }) => fontSize >= normalSize * 0.85)
+    .map((span) => span.baseline ?? span.top + span.height * 0.8);
+  if (Math.max(...normalBaselines) - Math.min(...normalBaselines) >= 0.012)
+    return undefined;
+  const normalBaseline = Math.max(...normalBaselines);
   const pieces = ordered.map((span) => {
     const value = normalizeSymbols(span.text.trim());
     if (!value) return '';

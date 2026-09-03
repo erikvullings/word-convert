@@ -231,7 +231,7 @@ describe('writeMarkdown', () => {
     expect(markdown).toContain('> Line 1\n>\n> Line 2');
     expect(markdown).toContain('```type-script\nconst x = `a`;\n```');
     expect(markdown).toContain('\n---\n');
-    expect(markdown).toContain('<!-- page break -->');
+    expect(markdown).not.toContain('page break');
   });
 
   it('writes ordered and unordered nested lists and GFM tables', () => {

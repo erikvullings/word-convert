@@ -16,6 +16,7 @@ export type {
   PdfFormulaConfidence,
   PdfFormulaDecision,
   PdfFormulaImage,
+  PdfFormulaImageRegion,
   PdfFormulaLimits,
   PdfManualFormulaRegion,
   PdfFormulaRecognition,

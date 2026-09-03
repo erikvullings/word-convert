@@ -16,11 +16,9 @@ Install dependencies with `pnpm install`. Run the development server with
 - `pnpm test`
 - `pnpm build`
 
-The formula OCR assets are pinned by revision, size, and SHA-256 in
-`apps/web/src/assets/formula-ocr/model-manifest.json`. Run
-`pnpm assets:formula-ocr` to install or verify them. `pnpm test:formula-ocr`
-performs the opt-in real ONNX Runtime graph-load check; normal Vitest runs use
-small fake sessions.
+The TexTeller q4 formula OCR assets are supplied through
+`WORDCONVERT_TEXTELLER_MODEL_DIR`. `pnpm test:formula-ocr` performs the opt-in
+real ONNX Runtime graph-load check; normal Vitest runs use small fake sessions.
 
 Use `pnpm install --frozen-lockfile` in a clean checkout or CI. The development
 server prints the local application URL; stop it with Ctrl-C.

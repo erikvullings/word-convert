@@ -17,6 +17,7 @@ export function createFormulaCandidates(input: {
   page: number;
   spans: readonly RawPdfTextSpan[];
   layoutRegions?: readonly LayoutRegion[];
+  renderedEquationRegions?: readonly PdfBounds[];
   taggedFormulaSpanIds?: ReadonlySet<string>;
 }): PdfFormulaCandidate[] {
   const typicalFontSize = median(
@@ -30,6 +31,18 @@ export function createFormulaCandidates(input: {
   const proposals = groups.map((spans) =>
     candidate(input.page, spans, undefined, input.taggedFormulaSpanIds),
   );
+  for (const region of input.renderedEquationRegions ?? []) {
+    const rendered = renderedEquationCandidate(input.page, region, input.spans);
+    const renderedText = candidateText(rendered, input.spans);
+    const semanticCandidate = proposals.find(
+      (proposal) =>
+        shouldFuse(proposal.bounds, rendered.bounds) ||
+        (!/[=<>≤≥]/u.test(renderedText) &&
+          /[=<>≤≥]/u.test(candidateText(proposal, input.spans)) &&
+          nearbyOnSameLine(proposal.bounds, rendered.bounds)),
+    );
+    if (semanticCandidate) mergeCandidate(semanticCandidate, rendered);
+  }
   for (const region of input.layoutRegions ?? []) {
     if (
       region.label !== 'formula' ||
@@ -44,12 +57,8 @@ export function createFormulaCandidates(input: {
   }
   const fused: PdfFormulaCandidate[] = [];
   for (const proposal of proposals.sort(comparePosition)) {
-    const existing = fused.find(
-      ({ bounds }) =>
-        coverage(bounds, proposal.bounds) >=
-          PDF_FORMULA_THRESHOLDS.fusionCoverage ||
-        coverage(proposal.bounds, bounds) >=
-          PDF_FORMULA_THRESHOLDS.fusionCoverage,
+    const existing = fused.find(({ bounds }) =>
+      shouldFuse(bounds, proposal.bounds),
     );
     if (!existing) fused.push(proposal);
     else mergeCandidate(existing, proposal);
@@ -88,8 +97,11 @@ export function createManualFormulaCandidate(
     score: features.score,
     confidence: 'medium',
     sources: ['manual'],
+    ...(region.sourceImageId ? { sourceImageId: region.sourceImageId } : {}),
     ...(tex ? { tex } : {}),
-    requiresRecognition: tex === undefined,
+    requiresRecognition:
+      region.skipRecognition !== true &&
+      (region.forceRecognition === true || tex === undefined),
   };
 }
 
@@ -122,12 +134,17 @@ function isFormulaGroup(
 ): boolean {
   const text = spans.map(({ text }) => text).join(' ');
   const features = extractMathFeatures(spans, { isolated: true });
+  const proseSpansPageWidth =
+    boundsOf(spans).width > PDF_FORMULA_THRESHOLDS.maxProseGeometryWidth &&
+    features.dictionaryLikeWordRatio >=
+      PDF_FORMULA_THRESHOLDS.minWideGeometryDictionaryWordRatio;
   return (
     Math.max(...spans.map(({ fontSize }) => fontSize)) >=
       typicalFontSize * 0.85 &&
     !isSubordinateScript(spans, pageSpans) &&
     /[=<>≤≥]/u.test(text) &&
     !/^\s*[A-Za-z]{3,}(?:\s+[A-Za-z]{3,})+\s*$/u.test(text) &&
+    !proseSpansPageWidth &&
     features.dictionaryLikeWordRatio <=
       PDF_FORMULA_THRESHOLDS.maxGeometryDictionaryWordRatio &&
     features.score >= PDF_FORMULA_THRESHOLDS.geometryScore
@@ -216,6 +233,70 @@ function mergeCandidate(
     target.kind === 'display' || source.kind === 'display'
       ? 'display'
       : target.kind;
+  if (source.sources.includes('rasterized-equation')) {
+    target.sources = [
+      ...new Set<PdfFormulaSource>([...target.sources, 'rasterized-equation']),
+    ];
+    delete target.tex;
+    target.requiresRecognition = true;
+  }
+}
+
+function renderedEquationCandidate(
+  page: number,
+  bounds: PdfBounds,
+  pageSpans: readonly RawPdfTextSpan[],
+): PdfFormulaCandidate {
+  const spans = pageSpans.filter((span) => intersects(span, bounds));
+  const features = extractMathFeatures(spans, { isolated: true });
+  return {
+    id: '',
+    page,
+    kind: 'display',
+    bounds: {
+      x: bounds.x,
+      top: bounds.top,
+      width: bounds.width,
+      height: bounds.height,
+    },
+    spanIds: spans.map(({ id }) => id),
+    features,
+    score: features.score,
+    confidence: 'medium',
+    sources: ['rasterized-equation'],
+    requiresRecognition: true,
+  };
+}
+
+function shouldFuse(left: PdfBounds, right: PdfBounds): boolean {
+  return (
+    coverage(left, right) >= PDF_FORMULA_THRESHOLDS.fusionCoverage ||
+    coverage(right, left) >= PDF_FORMULA_THRESHOLDS.fusionCoverage
+  );
+}
+
+function candidateText(
+  candidate: PdfFormulaCandidate,
+  pageSpans: readonly RawPdfTextSpan[],
+): string {
+  return pageSpans
+    .filter(({ id }) => candidate.spanIds.includes(id))
+    .map(({ text }) => text)
+    .join(' ');
+}
+
+function nearbyOnSameLine(left: PdfBounds, right: PdfBounds): boolean {
+  const verticalGap = Math.max(
+    0,
+    left.top - (right.top + right.height),
+    right.top - (left.top + left.height),
+  );
+  const horizontalGap = Math.max(
+    0,
+    left.x - (right.x + right.width),
+    right.x - (left.x + left.width),
+  );
+  return verticalGap <= 0.015 && horizontalGap <= 0.08;
 }
 
 function boundsOf(spans: readonly RawPdfTextSpan[]): PdfBounds {

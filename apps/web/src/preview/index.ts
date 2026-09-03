@@ -29,6 +29,18 @@ export function previewSanitizeConfig(): Config {
   };
 }
 
+export function formulaPreviewSanitizeConfig(): Config {
+  const config = previewSanitizeConfig();
+  return {
+    ...config,
+    ADD_ATTR: ['d', 'preserveAspectRatio'],
+    ADD_URI_SAFE_ATTR: ['d', 'preserveAspectRatio'],
+    FORBID_ATTR: (config.FORBID_ATTR ?? []).filter(
+      (attribute) => attribute !== 'style',
+    ),
+  };
+}
+
 export function warningDestination(
   warning: ConversionWarning,
 ): WarningDestination | undefined {

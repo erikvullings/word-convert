@@ -15,6 +15,8 @@ describe('OMML formula conversion', () => {
   it('validates recognized TeX with strict safe KaTeX settings', () => {
     expect(isValidTex('x^2 + \\frac{1}{y}')).toBe(true);
     expect(isValidTex('\\frac{x{y}')).toBe(false);
+    expect(isValidTex('x\\tag{1}')).toBe(false);
+    expect(isValidTex('x\\tag{1}', true)).toBe(true);
   });
   it('normalizes and serializes fractions, roots, scripts, matrices, and Unicode symbols', () => {
     const source = wrap(

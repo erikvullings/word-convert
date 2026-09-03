@@ -1,0 +1,567 @@
+{
+  "schema": "wordconvert.formula-benchmark-run",
+  "version": 1,
+  "measuredAt": "2026-09-02T20:19:44.864Z",
+  "model": {
+    "implementation": "texteller-onnx-q4",
+    "revision": "9727784d91d7f8437dc7140941c4335284ce075e",
+    "hashes": {
+      "encoder.onnx": "de5fe45294a00f45af907b783f3f4764dbdc95386676f4e20175d912cfe8e59a",
+      "decoder.onnx": "d937474a36f212cd704acc811b9eef32405f3aa20c5da812d7bf227abbc6004b",
+      "tokenizer.json": "ec4ca954798a092faf6fefcfa47fb5f85d76cdf6ab170b624ae1a683d53dae14"
+    }
+  },
+  "transferBytes": 256838602,
+  "initializationMs": 3024,
+  "initialMemoryBytes": 37188577,
+  "peakMemoryBytes": 226651669,
+  "environment": {
+    "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+    "webGpuAvailable": true,
+    "crossOriginIsolated": false,
+    "maxTokens": 128,
+    "corpusCases": 60
+  },
+  "results": [
+    {
+      "id": "inline-01-serif",
+      "tex": "x+y=z",
+      "durationMs": 244.70000004768372,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 8
+      }
+    },
+    {
+      "id": "inline-01-sans",
+      "tex": "x+y=z",
+      "durationMs": 200.29999995231628,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 8
+      }
+    },
+    {
+      "id": "inline-01-compact",
+      "tex": "x+y=z",
+      "durationMs": 194.5,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 8
+      }
+    },
+    {
+      "id": "inline-02-serif",
+      "tex": "E=mc^{2}",
+      "durationMs": 192.89999997615814,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 8
+      }
+    },
+    {
+      "id": "inline-02-sans",
+      "tex": "E=mc^{2}",
+      "durationMs": 191.5,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 8
+      }
+    },
+    {
+      "id": "inline-02-compact",
+      "tex": "E=mc^{2}",
+      "durationMs": 192.20000004768372,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 8
+      }
+    },
+    {
+      "id": "scripts-03-serif",
+      "tex": "a_{i}+b_{i}=c_{i}",
+      "durationMs": 401,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 14
+      }
+    },
+    {
+      "id": "scripts-03-sans",
+      "tex": "a_{i}+b_{i}=c_{i}",
+      "durationMs": 321.8000000715256,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 14
+      }
+    },
+    {
+      "id": "scripts-03-compact",
+      "tex": "a_{i}+b_{i}=c_{i}",
+      "durationMs": 323.2999999523163,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 14
+      }
+    },
+    {
+      "id": "scripts-04-serif",
+      "tex": "x^{2}+y^{2}=z^{2}",
+      "durationMs": 324,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 14
+      }
+    },
+    {
+      "id": "scripts-04-sans",
+      "tex": "x^{2}+y^{2}=z^{2}",
+      "durationMs": 322.5,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 14
+      }
+    },
+    {
+      "id": "scripts-04-compact",
+      "tex": "x^{2}+y^{2}=z^{2}",
+      "durationMs": 323.39999997615814,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 14
+      }
+    },
+    {
+      "id": "greek-05-serif",
+      "tex": "\\alpha+\\beta=\\gamma",
+      "durationMs": 239,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 10
+      }
+    },
+    {
+      "id": "greek-05-sans",
+      "tex": "\\alpha+\\beta=\\gamma",
+      "durationMs": 239.69999992847443,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 10
+      }
+    },
+    {
+      "id": "greek-05-compact",
+      "tex": "\\alpha+\\beta=\\gamma",
+      "durationMs": 235.80000007152557,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 10
+      }
+    },
+    {
+      "id": "greek-06-serif",
+      "tex": "\\Delta x \\rightarrow 0",
+      "durationMs": 194.70000004768372,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 8
+      }
+    },
+    {
+      "id": "greek-06-sans",
+      "tex": "\\Delta\\mathsf{x}\\to 0",
+      "durationMs": 257.5,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 11
+      }
+    },
+    {
+      "id": "greek-06-compact",
+      "tex": "\\Delta x \\rightarrow 0",
+      "durationMs": 195,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 8
+      }
+    },
+    {
+      "id": "operator-07-serif",
+      "tex": "\\sum \\nolimits_{i=1}\\left. \\sum \\nolimits_{i=1}\\left( \\right. \\right.",
+      "durationMs": 706.6000000238419,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 31
+      }
+    },
+    {
+      "id": "operator-07-sans",
+      "tex": "\\sum_{i=1}^{n}i",
+      "durationMs": 285.2000000476837,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 12
+      }
+    },
+    {
+      "id": "operator-07-compact",
+      "tex": "\\sum_{i=1}\\frac{n}{i}",
+      "durationMs": 347.3000000715256,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 15
+      }
+    },
+    {
+      "id": "operator-08-serif",
+      "tex": "\\int{_{0}}^{1}xdx",
+      "durationMs": 280.2000000476837,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 12
+      }
+    },
+    {
+      "id": "operator-08-sans",
+      "tex": "\\int_{0}^{1}xdx",
+      "durationMs": 261.60000002384186,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 11
+      }
+    },
+    {
+      "id": "operator-08-compact",
+      "tex": "\\int_{0}^{1}xdx",
+      "durationMs": 259.89999997615814,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 11
+      }
+    },
+    {
+      "id": "relation-09-serif",
+      "tex": "x \\neq y",
+      "durationMs": 173.40000009536743,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 7
+      }
+    },
+    {
+      "id": "relation-09-sans",
+      "tex": "x \\neq y",
+      "durationMs": 173.70000004768372,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 7
+      }
+    },
+    {
+      "id": "relation-09-compact",
+      "tex": "\\mathbf{x}\\neq\\mathbf{y}",
+      "durationMs": 280.7999999523163,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 12
+      }
+    },
+    {
+      "id": "relation-10-serif",
+      "tex": "a \\leq b \\geq c",
+      "durationMs": 237.39999997615814,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 10
+      }
+    },
+    {
+      "id": "relation-10-sans",
+      "tex": "a \\leq b \\geq c",
+      "durationMs": 237.19999992847443,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 10
+      }
+    },
+    {
+      "id": "relation-10-compact",
+      "tex": "a \\leq b \\geq c",
+      "durationMs": 238.70000004768372,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 10
+      }
+    },
+    {
+      "id": "fraction-11-serif",
+      "tex": "\\left( x+1 \\right)/\\left( y-1 \\right)",
+      "durationMs": 435.7999999523163,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 19
+      }
+    },
+    {
+      "id": "fraction-11-sans",
+      "tex": "\\left( x+1 \\right)/\\left( y-1 \\right)",
+      "durationMs": 435.10000002384186,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 19
+      }
+    },
+    {
+      "id": "fraction-11-compact",
+      "tex": "\\left(\\textbf{x}+\\textbf{1}\\right)/\\left(\\textbf{y}-\\textbf{1}\\right)",
+      "durationMs": 595.7999999523163,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 26
+      }
+    },
+    {
+      "id": "fraction-12-serif",
+      "tex": "\\left( x^{2}+\\alpha \\right)/\\sqrt{y_{1}}",
+      "durationMs": 457.2999999523163,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 20
+      }
+    },
+    {
+      "id": "fraction-12-sans",
+      "tex": "(x^{2}+a)/\\sqrt{y_{1}}",
+      "durationMs": 345.40000009536743,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 15
+      }
+    },
+    {
+      "id": "fraction-12-compact",
+      "tex": "\\left( x^{2}+\\alpha \\right)/\\sqrt{y_{1}}",
+      "durationMs": 455.6999999284744,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 20
+      }
+    },
+    {
+      "id": "root-13-serif",
+      "tex": "\\sqrt{(x+y)}",
+      "durationMs": 192.10000002384186,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 8
+      }
+    },
+    {
+      "id": "root-13-sans",
+      "tex": "\\sqrt{(x+y)}",
+      "durationMs": 194.89999997615814,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 8
+      }
+    },
+    {
+      "id": "root-13-compact",
+      "tex": "\\sqrt{(x+y)}",
+      "durationMs": 193.20000004768372,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 8
+      }
+    },
+    {
+      "id": "root-14-serif",
+      "tex": "\\sqrt[3]{(x^{2}+1)}",
+      "durationMs": 280.7000000476837,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 12
+      }
+    },
+    {
+      "id": "root-14-sans",
+      "tex": "3 \\sqrt{(X^{2}+1)}",
+      "durationMs": 279.7000000476837,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 12
+      }
+    },
+    {
+      "id": "root-14-compact",
+      "tex": "\\sqrt[3]{(x^{2}+1)}",
+      "durationMs": 279.7999999523163,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 12
+      }
+    },
+    {
+      "id": "matrix-15-serif",
+      "tex": "[\\,{\\tt a}\\,{\\tt b}\\,;{\\tt c}\\,{\\tt d}\\,]",
+      "durationMs": 390.3000000715256,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 17
+      }
+    },
+    {
+      "id": "matrix-15-sans",
+      "tex": "[\\mathtt{a}\\,\\mathtt{b}\\,;\\mathtt{c}\\,\\mathtt{d}\\,]",
+      "durationMs": 434.2999999523163,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 19
+      }
+    },
+    {
+      "id": "matrix-15-compact",
+      "tex": "\\left[\\begin{smallmatrix}\\mathbf{a}\\;\\mathbf{b}\\;;\\mathbf{c}\\;\\mathbf{d}\\; \\end{smallmatrix}\\right]",
+      "durationMs": 728.1000000238419,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 32
+      }
+    },
+    {
+      "id": "matrix-16-serif",
+      "tex": "\\left(\\begin{smallmatrix}1\\,0\\,;0\\,1\\end{smallmatrix}\\right)",
+      "durationMs": 502.8000000715256,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 22
+      }
+    },
+    {
+      "id": "matrix-16-sans",
+      "tex": "\\boldsymbol{\\left(1\\,0\\,;0\\,1\\right)}",
+      "durationMs": 368,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 16
+      }
+    },
+    {
+      "id": "matrix-16-compact",
+      "tex": "\\left(\\begin{smallmatrix}1\\,0\\,;0\\,1\\end{smallmatrix}\\right)",
+      "durationMs": 500.39999997615814,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 22
+      }
+    },
+    {
+      "id": "multiline-17-serif",
+      "tex": "f \\left( x \\right)=x^{2}+1",
+      "durationMs": 372.6999999284744,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 16
+      }
+    },
+    {
+      "id": "multiline-17-sans",
+      "tex": "f \\left( x \\right)=x^{2}+1",
+      "durationMs": 369.1999999284744,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 16
+      }
+    },
+    {
+      "id": "multiline-17-compact",
+      "tex": "f \\left( x \\right)=x^{2}+1",
+      "durationMs": 371.7000000476837,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 16
+      }
+    },
+    {
+      "id": "rare-symbol-18-serif",
+      "tex": "A \\subset B \\cup C",
+      "durationMs": 235,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 10
+      }
+    },
+    {
+      "id": "rare-symbol-18-sans",
+      "tex": "\\mathrm{A}\\subset\\mathrm{B}\\cup\\mathrm{C}",
+      "durationMs": 410.7999999523163,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 18
+      }
+    },
+    {
+      "id": "rare-symbol-18-compact",
+      "tex": "\\mathrm{A}\\subset\\mathrm{B}\\cup\\mathrm{C}",
+      "durationMs": 411.2999999523163,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 18
+      }
+    },
+    {
+      "id": "rare-symbol-19-serif",
+      "tex": "\\forall x \\in R,x^{2}\\geq 0",
+      "durationMs": 369.8000000715256,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 16
+      }
+    },
+    {
+      "id": "rare-symbol-19-sans",
+      "tex": "\\forall x \\in R,x^{2}\\geq 0",
+      "durationMs": 367,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 16
+      }
+    },
+    {
+      "id": "rare-symbol-19-compact",
+      "tex": "\\forall x \\in R,x^{2}\\geq 0",
+      "durationMs": 367.10000002384186,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 16
+      }
+    },
+    {
+      "id": "equation-number-20-serif",
+      "tex": "y=mx+b \\left( 1 \\right)",
+      "durationMs": 323.10000002384186,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 14
+      }
+    },
+    {
+      "id": "equation-number-20-sans",
+      "tex": "y=mx+b \\left( 1 \\right)",
+      "durationMs": 324.2000000476837,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 14
+      }
+    },
+    {
+      "id": "equation-number-20-compact",
+      "tex": "y=mx+b \\left( 1 \\right)",
+      "durationMs": 322,
+      "diagnostics": {
+        "backend": "webgpu",
+        "tokens": 14
+      }
+    }
+  ]
+}

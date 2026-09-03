@@ -79,3 +79,7 @@ candidate that deterministic reconstruction cannot handle.
   verification commands. Validation passed 254 repository tests, strict type
   checks, lint, formatting, production/static build checks, and bounded real
   inference through all three ONNX graphs.
+- 2026-09-03 GitHub Copilot: Superseded in production by the TexTeller q4
+  adapter after representative comparison. RapidLatexOCR details above record
+  the implementation completed by this task; its runtime code and assets have
+  since been removed.

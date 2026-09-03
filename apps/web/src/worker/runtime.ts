@@ -16,8 +16,8 @@ import pdfJsWorkerSrc from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import { unzipSync } from 'fflate';
 
 import type { WorkerRequest, WorkerSend } from './protocol.ts';
+import { createConfiguredFormulaRecognizer } from 'virtual:wordconvert-formula-recognizer';
 import { createPdfFigureRasterizer } from './pdf-figure-rasterizer.ts';
-import type { PdfFormulaRecognizer } from '@wordconvert/pdf-reader';
 
 if (typeof Worker !== 'undefined') configurePdfJsWorker(pdfJsWorkerSrc);
 
@@ -33,7 +33,7 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
         import('./heron-layout-detector.ts').HeronLayoutDetector | undefined
       >
     | undefined;
-  const formulaRecognizer = createLazyFormulaRecognizer();
+  const formulaRecognizer = createConfiguredFormulaRecognizer();
 
   return {
     activeOperationCount: () => operations.size,
@@ -98,7 +98,10 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                   ...request.pdfOptions,
                   ...(figureRasterizer ? { figureRasterizer } : {}),
                   ...(detector ? { layoutDetector: detector } : {}),
-                  ...(figureRasterizer ? { formulaRecognizer } : {}),
+                  ...(figureRasterizer &&
+                  request.pdfOptions?.formulaRecognitionEnabled !== false
+                    ? { formulaRecognizer }
+                    : {}),
                 })
               : undefined;
           const model =
@@ -127,11 +130,17 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                   conversionDate: request.conversionDate,
                   formulaMode: request.formulaMode ?? 'mathml',
                   ...(request.cover ? { cover: request.cover } : {}),
+                  ...(request.sourceHtml
+                    ? { sourceXhtml: request.sourceHtml.xhtml }
+                    : {}),
                 })
               : request.format === 'html' && request.mode === 'zip'
                 ? await writeHtmlZip(request.model, {
                     conversionDate: request.conversionDate,
                     formulaMode: request.formulaMode ?? 'mathml',
+                    ...(request.sourceHtml
+                      ? { sourceHtml: request.sourceHtml.html }
+                      : {}),
                   })
                 : request.format === 'markdown' && request.mode === 'zip'
                   ? await writeMarkdownZip(request.model, {
@@ -144,6 +153,9 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                         ? writeHtml(request.model, {
                             conversionDate: request.conversionDate,
                             formulaMode: request.formulaMode ?? 'mathml',
+                            ...(request.sourceHtml
+                              ? { sourceHtml: request.sourceHtml.html }
+                              : {}),
                           })
                         : writeMarkdown(request.model, {
                             conversionDate: request.conversionDate,
@@ -178,6 +190,7 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
             },
             [data],
           );
+          await formulaRecognizer.dispose?.();
         }
       } catch (cause) {
         send({
@@ -190,47 +203,6 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
       }
     },
   };
-}
-
-function createLazyFormulaRecognizer(): PdfFormulaRecognizer {
-  let recognizer:
-    | Promise<import('./formula-recognizer.ts').RapidLatexFormulaRecognizer>
-    | undefined;
-  return {
-    implementation: 'rapid-latex-ocr-onnx',
-    async recognize(image, options) {
-      let loaded: import('./formula-recognizer.ts').RapidLatexFormulaRecognizer;
-      try {
-        loaded = await (recognizer ??= loadFormulaRecognizer());
-      } catch {
-        recognizer = undefined;
-        throw new Error('Formula recognizer is unavailable.');
-      }
-      return loaded.recognize(image, options);
-    },
-  };
-}
-
-async function loadFormulaRecognizer() {
-  const [
-    { default: imageResizer },
-    { default: encoder },
-    { default: decoder },
-    { default: tokenizer },
-    { createRapidLatexFormulaRecognizer },
-  ] = await Promise.all([
-    import('../assets/formula-ocr/image_resizer.onnx?url'),
-    import('../assets/formula-ocr/encoder.onnx?url'),
-    import('../assets/formula-ocr/decoder.onnx?url'),
-    import('../assets/formula-ocr/tokenizer.json?raw'),
-    import('./formula-recognizer.ts'),
-  ]);
-  return createRapidLatexFormulaRecognizer({
-    imageResizer,
-    encoder,
-    decoder,
-    tokenizer,
-  });
 }
 
 async function loadHeronLayoutDetector() {

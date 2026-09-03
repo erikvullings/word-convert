@@ -53,3 +53,7 @@ may improve difficult matrices, rare symbols, and multiline formulae.
   checks. No comparative accuracy is claimed. RapidLatexOCR remains the default
   because TexTeller did not clear runtime, supply-chain, memory, or maintenance
   gates needed to justify a corpus run or production integration.
+- 2026-09-03 GitHub Copilot: Superseded the initial benchmark conclusion after
+  representative Transformer-paper testing showed materially better TexTeller
+  output. TexTeller q4 is now the sole production recognizer; the earlier result
+  is retained above as the outcome of the original benchmark run.

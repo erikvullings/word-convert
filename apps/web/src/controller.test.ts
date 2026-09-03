@@ -136,6 +136,44 @@ describe('browser controller', () => {
     expect(worker.postMessage).not.toHaveBeenCalled();
   });
 
+  it('opens remote Markdown without invoking document analysis', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Promise.resolve(
+          new Response('# Remote heading', {
+            headers: {
+              'content-type': 'text/markdown',
+              'content-disposition': 'inline; filename="remote.md"',
+            },
+          }),
+        ),
+      ),
+    );
+    const controller = createBrowserController();
+
+    controller.setRemoteDocumentUrl?.('https://example.com/remote.md');
+    controller.loadRemoteDocument?.();
+    await vi.waitFor(() => expect(controller.state.status).toBe('ready'));
+
+    expect(controller.state).toMatchObject({
+      stage: 1,
+      sourceFormat: 'markdown',
+      selectedFilename: 'remote.md',
+      model: {
+        blocks: [{ type: 'heading', level: 1 }],
+      },
+    });
+    expect(worker.postMessage).not.toHaveBeenCalled();
+  });
+
   it('cancels before a selected file has finished reading', async () => {
     vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
     const worker = new WorkerStub();
@@ -547,6 +585,23 @@ describe('browser controller', () => {
     });
     emitAnalysis();
 
+    controller.setFormulaDraft?.('high', 'x\\tag{1}');
+    controller.saveFormulaEdit?.('high');
+    expect(lastPdfFormulaDecisions(worker)).toMatchObject({
+      high: { decision: 'formula', tex: 'x\\tag{1}' },
+    });
+    emitAnalysis();
+
+    controller.setFormulaDraft?.('high', 'a &= b\nc &= d');
+    controller.saveFormulaEdit?.('high');
+    expect(lastPdfFormulaDecisions(worker)).toMatchObject({
+      high: {
+        decision: 'formula',
+        tex: '\\begin{aligned}a &= b \\\\ c &= d\\end{aligned}',
+      },
+    });
+    emitAnalysis();
+
     controller.resetFormulaEdit?.('high');
     expect(lastPdfFormulaDecisions(worker)).toEqual({});
     emitAnalysis();
@@ -619,6 +674,153 @@ describe('browser controller', () => {
     expect(lastPdfOptions(worker)).toMatchObject({
       manualFormulaRegions: [],
       formulaDecisions: {},
+    });
+  });
+
+  it('keeps a detected image or promotes it to TexTeller recognition', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([new Uint8Array([1])], 'image-formula.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    const image = {
+      id: 'pdf-equation-2-0',
+      page: 2,
+      bounds: { x: 0.1, top: 0.2, width: 0.3, height: 0.1 },
+    };
+    controller.state.pdfAnalysis = {
+      pageCount: 2,
+      analysedPages: [1, 2],
+      crop: { top: 0, bottom: 0 },
+      candidates: [],
+      scannedPages: [],
+      formulaCandidates: [],
+      formulaImageRegions: [image],
+    };
+
+    controller.keepFormulaImage?.(image.id);
+    expect(controller.state.pdfImport.formulaDecisions[image.id]).toEqual({
+      equationId: image.id,
+      decision: 'image',
+      accepted: true,
+    });
+    expect(worker.postMessage).toHaveBeenCalledTimes(2);
+
+    controller.processFormulaImage?.(image.id);
+    expect(lastPdfOptions(worker)).toMatchObject({
+      manualFormulaRegions: [
+        {
+          id: image.id,
+          page: 2,
+          kind: 'display',
+          forceRecognition: true,
+          sourceImageId: image.id,
+          bounds: image.bounds,
+        },
+      ],
+      formulaDecisions: {
+        [image.id]: { equationId: image.id, decision: 'formula' },
+      },
+    });
+    expect(controller.state.formulaReviewSelectedId).toBe(image.id);
+
+    worker.emit({
+      type: 'analysed',
+      operationId: controller.state.operationId!,
+      model: model(),
+      pdfAnalysis: {
+        pageCount: 2,
+        analysedPages: [1, 2],
+        crop: { top: 0, bottom: 0 },
+        candidates: [],
+        scannedPages: [],
+        formulaCandidates: [
+          {
+            ...formulaCandidate(image.id),
+            sourceImageId: image.id,
+            requiresRecognition: true,
+            recognitionFailure: 'invalid-tex',
+          },
+        ],
+        formulaImageRegions: [image],
+      },
+    });
+    expect(controller.state.formulaExtractionMessage).toContain(
+      'TexTeller could not extract this region (invalid-tex)',
+    );
+
+    controller.adjustFormulaImageRegion?.(image.id);
+    expect(controller.state).toMatchObject({
+      formulaSelectionOpen: true,
+      formulaSelectionKind: 'display',
+      formulaSelectionBounds: image.bounds,
+      pdfPreviewPage: 2,
+    });
+    controller.setFormulaSelectionBounds?.({
+      x: 0.12,
+      top: 0.22,
+      width: 0.5,
+      height: 0.12,
+    });
+    controller.setFormulaSelectionTex?.('\\sqrt{d_{k}}');
+    controller.addManualFormulaRegion?.('\\sqrt{d_{k}}');
+    expect(lastPdfOptions(worker)).toMatchObject({
+      manualFormulaRegions: [
+        {
+          id: image.id,
+          page: 2,
+          kind: 'display',
+          skipRecognition: true,
+          sourceImageId: image.id,
+          bounds: { x: 0.12, top: 0.22, width: 0.5, height: 0.12 },
+        },
+      ],
+      formulaDecisions: {
+        [image.id]: {
+          equationId: image.id,
+          decision: 'formula',
+          tex: '\\sqrt{d_{k}}',
+          display: 'block',
+        },
+      },
+    });
+    expect(controller.state.formulaExtractionId).toBeUndefined();
+
+    controller.state.pdfAnalysis.formulaImageRegions = [image];
+    controller.saveFormulaImage?.(image.id, 'x^2');
+    expect(lastPdfOptions(worker)).toMatchObject({
+      manualFormulaRegions: [
+        expect.objectContaining({
+          id: image.id,
+          bounds: image.bounds,
+          skipRecognition: true,
+          sourceImageId: image.id,
+        }),
+      ],
+      formulaDecisions: {
+        [image.id]: expect.objectContaining({ tex: 'x^2', display: 'block' }),
+      },
+    });
+
+    controller.keepFormulaImage?.(image.id);
+    expect(lastPdfOptions(worker)).toMatchObject({
+      manualFormulaRegions: [],
+      formulaDecisions: {
+        [image.id]: {
+          equationId: image.id,
+          decision: 'image',
+          accepted: true,
+        },
+      },
     });
   });
 });

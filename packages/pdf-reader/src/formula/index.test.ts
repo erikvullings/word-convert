@@ -82,6 +82,24 @@ describe('PDF formula domain', () => {
     expect(
       reconstructSimpleTex([span('integral', '∫₀¹ x dx', 0.2, 0.2)]),
     ).toBeUndefined();
+    expect(
+      reconstructSimpleTex([
+        span('first-line', 'MultiHead(Q, K, V) = Concat(head)', 0.3, 0.2, {
+          width: 0.4,
+        }),
+        span('second-line', 'where head = Attention(QW, KW, VW)', 0.36, 0.22, {
+          width: 0.3,
+        }),
+      ]),
+    ).toBeUndefined();
+    expect(
+      reconstructSimpleTex(
+        ['FFN(', 'x', ') = max(0', ', xW', '+', 'b', ')', 'W', '+', 'b'].map(
+          (text, index) =>
+            span(`fragment-${index}`, text, 0.2 + index * 0.04, 0.2),
+        ),
+      ),
+    ).toBeUndefined();
   });
 
   it('fuses Heron and geometry evidence with stable reading-order IDs', () => {
@@ -129,6 +147,49 @@ describe('PDF formula domain', () => {
       ],
     });
     expect(belowThreshold[0]?.sources).not.toContain('heron');
+  });
+
+  it('does not promote an unmatched synthetic equation fragment', () => {
+    const source = span('fraction', '1 / sqrt(d)', 0.4, 0.3, { width: 0.2 });
+    const candidates = createFormulaCandidates({
+      page: 3,
+      spans: [source],
+      renderedEquationRegions: [
+        { x: 0.38, top: 0.28, width: 0.24, height: 0.06 },
+      ],
+    });
+
+    expect(candidates).toEqual([]);
+  });
+
+  it('merges nearby rasterized formula fragments into the relational formula', () => {
+    const relation = span('relation', 'y = x', 0.2, 0.3, { width: 0.1 });
+    const fraction = span('fraction', '1 / √d', 0.37, 0.3, { width: 0.08 });
+
+    const candidates = createFormulaCandidates({
+      page: 4,
+      spans: [relation, fraction],
+      renderedEquationRegions: [
+        { x: 0.36, top: 0.28, width: 0.1, height: 0.06 },
+      ],
+    });
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      spanIds: ['relation', 'fraction'],
+      sources: expect.arrayContaining(['rasterized-equation']),
+      requiresRecognition: true,
+    });
+    expect(candidates[0]?.bounds.x).toBeLessThanOrEqual(0.2);
+    expect(candidates[0]?.bounds.x + candidates[0]!.bounds.width).toBeCloseTo(
+      0.46,
+    );
+    expect(Object.keys(candidates[0]!.bounds).sort()).toEqual([
+      'height',
+      'top',
+      'width',
+      'x',
+    ]);
   });
 
   it('keeps nearby equations distinct and padding inside the page', () => {
@@ -188,6 +249,61 @@ describe('PDF formula domain', () => {
     ).toEqual([]);
   });
 
+  it('rejects cross-column prose without losing a wide display equation', () => {
+    const crossColumnProse = [
+      span('left-1', 'of continuous representations', 0.176, 0.869, {
+        width: 0.199,
+      }),
+      span('z', 'z', 0.382, 0.869, { width: 0.008 }),
+      span('equals', '= (', 0.398, 0.869, { width: 0.027 }),
+      span('z-prime', 'z', 0.425, 0.869, { width: 0.008 }),
+      span('sequence-tail', ', ..., z', 0.44, 0.869, { width: 0.036 }),
+      span('close', ')', 0.485, 0.869, { width: 0.006 }),
+      span('period', '.', 0.491, 0.869, { width: 0.004 }),
+      span('right-1', 'Given', 0.506, 0.869, { width: 0.04 }),
+      span('right-z', 'z', 0.552, 0.869, { width: 0.008 }),
+      span(
+        'right-tail',
+        ', the decoder then generates an output',
+        0.56,
+        0.869,
+        { width: 0.263 },
+      ),
+      span('z-power', '1', 0.433, 0.875, { width: 0.006, fontSize: 7 }),
+      span('z-end', 'n', 0.476, 0.875, { width: 0.008, fontSize: 7 }),
+      span('left-3', 'sequence', 0.176, 0.883, { width: 0.061 }),
+      span('left-open', '(', 0.242, 0.883, { width: 0.006 }),
+      span('y', 'y', 0.248, 0.883, { width: 0.008 }),
+      span('y-tail', ', ..., y', 0.263, 0.883, { width: 0.036 }),
+      span('left-close', ')', 0.312, 0.883, { width: 0.006 }),
+      span(
+        'right-2',
+        'of symbols one element at a time. At each step the model is auto-regressive',
+        0.322,
+        0.883,
+        { width: 0.502 },
+      ),
+      span('y-start', '1', 0.256, 0.888, { width: 0.006, fontSize: 7 }),
+      span('y-end', 'm', 0.299, 0.888, { width: 0.012, fontSize: 7 }),
+    ];
+    const learningRate = [
+      span(
+        'learning-rate',
+        'lrate = d × min(step_num, step_num × warmup_steps)',
+        0.266,
+        0.779,
+        { width: 0.468 },
+      ),
+    ];
+
+    expect(
+      createFormulaCandidates({ page: 2, spans: crossColumnProse }),
+    ).toEqual([]);
+    expect(
+      createFormulaCandidates({ page: 7, spans: learningRate }),
+    ).toHaveLength(1);
+  });
+
   it('turns a manual region into the same reconstructable candidate shape', () => {
     const candidate = createManualFormulaCandidate(
       {
@@ -207,5 +323,32 @@ describe('PDF formula domain', () => {
       requiresRecognition: false,
       confidence: 'medium',
     });
+
+    const forced = createManualFormulaCandidate(
+      {
+        id: 'pdf-equation-image-p1-1000-2000-3000-1000',
+        page: 1,
+        kind: 'display',
+        bounds: { x: 0.1, top: 0.2, width: 0.3, height: 0.1 },
+        forceRecognition: true,
+      },
+      [span('equation', 'x = 5', 0.15, 0.22, { width: 0.12 })],
+    );
+    expect(forced).toMatchObject({
+      tex: 'x = 5',
+      requiresRecognition: true,
+    });
+
+    const typed = createManualFormulaCandidate(
+      {
+        id: 'pdf-equation-typed-p1-1000-2000-3000-1000',
+        page: 1,
+        kind: 'display',
+        bounds: { x: 0.1, top: 0.2, width: 0.3, height: 0.1 },
+        skipRecognition: true,
+      },
+      [],
+    );
+    expect(typed.requiresRecognition).toBe(false);
   });
 });

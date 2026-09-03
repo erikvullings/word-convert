@@ -41,6 +41,20 @@ function model(blocks: DocumentModel['blocks']): DocumentModel {
 }
 
 describe('writeHtml', () => {
+  it('preserves a supplied source HTML fragment without Markdown reconstruction', () => {
+    const sourceHtml =
+      '<article class="ltx_document"><p>Scale <math display="inline"><msub><mi>d</mi><mi>k</mi></msub></math>.</p><table class="ltx_equation"><tbody><tr><td class="ltx_eqn_cell"><math display="block"><mi>A</mi></math></td><td class="ltx_eqn_eqno">(1)</td></tr></tbody></table></article>';
+
+    const html = writeHtml(model([]), {
+      conversionDate: '2026-07-15',
+      sourceHtml,
+    });
+
+    expect(html).toContain(sourceHtml);
+    expect(html).toContain('.source-html .ltx_equation');
+    expect(html).not.toContain('| --- |');
+  });
+
   it('renders formula modes safely with inline and display semantics', () => {
     const input = model([
       { type: 'paragraph', children: [{ type: 'equation', equationId: 'eq' }] },

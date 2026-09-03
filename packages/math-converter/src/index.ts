@@ -7,7 +7,7 @@ interface KatexApi {
     expression: string,
     options: {
       displayMode: boolean;
-      output: 'htmlAndMathml';
+      output: 'htmlAndMathml' | 'mathml';
       throwOnError: boolean;
       strict: 'error';
       trust: false;
@@ -79,11 +79,15 @@ export function renderEquation(
   );
 }
 
-function renderTexSafely(tex: string, display: boolean): string {
+function renderTexSafely(
+  tex: string,
+  display: boolean,
+  output: 'htmlAndMathml' | 'mathml' = 'htmlAndMathml',
+): string {
   try {
     return katex.renderToString(tex, {
       displayMode: display,
-      output: 'htmlAndMathml',
+      output,
       throwOnError: true,
       strict: 'error',
       trust: false,
@@ -93,10 +97,10 @@ function renderTexSafely(tex: string, display: boolean): string {
   }
 }
 
-export function isValidTex(tex: string): boolean {
+export function isValidTex(tex: string, display = false): boolean {
   try {
     katex.renderToString(tex, {
-      displayMode: false,
+      displayMode: display,
       output: 'htmlAndMathml',
       throwOnError: true,
       strict: 'error',
@@ -110,6 +114,10 @@ export function isValidTex(tex: string): boolean {
 
 export function renderTex(tex: string, display = false): string {
   return renderTexSafely(tex, display);
+}
+
+export function renderTexMathml(tex: string, display = false): string {
+  return renderTexSafely(tex, display, 'mathml');
 }
 
 interface XmlElement {

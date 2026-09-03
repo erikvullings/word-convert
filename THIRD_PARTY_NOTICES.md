@@ -1,18 +1,18 @@
 # Third-party notices
 
 This audit covers the direct third-party runtime dependencies bundled by the
-WordConvert web application at `pnpm-lock.yaml` as reviewed on 31 August 2026.
+WordConvert web application at `pnpm-lock.yaml` as reviewed on 2 September 2026.
 Workspace packages are part of WordConvert; development-only dependencies are not
 distributed in its browser bundle.
 
 | Package | Reviewed version | Licence | Copyright / attribution | Source |
 | --- | --- | --- | --- | --- |
-| DOMPurify | 3.4.12 | Apache-2.0 OR MPL-2.0 | Cure53 and other contributors | <https://github.com/cure53/DOMPurify> |
+| DOMPurify | 3.4.14 | Apache-2.0 OR MPL-2.0 | Cure53 and other contributors | <https://github.com/cure53/DOMPurify> |
 | fflate | 0.8.3 | MIT | Copyright (c) 2026 Arjun Barrett | <https://github.com/101arrowz/fflate> |
 | KaTeX | 0.16.47 | MIT | Copyright (c) 2013–2020 Khan Academy and other contributors | <https://github.com/KaTeX/KaTeX> |
 | Marked | 18.0.11 | MIT and BSD-3-Clause | Copyright (c) 2018+ MarkedJS; Copyright (c) 2011–2018 Christopher Jeffrey; Markdown copyright © 2004 John Gruber | <https://github.com/markedjs/marked> |
 | Mithril | 2.3.8 | MIT | Copyright (c) 2017 Leo Horie | <https://github.com/MithrilJS/mithril.js> |
-| mithril-materialized | 3.16.0 | MIT | Erik Vullings and contributors | <https://github.com/erikvullings/mithril-materialized> |
+| mithril-materialized | 3.17.9 | MIT | Erik Vullings and contributors | <https://github.com/erikvullings/mithril-materialized> |
 | ONNX Runtime Web and Common | 1.29.0 | MIT | Microsoft Corporation and contributors | <https://github.com/microsoft/onnxruntime> |
 | FlatBuffers | 25.9.23 | Apache-2.0 | Google LLC and contributors | <https://github.com/google/flatbuffers> |
 | guid-typescript | 1.0.9 | ISC | Kevin Le and contributors | <https://github.com/snico-dev/guid-typescript> |
@@ -20,9 +20,10 @@ distributed in its browser bundle.
 | platform | 1.3.6 | MIT | Benjamin Tan and contributors | <https://github.com/bestiejs/platform.js> |
 | protobufjs | 7.6.6 | BSD-3-Clause | Daniel Wirtz and contributors | <https://github.com/protobufjs/protobuf.js> |
 | PDF.js (`pdfjs-dist`) | 6.2.108 | Apache-2.0 | Mozilla Foundation and PDF.js contributors | <https://github.com/mozilla/pdf.js> |
-| slimdown-js | 1.4.0 | MIT | Copyright (c) 2019 Erik Vullings | <https://github.com/erikvullings/slimdown-js> |
+| slimdown-js | 1.5.0 | MIT | Copyright (c) 2019 Erik Vullings | <https://github.com/erikvullings/slimdown-js> |
+| slimdown-katex | 0.2.1 | MIT | No copyright notice in published package | <https://www.npmjs.com/package/slimdown-katex> |
 | Docling Heron model | revision `8f39ad3` | Apache-2.0 | IBM Research and Docling contributors | <https://huggingface.co/docling-project/docling-layout-heron> |
-| RapidLatexOCR ONNX model | revision `0d0a23977b50433b07cdf95513ed7b7e45d3a761` | MIT | RapidAI, pix2tex, and model contributors | <https://huggingface.co/inYourOwnBrowser/rapid-latex-ocr-onnx> |
+| TexTeller ONNX q4 model | revision `9727784d91d7f8437dc7140941c4335284ce075e` | Apache-2.0 | TexTeller and ONNX Community contributors | <https://huggingface.co/onnx-community/TexTeller-ONNX> |
 
 DOMPurify is used under the Apache License 2.0 option. PDF.js, FlatBuffers, long,
 and the Docling Heron model are also used under Apache License 2.0. The reviewed
@@ -51,11 +52,6 @@ notices from the table above under these common terms:
 > CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 KaTeX's bundled fonts are covered by the KaTeX distribution licence.
-
-The RapidLatexOCR model files are unmodified copies from the named mirror. The
-mirror metadata declares MIT but its referenced licence file is absent at the
-pinned revision; the MIT licences of canonical upstream RapidAI/RapidLaTeXOCR
-and original `lukas-blecher/LaTeX-OCR` were reviewed as redistribution evidence.
 
 `guid-typescript` retains its ISC permission and warranty disclaimer. Its terms
 permit use, copying, modification, and distribution provided the copyright and

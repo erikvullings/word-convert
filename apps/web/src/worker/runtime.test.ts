@@ -2,10 +2,15 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
+import {
+  DOCUMENT_MODEL_SCHEMA,
+  DOCUMENT_MODEL_VERSION,
+  type DocumentModel,
+} from '@wordconvert/document-model';
 
 import { createWorkerRuntime } from './runtime.ts';
 import type { WorkerResponse } from './protocol.ts';
-import { unzipSync } from 'fflate';
+import { strFromU8, unzipSync } from 'fflate';
 
 const fixturePath = fileURLToPath(
   new URL(
@@ -26,6 +31,31 @@ const scannedPdfFixturePath = fileURLToPath(
 async function fixtureBuffer(): Promise<ArrayBuffer> {
   const bytes = await readFile(fixturePath);
   return Uint8Array.from(bytes).buffer;
+}
+
+function model(): DocumentModel {
+  return {
+    schema: DOCUMENT_MODEL_SCHEMA,
+    version: DOCUMENT_MODEL_VERSION,
+    metadata: {
+      authors: [],
+      subjects: [],
+      conversionDate: {
+        value: '2026-09-03',
+        provenance: {
+          source: 'test',
+          method: 'default',
+          confidence: 'certain',
+        },
+      },
+    },
+    blocks: [],
+    assets: {},
+    equations: {},
+    notes: {},
+    styles: [],
+    warnings: [],
+  };
 }
 
 async function pdfBuffer(): Promise<ArrayBuffer> {
@@ -168,6 +198,64 @@ describe('worker runtime', () => {
       'data:image/png;base64,',
     );
   });
+
+  it.each(['html', 'epub'] as const)(
+    'preserves sanitized source HTML when writing %s',
+    async (format) => {
+      const sent: WorkerResponse[] = [];
+      const runtime = createWorkerRuntime((message) => sent.push(message));
+      const input = model();
+      input.metadata.title = {
+        value: 'Source article',
+        provenance: {
+          source: 'test',
+          method: 'extracted',
+          confidence: 'certain',
+        },
+      };
+      input.metadata.language = {
+        value: 'en',
+        provenance: {
+          source: 'test',
+          method: 'extracted',
+          confidence: 'certain',
+        },
+      };
+      input.metadata.identifier = {
+        value: 'source-article',
+        provenance: {
+          source: 'test',
+          method: 'extracted',
+          confidence: 'certain',
+        },
+      };
+      const source =
+        '<article class="ltx_document"><table class="ltx_equation"><tbody><tr><td><math><mi>A</mi></math></td><td>(1)</td></tr></tbody></table></article>';
+
+      await runtime.handle({
+        type: 'convert',
+        operationId: `source-${format}`,
+        model: input,
+        filename: 'source.html',
+        format,
+        conversionDate: '2026-09-03',
+        sourceHtml: { html: source, xhtml: source },
+      });
+
+      const output = sent.at(-1);
+      if (output?.type !== 'output') throw new Error('No output');
+      const content =
+        format === 'html'
+          ? new TextDecoder().decode(output.data)
+          : strFromU8(
+              unzipSync(new Uint8Array(output.data))[
+                'EPUB/chapter-001.xhtml'
+              ] ?? new Uint8Array(),
+            );
+      expect(content).toContain(source);
+      expect(content).not.toContain('| --- |');
+    },
+  );
 
   it('rebuilds the model with explicit edited style mappings', async () => {
     const sent: WorkerResponse[] = [];

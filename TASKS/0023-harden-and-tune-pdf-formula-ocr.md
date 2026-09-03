@@ -1,6 +1,6 @@
 # 0023 Harden and tune PDF formula OCR
 
-Status: done
+Status: in-progress
 Priority: high
 Subsystem: quality
 Depends on: 0022
@@ -39,6 +39,10 @@ public benchmark claims or isolated happy paths.
 - Resource budgets are exercised with hostile candidate counts, crop sizes,
   token generation, cancellation, repeated conversions, and worker disposal;
   limits retain source and never crash whole-document conversion.
+- Model lifetimes are phase-scoped: finish document-wide Heron detection, copy
+  out normalized regions/candidates, dispose tensors, release the Heron session
+  and terminate its dedicated worker before loading formula OCR. Formula OCR
+  tensors and sessions are likewise disposed when recognition completes.
 - README privacy/usage text states that PDF formula detection and recognition
   remain local. `documentation/hardening.md`, model asset documentation, and
   `THIRD_PARTY_NOTICES.md` record browser assumptions, budgets, origin, pinned
@@ -61,6 +65,8 @@ public benchmark claims or isolated happy paths.
 - Do not commit model weights until licence and redistribution checks are
   documented. Follow the existing Heron strategy if large weights are prepared
   outside normal source history.
+- Treat `session.release()` as releasing ONNX Runtime ownership, not as a
+  guarantee that browser or OS GPU-memory reporting immediately returns to zero.
 
 ## Agent Notes
 
@@ -86,3 +92,11 @@ public benchmark claims or isolated happy paths.
   regeneration, real Heron, real RapidLatexOCR, and static offline verification
   pass. Firefox, Safari, and assistive-technology manual passes remain the
   documented human release matrix rather than claimed evidence.
+- 2026-09-03 GitHub Copilot: Added phase-scoped model lifetime requirements,
+  explicit ORT tensor disposal, and a document-wide layout pass followed by a
+  formula-recognition pass. Heron is released before formula OCR loads. A
+  dedicated short-lived Heron worker and browser memory evidence remain before
+  this task can return to done.
+- 2026-09-03 GitHub Copilot: TexTeller q4 is now the sole production formula
+  recognizer. The earlier RapidLatexOCR validation remains historical evidence,
+  while current formula-model and browser checks use TexTeller.

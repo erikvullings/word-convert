@@ -9,6 +9,6 @@
   },
   "dependencies": {
     "@wordconvert/document-model": "workspace:*",
-    "katex": "^0.16.22"
+    "katex": "^0.18.5"
   }
 }

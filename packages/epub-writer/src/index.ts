@@ -25,6 +25,7 @@ export interface EpubWriterOptions extends WriterOptions {
   modified?: string;
   cover?: CoverComposition;
   formulaMode?: MathOutputMode;
+  sourceXhtml?: string;
 }
 
 interface Chapter {
@@ -110,6 +111,8 @@ const STYLES = [
   '.subtitle{font-size:1.25em;font-style:italic;color:#444;margin-top:.5em}',
   '.author{font-size:1.125em;margin-top:.75em;color:#333}',
 ].join('');
+const SOURCE_HTML_STYLES =
+  '.source-html .ltx_equation{display:table;width:100%;border:0;margin:1em 0}.source-html .ltx_equation tbody,.source-html .ltx_equation tr{border:0}.source-html .ltx_equation td{border:0;padding:0;vertical-align:middle}.source-html .ltx_eqn_cell{width:100%;text-align:center}.source-html .ltx_eqn_eqno{width:1%;padding-left:1em;white-space:nowrap;text-align:right}.source-html math{vertical-align:baseline}.source-html math[display="block"]{display:block;margin:0 auto}.source-html .ltx_Math{white-space:nowrap}';
 const MEDIA_EXTENSIONS: Readonly<Record<string, string>> = {
   'font/otf': 'otf',
   'font/ttf': 'ttf',
@@ -127,21 +130,30 @@ export async function writeEpub(
   options: EpubWriterOptions,
 ): Promise<Uint8Array> {
   const metadata = resolveMetadata(model, options);
-  const chapters = splitChapters(model.blocks);
+  const chapters = options.sourceXhtml
+    ? [{ id: 'chapter-001', path: 'chapter-001.xhtml', blocks: [] }]
+    : splitChapters(model.blocks);
   const assets = createAssetRegistry(model);
   const assetPaths = new Map(
     assets.map(({ asset, path }) => [asset.id, path.replace('EPUB/', '')]),
   );
-  const headings = collectHeadings(chapters);
+  const headings = options.sourceXhtml ? [] : collectHeadings(chapters);
   const files: Zippable = {};
   files.mimetype = [strToU8('application/epub+zip'), { level: 0 }];
   files['META-INF/container.xml'] = strToU8(containerXml());
   files['EPUB/package.opf'] = strToU8(
-    packageXml(metadata, model, chapters, assets, options.cover !== undefined),
+    packageXml(
+      metadata,
+      model,
+      chapters,
+      assets,
+      options.cover !== undefined,
+      options.sourceXhtml?.includes('<math') === true,
+    ),
   );
   files['EPUB/nav.xhtml'] = strToU8(navXhtml(metadata, headings));
   files['EPUB/styles.css'] = strToU8(
-    `${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}`,
+    `${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${options.sourceXhtml ? SOURCE_HTML_STYLES : ''}`,
   );
   if (options.cover) {
     files['EPUB/cover.svg'] = strToU8(createCoverSvg(options.cover));
@@ -150,14 +162,21 @@ export async function writeEpub(
   files['EPUB/title.xhtml'] = strToU8(titleXhtml(metadata, model));
   for (const chapter of chapters) {
     files[`EPUB/${chapter.path}`] = strToU8(
-      chapterXhtml(
-        chapter,
-        metadata,
-        model,
-        assetPaths,
-        headings,
-        options.formulaMode ?? 'mathml',
-      ),
+      options.sourceXhtml
+        ? xhtmlDocument(
+            metadata,
+            metadata.title,
+            `<div class="source-html">${options.sourceXhtml}</div>`,
+            ' xmlns:epub="http://www.idpf.org/2007/ops"',
+          )
+        : chapterXhtml(
+            chapter,
+            metadata,
+            model,
+            assetPaths,
+            headings,
+            options.formulaMode ?? 'mathml',
+          ),
     );
   }
   for (const entry of assets) files[entry.path] = entry.asset.data;
@@ -290,14 +309,16 @@ function packageXml(
   chapters: Chapter[],
   assets: AssetEntry[],
   hasCover: boolean,
+  hasSourceMathml: boolean,
 ): string {
   const creators = model.metadata.authors
     .map(({ value }) => `<dc:creator>${escapeXml(value.name)}</dc:creator>`)
     .join('');
+  const chapterProperties = hasSourceMathml ? ' properties="mathml"' : '';
   const chapterItems = chapters
     .map(
       ({ id, path }) =>
-        `<item id="${id}" href="${path}" media-type="application/xhtml+xml"/>`,
+        `<item id="${id}" href="${path}" media-type="application/xhtml+xml"${chapterProperties}/>`,
     )
     .join('');
   const assetItems = assets

@@ -30,6 +30,7 @@ const precacheUrls = new Set(JSON.parse(precacheMatch[1]));
 
 function isDeferredRuntimeAsset(file) {
   return (
+    file.startsWith('texteller/') ||
     file.endsWith('.onnx') ||
     (file.includes('/ort-wasm-') && file.endsWith('.wasm'))
   );

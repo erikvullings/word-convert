@@ -10,40 +10,23 @@ and expected TeX; no third-party document or formula image is redistributed.
 
 ```sh
 pnpm benchmark:formula:generate
-# Start the Vite app on 127.0.0.1:5191 and Chromium with CDP on localhost:9222.
+# Download a pinned TexTeller q4 encoder, decoder, and tokenizer to a local
+# directory, then start Vite with that directory exposed only to development.
+WORDCONVERT_TEXTELLER_MODEL_DIR=/path/to/texteller-q4 pnpm dev --port 5191
+WORDCONVERT_TEXTELLER_MODEL_DIR=/path/to/texteller-q4 \
 WORDCONVERT_CDP_URL=http://localhost:9222 \
 WORDCONVERT_BENCHMARK_URL=http://127.0.0.1:5191/ \
   pnpm benchmark:formula:run
 pnpm benchmark:formula:report
 ```
 
-The runner loads the production RapidLatexOCR adapter and pinned local assets,
-uses the same tight crop pixels for every recognizer, caps generation at 128
+The runner loads the production TexTeller adapter and pinned local assets, uses
+tight crop pixels, caps generation at 128
 tokens, and records the browser, WebGPU availability, initialization time,
 per-case inference time, transfer bytes, and JavaScript heap high-water mark.
 The report normalizes only whitespace, outer math delimiters, `\\left`/`\\right`,
 and redundant single-token braces. Raw results and the derived report are
 committed beside this file.
-
-## RapidLatexOCR results
-
-| Measure | Result |
-| --- | ---: |
-| Cases | 60 |
-| Strict KaTeX parse success | 48/60 (80%) |
-| Recoverable inference failures | 4/60 (6.7%) |
-| Normalized exact TeX | 1/60 (1.7%) |
-| Mean normalized edit distance | 2.532 |
-| Initialization | 782.8 ms |
-| Median inference | 225.9 ms |
-| p95 inference | 498.0 ms |
-| Model transfer | 178,952,787 bytes |
-| Observed peak JS heap | 82,093,612 bytes |
-
-Matrices were weakest: two of six parsed and three failed. Fractions parsed in
-four of six cases. These results do not justify accepting OCR output without
-review. Deterministic reconstruction remains preferred for simple formulas;
-recognized formulas remain reviewable, and failures retain source text.
 
 ## Detection fixture
 
@@ -56,28 +39,48 @@ summation subscript `i=1` is explicitly rejected. Complex fraction, sum/integral
 and prose-embedded formulas rely on learned/manual regions or retained source,
 so low deterministic recall is preferable to replacing prose with partial math.
 
-## TexTeller preflight
+## TexTeller results
 
 The browser-tagged `onnx-community/TexTeller-ONNX` repository is pinned at
 revision `9727784d91d7f8437dc7140941c4335284ce075e` and declares Apache-2.0.
-The smallest complete q4f16 pair is:
+Direct ONNX Runtime Web inference avoids the rejected Transformers.js/native
+dependency path. The q4 pair used for the measured run is:
 
 | Asset | Bytes | SHA-256 |
 | --- | ---: | --- |
-| `onnx/encoder_model_q4f16.onnx` | 49,751,260 | `c42190515ffcd4a728a1abee4dc8d4636b62f782fd823294d2861434a7f7d0eb` |
-| `onnx/decoder_model_q4f16.onnx` | 152,177,706 | `edebc490596d13313382eecfeef89f0041efe7bfa4e89391d5b5dbabab25100` |
+| `onnx/encoder_model_q4.onnx` | 56,848,921 | `de5fe45294a00f45af907b783f3f4764dbdc95386676f4e20175d912cfe8e59a` |
+| `onnx/decoder_model_q4.onnx` | 198,619,422 | `d937474a36f212cd704acc811b9eef32405f3aa20c5da812d7bf227abbc6004b` |
+| `tokenizer.json` | 1,370,259 | `ec4ca954798a092faf6fefcfa47fb5f85d76cdf6ab170b624ae1a683d53dae14` |
 
-Tokenizer and configuration files add approximately 2.24 MB. Official
-unquantized encoder/decoder pairs exceed 1.18 GB. A temporary Transformers.js
-3.8.1 installation occupied 360 MB before model weights: 47 MB Transformers.js,
-90 MB alternate ONNX Runtime Web, 208 MB ONNX Runtime Node, and 15 MB libvips.
-It also introduced blocked native `onnxruntime-node` and `sharp` build scripts,
-which violates this repository's dependency policy.
+Measured on the same Chromium 146 session and 60 generated crops:
 
-The dependency was removed and no model weights were downloaded. The injected
-research adapter still proves the `PdfFormulaRecognizer` contract, cancellation,
-TeX validation, token cap, and disposal. Because preflight failed the practical
-runtime, maintenance, and supply-chain gates, no accuracy or timing comparison
-is claimed. RapidLatexOCR remains the production default; a future direct ONNX
-Runtime Web adapter may rerun this corpus if it avoids those costs and can bound
-peak WebGPU/WASM memory.
+| Measure | TexTeller q4 |
+| --- | ---: |
+| Strict KaTeX parse success | 48/60 (80%) |
+| Recoverable inference failures | 0/60 (0%) |
+| Normalized exact TeX | 7/60 (11.7%) |
+| Mean normalized edit distance | 0.611 |
+| Initialization | 3,024.0 ms |
+| Median inference | 322.0 ms |
+| p95 inference | 595.8 ms |
+| Model transfer | 256,838,602 bytes |
+| Observed peak JS heap | 226,651,669 bytes |
+
+TexTeller q4 was materially closer to the expected TeX, emitted no bounded
+inference failures, and correctly recognized all basic script examples. It
+still dropped the second row in every generated multiline example, represented
+several visual fractions as slash division, and produced only five parseable
+matrix outputs. Raw results and the derived report are committed beside this
+file.
+
+The smaller q4f16 pair (49,751,260-byte encoder and 152,177,706-byte decoder)
+loaded successfully but was not usable: both BOS `0` and the nested TrOCR
+`decoder_start_token_id` `2` produced a single repeated token for all 128 decode
+steps. The q4 model emitted EOS normally with the same adapter and input, which
+isolates the failure to q4f16 execution rather than tokenization or crop
+preprocessing.
+
+TexTeller is the sole formula recognizer. Its one-time download is substantial,
+and conversion is slower when recognition is needed, so users can disable it or
+clear its cached same-origin assets from the home screen. No source crop or TeX
+is sent to a service.

@@ -20,7 +20,7 @@ import {
 import { MarkdownEditor } from 'mithril-markdown-wysiwyg';
 import DOMPurify from 'dompurify';
 import { strFromU8, unzipSync } from 'fflate';
-import { render as renderMarkdown } from 'slimdown-js';
+import 'katex/dist/katex.min.css';
 
 import {
   DOCX_MEDIA_TYPE,
@@ -48,6 +48,7 @@ import type { PdfFormulaDecision } from '@wordconvert/pdf-reader';
 import type { PdfBounds } from '@wordconvert/pdf-reader';
 import type { FormulaSelectionPoint } from './formula-selection.ts';
 import { formulaReviewEditor } from './formula-review.ts';
+import { renderMarkdownPreview as renderMarkdown } from './markdown-preview.ts';
 
 const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
   id: mapping,
@@ -77,10 +78,12 @@ export interface AppController {
   setOutputFilename(filename: string): void;
   setMarkdownContent?(content: string): void;
   setTheme(theme: ThemePreference): void;
-  setRemotePdfUrl?(url: string): void;
-  loadRemotePdf?(): void;
+  setRemoteDocumentUrl?(url: string): void;
+  loadRemoteDocument?(): void;
   setOutputFormat(format: 'html' | 'markdown' | 'epub'): void;
   setFormulaMode?(mode: MathOutputMode): void;
+  setFormulaRecognitionEnabled?(enabled: boolean): void;
+  clearFormulaRecognitionCache?(): void;
   setHtmlMode?(mode: HtmlOutputMode): void;
   setMarkdownMode?(mode: MarkdownOutputMode): void;
   setEpubIncludeCover?(include: boolean): void;
@@ -105,14 +108,23 @@ export interface AppController {
   rejectFormula?(equationId: string): void;
   acceptFormula?(equationId: string): void;
   acceptHighConfidenceFormulas?(): void;
+  processFormulaImage?(imageId: string): void;
+  saveFormulaImage?(imageId: string, tex: string): void;
+  adjustFormulaImageRegion?(imageId: string): void;
+  keepFormulaImage?(imageId: string): void;
   openFormulaSelection?(): void;
   cancelFormulaSelection?(): void;
   setFormulaSelectionKind?(kind: 'inline' | 'display'): void;
   beginFormulaSelection?(point: FormulaSelectionPoint): void;
+  beginFormulaSelectionAdjustment?(
+    handle: import('./formula-selection.ts').FormulaSelectionHandle,
+    point: FormulaSelectionPoint,
+  ): void;
   updateFormulaSelection?(point: FormulaSelectionPoint): void;
   endFormulaSelection?(point: FormulaSelectionPoint): void;
   setFormulaSelectionBounds?(bounds: PdfBounds): void;
-  addManualFormulaRegion?(): void;
+  setFormulaSelectionTex?(tex: string): void;
+  addManualFormulaRegion?(tex?: string): void;
   removeManualFormulaRegion?(equationId: string): void;
   setPdfAutomaticFurnitureRemoval?(remove: boolean): void;
   setPresetText(value: string): void;
@@ -183,7 +195,7 @@ export function renderApp(
     ),
     m(
       'p.format-note',
-      'Convert Word and PDF documents to Markdown, HTML, or EPUB 3 directly in the browser.',
+      'Convert Word, PDF, Markdown, HTML, or text documents directly in the browser.',
     ),
     m(
       'main.workspace',
@@ -203,17 +215,19 @@ export function renderApp(
           controller.state.error
             ? m('.error[role="alert"]', controller.state.error.message)
             : null,
-          m('p.secondary-actions', [
-            m('i', 'Found a bug, or missing something? '),
-            m(
-              'a',
-              {
-                href: 'https://github.com/erikvullings/word-convert/issues',
-                target: '_blank',
-              },
-              m('i', 'File an issue.'),
-            ),
-          ]),
+          controller.state.review
+            ? null
+            : m('p.secondary-actions', [
+                m('i', 'Found a bug, or missing something? '),
+                m(
+                  'a',
+                  {
+                    href: 'https://github.com/erikvullings/word-convert/issues',
+                    target: '_blank',
+                  },
+                  m('i', 'File an issue.'),
+                ),
+              ]),
           controller.state.progress && controller.state.status !== 'analysing'
             ? progress(controller)
             : null,
@@ -236,6 +250,30 @@ function filePicker(
 ): m.Vnode {
   const state = controller.state;
   return m('.source-picker', [
+    m('section.formula-model-settings', [
+      m('strong', 'Formula recognition'),
+      m(
+        'p',
+        'TexTeller improves formula conversion. Its model downloads once on first use, adds to this site’s cache, and makes PDF conversion take longer.',
+      ),
+      m(InputCheckbox, {
+        checked: state.preferences.formulaRecognitionEnabled,
+        onchange: (enabled) =>
+          controller.setFormulaRecognitionEnabled?.(enabled),
+        label: 'Use TexTeller for complex formulas',
+      }),
+      state.formulaCacheStatus === 'cached' ||
+      state.formulaCacheStatus === 'clearing'
+        ? m(FlatButton, {
+            label:
+              state.formulaCacheStatus === 'clearing'
+                ? 'Clearing model cache…'
+                : 'Clear TexTeller cache',
+            disabled: state.formulaCacheStatus === 'clearing',
+            onclick: () => controller.clearFormulaRecognitionCache?.(),
+          })
+        : null,
+    ]),
     m(
       '.drop-zone',
       {
@@ -256,24 +294,24 @@ function filePicker(
       ],
     ),
     m(
-      'form.remote-pdf',
+      'form.remote-document',
       {
         onsubmit: (event: SubmitEvent) => {
           event.preventDefault();
-          controller.loadRemotePdf?.();
+          controller.loadRemoteDocument?.();
         },
       },
       [
-        m('label[for="remote-pdf-url"]', 'Open a PDF from a URL'),
-        m('.remote-pdf-row', [
-          m('input#remote-pdf-url', {
+        m('label[for="remote-document-url"]', 'Open a document from a URL'),
+        m('.remote-document-row', [
+          m('input#remote-document-url', {
             type: 'url',
             inputmode: 'url',
             placeholder: 'https://arxiv.org/abs/1706.03762',
-            value: state.remotePdfUrl,
-            disabled: state.remotePdfLoading === true,
+            value: state.remoteDocumentUrl,
+            disabled: state.remoteDocumentLoading === true,
             oninput: (event: Event) =>
-              controller.setRemotePdfUrl?.(
+              controller.setRemoteDocumentUrl?.(
                 (event.currentTarget as HTMLInputElement).value,
               ),
           }),
@@ -282,14 +320,15 @@ function filePicker(
             {
               type: 'submit',
               disabled:
-                state.remotePdfLoading === true || !state.remotePdfUrl.trim(),
+                state.remoteDocumentLoading === true ||
+                !state.remoteDocumentUrl.trim(),
             },
-            state.remotePdfLoading ? 'Loading…' : 'Load PDF',
+            state.remoteDocumentLoading ? 'Loading…' : 'Load document',
           ),
         ]),
         m(
-          'p.remote-pdf-warning',
-          'The PDF is downloaded directly to this device. Some websites block browser access (CORS), so their links cannot be opened here. arXiv abstract links are converted automatically.',
+          'p.remote-document-warning',
+          'The document is downloaded directly to this device. HTML, Markdown, text, and PDF are supported. arXiv links automatically use the source-derived HTML version when available. Some websites block browser access (CORS).',
         ),
       ],
     ),
@@ -334,9 +373,10 @@ function outputChooser(controller: AppController): m.Vnode {
           {
             type: 'button',
             onclick: () => {
-              const first = state.pdfAnalysis?.formulaCandidates?.find(
-                ({ id }) => state.model?.equations[id],
-              );
+              const first =
+                state.pdfAnalysis?.formulaCandidates?.find(
+                  ({ id }) => state.model?.equations[id],
+                ) ?? state.pdfAnalysis?.formulaImageRegions?.[0];
               if (first) state.formulaReviewSelectedId = first.id;
               openReview(state, 'formula');
             },
@@ -598,10 +638,41 @@ function pdfSourcePreview(
               max: 400,
               step: 25,
               value: state.pdfPreviewScale * 100,
-              oninput: (event: Event) =>
-                controller.setPdfPreviewScale?.(
-                  Number((event.currentTarget as HTMLInputElement).value) / 100,
-                ),
+              oninput: (event: Event) => {
+                const input = event.currentTarget as HTMLInputElement;
+                const workspace = input.closest('.pdf-preview-workspace');
+                const preview =
+                  workspace?.querySelector<HTMLElement>('.pdf-page-preview');
+                const previous = preview
+                  ? {
+                      left: preview.scrollLeft,
+                      width: preview.clientWidth,
+                      scrollWidth: preview.scrollWidth,
+                    }
+                  : undefined;
+                controller.setPdfPreviewScale?.(Number(input.value) / 100);
+                if (workspace && previous)
+                  requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                      const currentWorkspace = workspace.isConnected
+                        ? workspace
+                        : document.querySelector<HTMLElement>(
+                            '.preview-pane--original .pdf-preview-workspace',
+                          );
+                      const currentPreview =
+                        currentWorkspace?.querySelector<HTMLElement>(
+                          '.pdf-page-preview',
+                        );
+                      if (!currentPreview) return;
+                      currentPreview.scrollLeft = scaledPreviewScrollOffset(
+                        previous.left,
+                        previous.width,
+                        previous.scrollWidth,
+                        currentPreview.scrollWidth,
+                      );
+                    });
+                  });
+              },
             }),
           ])
         : null,
@@ -613,6 +684,20 @@ function pdfSourcePreview(
             'This is the source page with crop bands overlaid. Selected repeated text is removed from generated output after full processing.',
           ),
     ],
+  );
+}
+
+export function scaledPreviewScrollOffset(
+  scrollLeft: number,
+  viewportWidth: number,
+  previousScrollWidth: number,
+  nextScrollWidth: number,
+): number {
+  const center =
+    (scrollLeft + viewportWidth / 2) / Math.max(1, previousScrollWidth);
+  return Math.min(
+    Math.max(0, nextScrollWidth - viewportWidth),
+    Math.max(0, center * nextScrollWidth - viewportWidth / 2),
   );
 }
 
@@ -1041,6 +1126,7 @@ function preview(controller: AppController): m.Vnode {
       state.previewMode === 'edit'
         ? m(MarkdownEditor, {
             content: source,
+            mode: 'wysiwyg',
             onContentChange: (newContent: string) => {
               state.epubContentEdit = newContent;
               controller.setEpubContent?.(newContent);
@@ -1145,6 +1231,7 @@ function preview(controller: AppController): m.Vnode {
             if (state.markdownEdit === undefined) state.markdownEdit = source;
             return m(MarkdownEditor, {
               content: state.markdownEdit,
+              mode: 'wysiwyg',
               onContentChange: (newContent: string) => {
                 controller.setMarkdownContent?.(newContent);
               },
@@ -1170,6 +1257,8 @@ function preview(controller: AppController): m.Vnode {
 }
 
 export function epubRenderedPreview(state: AppState, source: string): string {
+  if (state.epubContentEdit === undefined && state.sourceHtml)
+    return state.sourceHtml.html;
   if (state.epubContentEdit !== undefined || !state.model)
     return renderMarkdown(source);
   const metadata = { ...state.model.metadata };
@@ -1406,36 +1495,24 @@ function previewActions(controller: AppController): m.Vnode {
       disabled: !state.output,
       onclick: () => controller.download(),
     }),
-    m(
-      'button.link-button',
-      {
-        type: 'button',
-        onclick: () => openReview(state, 'styles'),
+    m(FlatButton, {
+      label: 'Review style mapping',
+      onclick: () => openReview(state, 'styles'),
+    }),
+    m(FlatButton, {
+      label: 'Review metadata',
+      onclick: () => openReview(state, 'metadata'),
+    }),
+    m(FlatButton, {
+      label: 'Choose another format',
+      onclick: () => {
+        if (typeof history !== 'undefined') history.back();
+        else {
+          state.stage = 1;
+          delete state.output;
+        }
       },
-      'Review style mapping',
-    ),
-    m(
-      'button.link-button',
-      {
-        type: 'button',
-        onclick: () => openReview(state, 'metadata'),
-      },
-      'Review metadata',
-    ),
-    m(
-      'button.link-button',
-      {
-        type: 'button',
-        onclick: () => {
-          if (typeof history !== 'undefined') history.back();
-          else {
-            state.stage = 1;
-            delete state.output;
-          }
-        },
-      },
-      'Choose another format',
-    ),
+    }),
   ]);
 }
 

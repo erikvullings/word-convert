@@ -16,6 +16,7 @@ import type {
 } from '@wordconvert/pdf-reader';
 
 export interface PdfWorkerOptions {
+  formulaRecognitionEnabled?: boolean;
   samplePageCount?: number;
   crop?: Partial<PdfCropOptions>;
   removeDetectedFurniture?: boolean;
@@ -47,6 +48,7 @@ export type WorkerRequest =
       conversionDate: string;
       cover?: CoverComposition;
       formulaMode?: MathOutputMode;
+      sourceHtml?: { html: string; xhtml: string };
     }
   | { type: 'cancel'; operationId: string };
 
