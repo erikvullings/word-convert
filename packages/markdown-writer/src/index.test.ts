@@ -144,6 +144,37 @@ describe('writeMarkdown', () => {
     ).toHaveLength(1);
   });
 
+  it('omits headings without renderable content', () => {
+    const input = model([
+      { type: 'heading', level: 2, styleId: 'Heading1', children: [] },
+      {
+        type: 'heading',
+        level: 2,
+        styleId: 'Heading1',
+        children: [{ type: 'text', text: 'Introduction' }],
+      },
+    ]);
+
+    expect(writeMarkdown(input, { conversionDate: '2026-07-15' })).toBe(
+      '## Introduction\n',
+    );
+  });
+
+  it('preserves source numbering in headings', () => {
+    const input = model([
+      {
+        type: 'heading',
+        level: 2,
+        numbering: '1.2',
+        children: [{ type: 'text', text: 'Scope' }],
+      },
+    ]);
+
+    expect(writeMarkdown(input, { conversionDate: '2026-07-15' })).toBe(
+      '## 1.2 Scope\n',
+    );
+  });
+
   it('writes headings, escaped paragraphs, formatting, and safe links', () => {
     const markdown = writeMarkdown(
       model([
@@ -171,6 +202,23 @@ describe('writeMarkdown', () => {
 
     expect(markdown).toBe(
       '## Overview\n\n**Use \\*stars\\* **`and code`[the \\[site\\]](https://example.com/a_\\(b\\) "Details \\"here\\"")\n',
+    );
+  });
+
+  it('coalesces adjacent text runs with identical marks', () => {
+    const input = model([
+      {
+        type: 'paragraph',
+        children: [
+          { type: 'text', text: 'One ', marks: [{ type: 'italic' }] },
+          { type: 'text', text: 'sentence', marks: [{ type: 'italic' }] },
+          { type: 'text', text: '.', marks: [{ type: 'italic' }] },
+        ],
+      },
+    ]);
+
+    expect(writeMarkdown(input, { conversionDate: '2026-07-15' })).toBe(
+      '_One sentence._\n',
     );
   });
 
@@ -568,6 +616,36 @@ describe('writeMarkdown', () => {
     expect(warnings).not.toContainEqual(
       expect.objectContaining({ code: 'markdown-unsupported-style-mark' }),
     );
+  });
+
+  it('warns once per unsupported character style', () => {
+    const input = model([
+      {
+        type: 'paragraph',
+        children: [
+          {
+            type: 'text',
+            text: 'First',
+            marks: [{ type: 'style', styleId: 'Hyperlink' }],
+          },
+          {
+            type: 'text',
+            text: ' second',
+            marks: [{ type: 'style', styleId: 'Hyperlink' }],
+          },
+        ],
+      },
+    ]);
+    const warnings: ConversionWarning[] = [];
+
+    writeMarkdown(input, {
+      conversionDate: '2026-07-15',
+      onWarning: (warning) => warnings.push(warning),
+    });
+
+    expect(
+      warnings.filter(({ code }) => code === 'markdown-unsupported-style-mark'),
+    ).toHaveLength(1);
   });
 
   it('chooses collision-free inline and block code fences', () => {

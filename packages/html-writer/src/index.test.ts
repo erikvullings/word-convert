@@ -105,7 +105,12 @@ describe('writeHtml', () => {
   it('writes deterministic semantic standalone HTML with a heading TOC', () => {
     const input = model([
       { type: 'heading', level: 1, children: [{ type: 'text', text: 'One' }] },
-      { type: 'heading', level: 2, children: [{ type: 'text', text: 'One' }] },
+      {
+        type: 'heading',
+        level: 2,
+        numbering: '1.1',
+        children: [{ type: 'text', text: 'One' }],
+      },
       { type: 'paragraph', children: [{ type: 'text', text: 'Body' }] },
     ]);
     input.assets.font = {
@@ -131,9 +136,9 @@ describe('writeHtml', () => {
     );
     expect(first).not.toContain('<nav');
     expect(first).toContain('<a href="#one">One</a>');
-    expect(first).toContain('<a href="#one-2">One</a>');
+    expect(first).toContain('<a href="#one-2">1.1 One</a>');
     expect(first).toContain('<h1 id="one">One</h1>');
-    expect(first).toContain('<h2 id="one-2">One</h2>');
+    expect(first).toContain('<h2 id="one-2">1.1 One</h2>');
     expect(first).toContain('@media (prefers-color-scheme: dark)');
     expect(first).toContain('figure{clear:both');
     expect(first).toContain('p>img{display:block');

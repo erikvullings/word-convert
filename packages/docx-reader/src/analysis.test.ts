@@ -192,6 +192,32 @@ describe('style analysis', () => {
     ]);
   });
 
+  it('does not map a reused body style as a caption from one adjacent paragraph', () => {
+    const result = analyseStyles(
+      [{ id: 'Guidance', name: 'Guidance', kind: 'paragraph', formatting: {} }],
+      [
+        {
+          styleId: 'Guidance',
+          kind: 'paragraph',
+          text: 'The following table lists the planned releases.',
+          position: 1,
+          nearbyContent: 'table',
+        },
+        {
+          styleId: 'Guidance',
+          kind: 'paragraph',
+          text: 'Describe the release process.',
+          position: 2,
+        },
+      ],
+    );
+
+    expect(result[0]).toMatchObject({
+      proposedMapping: 'body',
+      provenance: { source: 'plain-paragraph-fallback' },
+    });
+  });
+
   it('recognises a unique largest display style near the document start as the title', () => {
     const result = analyseStyles(
       [

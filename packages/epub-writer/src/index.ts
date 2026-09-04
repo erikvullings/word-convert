@@ -293,8 +293,9 @@ function collectHeadings(chapters: Chapter[]): HeadingEntry[] {
   const visit = (blocks: BlockNode[], path: string): void => {
     for (const block of blocks) {
       if (block.type === 'heading') {
-        const label = plainText(block.children);
-        const base = slug(block.id ?? label);
+        const text = plainText(block.children);
+        const label = block.numbering ? `${block.numbering} ${text}` : text;
+        const base = slug(block.id ?? text);
         const count = (counts.get(base) ?? 0) + 1;
         counts.set(base, count);
         output.push({
@@ -442,7 +443,8 @@ function renderBlock(block: BlockNode, context: RenderContext): string {
       return `<p>${renderInlines(block.children, context)}</p>`;
     case 'heading': {
       const heading = context.headings[context.headingIndex++];
-      return `<h${block.level} id="${escapeAttribute(heading?.id ?? 'section')}">${renderInlines(block.children, context)}</h${block.level}>`;
+      const numbering = block.numbering ? `${escapeXml(block.numbering)} ` : '';
+      return `<h${block.level} id="${escapeAttribute(heading?.id ?? 'section')}">${numbering}${renderInlines(block.children, context)}</h${block.level}>`;
     }
     case 'list': {
       const tag = block.ordered ? 'ol' : 'ul';

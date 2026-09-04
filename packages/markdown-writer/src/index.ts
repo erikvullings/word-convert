@@ -20,6 +20,7 @@ export interface MarkdownWriterOptions extends WriterOptions {
 interface RenderContext {
   model: DocumentModel;
   referencedNotes: string[];
+  warnedStyleIds: Set<string>;
   assetUrl: (assetId: string) => string | undefined;
   warn: (warning: ConversionWarning) => void;
   formulaMode: MathOutputMode;
@@ -74,6 +75,7 @@ function writeWithAssets(
   const context: RenderContext = {
     model,
     referencedNotes: [],
+    warnedStyleIds: new Set(),
     assetUrl,
     warn: (warning) => options.onWarning?.(warning),
     formulaMode: options.formulaMode ?? 'source',
@@ -125,8 +127,14 @@ function renderBlocks(blocks: BlockNode[], context: RenderContext): string {
 
 function renderBlock(block: BlockNode, context: RenderContext): string {
   switch (block.type) {
-    case 'heading':
-      return `${'#'.repeat(block.level)} ${renderInlines(block.children, context)}`;
+    case 'heading': {
+      const content = renderInlines(block.children, context);
+      if (!content.trim()) return '';
+      const numbering = block.numbering
+        ? `${escapeText(block.numbering)} `
+        : '';
+      return `${'#'.repeat(block.level)} ${numbering}${content}`;
+    }
     case 'paragraph':
       return renderInlines(block.children, context);
     case 'blockquote':
@@ -226,9 +234,41 @@ function renderInlines(
   context: RenderContext,
   escapeBrackets = false,
 ): string {
-  return nodes
+  return coalesceTextNodes(nodes)
     .map((node) => renderInline(node, context, escapeBrackets))
     .join('');
+}
+
+function coalesceTextNodes(nodes: readonly InlineNode[]): InlineNode[] {
+  const result: InlineNode[] = [];
+  for (const node of nodes) {
+    const previous = result.at(-1);
+    if (
+      node.type === 'text' &&
+      previous?.type === 'text' &&
+      sameMarks(previous.marks, node.marks)
+    ) {
+      previous.text += node.text;
+    } else {
+      result.push(node.type === 'text' ? { ...node } : node);
+    }
+  }
+  return result;
+}
+
+function sameMarks(
+  left: readonly TextMark[] | undefined,
+  right: readonly TextMark[] | undefined,
+): boolean {
+  if ((left?.length ?? 0) !== (right?.length ?? 0)) return false;
+  return (left ?? []).every((mark, index) => {
+    const other = right?.[index];
+    return (
+      mark.type === other?.type &&
+      (mark.type !== 'style' ||
+        (other.type === 'style' && mark.styleId === other.styleId))
+    );
+  });
 }
 
 function renderInline(
@@ -377,13 +417,18 @@ function applyMarks(
     if (mark.type === 'superscript') return `<sup>${content}</sup>`;
     if (mark.type === 'code') return content;
     if (mark.type === 'style') {
-      if (!hasExplicitStyleMapping(context.model, mark.styleId))
+      if (
+        !hasExplicitStyleMapping(context.model, mark.styleId) &&
+        !context.warnedStyleIds.has(mark.styleId)
+      ) {
+        context.warnedStyleIds.add(mark.styleId);
         context.warn({
           code: 'markdown-unsupported-style-mark',
           severity: 'info',
           message: 'A custom character style has no Markdown representation.',
           details: { styleId: mark.styleId },
         });
+      }
     }
     return content;
   }, value);

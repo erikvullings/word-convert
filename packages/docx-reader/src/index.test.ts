@@ -58,6 +58,26 @@ const styledLayoutDocx = () =>
     },
   ]);
 
+const numberedHeadingDocx = () =>
+  createZip([
+    {
+      name: '[Content_Types].xml',
+      data: `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`,
+    },
+    {
+      name: 'word/document.xml',
+      data: `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Introduction</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading2"/><w:numPr><w:ilvl w:val="1"/><w:numId w:val="3"/></w:numPr></w:pPr><w:r><w:t>Scope</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr><w:r><w:t>Actual list item</w:t></w:r></w:p></w:body></w:document>`,
+    },
+    {
+      name: 'word/styles.xml',
+      data: `<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/></w:style></w:styles>`,
+    },
+    {
+      name: 'word/numbering.xml',
+      data: `<?xml version="1.0"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1"/></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1.%2"/></w:lvl></w:abstractNum><w:abstractNum w:abstractNumId="2"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="2"/></w:num><w:num w:numId="3"><w:abstractNumId w:val="1"/></w:num></w:numbering>`,
+    },
+  ]);
+
 describe('secure DOCX reader', () => {
   it('extracts inline and display OMML and warns for unsupported formulas', async () => {
     const input = createZip([
@@ -109,6 +129,16 @@ describe('secure DOCX reader', () => {
       level: 1,
       styleId: 'RapportTitel',
     });
+  });
+
+  it('keeps numbered heading styles out of semantic lists', async () => {
+    const model = await secureDocxReader.read(numberedHeadingDocx(), options);
+
+    expect(model.blocks).toMatchObject([
+      { type: 'heading', level: 2, styleId: 'Heading1', numbering: '1' },
+      { type: 'heading', level: 3, styleId: 'Heading2', numbering: '1.1' },
+      { type: 'list', ordered: true },
+    ]);
   });
 
   it('converts the comprehensive OOXML fixture into the neutral model', async () => {

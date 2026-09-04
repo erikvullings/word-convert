@@ -1948,6 +1948,18 @@ h1 {
   padding: 0;
 }
 
+.style-card-mapping .input-field {
+  margin-block: 0;
+}
+
+.style-card-mapping .input-field.col label {
+  left: 0;
+}
+
+.style-card-mapping .select-wrapper input.select-dropdown {
+  margin-bottom: 0;
+}
+
 .card-label {
   display: block;
   margin-bottom: 0.3rem;

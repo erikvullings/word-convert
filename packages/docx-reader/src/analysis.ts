@@ -285,9 +285,9 @@ function proposal(
       normalise(text),
     ),
   );
-  const captionNeighbour = usage.some(
-    ({ nearbyContent }) => nearbyContent !== undefined,
-  );
+  const captionNeighbour =
+    usage.length > 0 &&
+    usage.every(({ nearbyContent }) => nearbyContent !== undefined);
   if (
     captionName ||
     captionText ||

@@ -10,6 +10,7 @@ import {
   type Equation,
   type InlineNode,
   type Note,
+  type StyleMapping,
   type TableCell,
   type TextMark,
 } from '@wordconvert/document-model';
@@ -86,11 +87,20 @@ interface Relationship {
   external: boolean;
 }
 
+interface NumberingLevel {
+  format: string;
+  template: string;
+  start: number;
+  sequenceId: string;
+}
+
 interface ParseContext {
   pkg: DocxPackage;
   limits: ReaderLimits;
   relationships: Map<string, Relationship>;
-  numbering: Map<string, boolean>;
+  numbering: Map<string, NumberingLevel>;
+  numberingCounters: Map<string, number[]>;
+  styleMappings: Readonly<Record<string, StyleMapping>>;
   equations: Record<string, Equation>;
   assets: DocumentModel['assets'];
   warnings: ConversionWarning[];
@@ -213,23 +223,27 @@ function isPassiveSvg(bytes: Uint8Array, part: string): boolean {
   return inspect(root);
 }
 
-function parseNumbering(pkg: DocxPackage): Map<string, boolean> {
+function parseNumbering(pkg: DocxPackage): Map<string, NumberingLevel> {
   const root = optionalXml(pkg, 'word/numbering.xml');
-  const result = new Map<string, boolean>();
+  const result = new Map<string, NumberingLevel>();
   if (!root) return result;
-  const formats = new Map<string, Map<string, boolean>>();
+  const definitions = new Map<string, Map<string, NumberingLevel>>();
   for (const abstract of elements(root, 'abstractNum')) {
     const id = attribute(abstract, 'abstractNumId');
     if (!id) continue;
-    const levels = new Map<string, boolean>();
+    const levels = new Map<string, NumberingLevel>();
     for (const level of elements(abstract, 'lvl')) {
       const levelId = attribute(level, 'ilvl') ?? '0';
-      levels.set(
-        levelId,
-        attribute(first(level, 'numFmt') ?? level, 'val') !== 'bullet',
-      );
+      levels.set(levelId, {
+        format: attribute(first(level, 'numFmt') ?? level, 'val') ?? 'decimal',
+        template:
+          attribute(first(level, 'lvlText') ?? level, 'val') ??
+          `%${Number(levelId) + 1}.`,
+        start: Number(attribute(first(level, 'start') ?? level, 'val') ?? 1),
+        sequenceId: id,
+      });
     }
-    formats.set(id, levels);
+    definitions.set(id, levels);
   }
   for (const number of elements(root, 'num')) {
     const id = attribute(number, 'numId');
@@ -238,11 +252,84 @@ function parseNumbering(pkg: DocxPackage): Map<string, boolean> {
       'val',
     );
     if (id) {
-      for (const [level, ordered] of formats.get(abstractId ?? '') ?? [])
-        result.set(`${id}:${level}`, ordered);
+      const levels = new Map(definitions.get(abstractId ?? '') ?? []);
+      for (const override of elements(number, 'lvlOverride')) {
+        const levelId = attribute(override, 'ilvl') ?? '0';
+        const current = levels.get(levelId);
+        const start = attribute(
+          first(override, 'startOverride') ?? override,
+          'val',
+        );
+        if (current && start !== undefined)
+          levels.set(levelId, { ...current, start: Number(start) });
+      }
+      for (const [level, definition] of levels)
+        result.set(`${id}:${level}`, definition);
     }
   }
   return result;
+}
+
+function nextNumberingLabel(
+  context: ParseContext,
+  numId: string,
+  level: number,
+): string | undefined {
+  const definition = context.numbering.get(`${numId}:${level}`);
+  if (!definition || definition.format === 'bullet') return undefined;
+  const counters = context.numberingCounters.get(definition.sequenceId) ?? [];
+  for (let index = 0; index < level; index++) {
+    if (counters[index] === undefined)
+      counters[index] = context.numbering.get(`${numId}:${index}`)?.start ?? 1;
+  }
+  counters[level] = (counters[level] ?? definition.start - 1) + 1;
+  counters.length = level + 1;
+  context.numberingCounters.set(definition.sequenceId, counters);
+  return definition.template.replace(/%([1-9])/g, (_, token: string) => {
+    const index = Number(token) - 1;
+    const value = counters[index];
+    const format = context.numbering.get(`${numId}:${index}`)?.format;
+    return value === undefined ? '' : formatNumber(value, format);
+  });
+}
+
+function formatNumber(value: number, format: string | undefined): string {
+  if (format === 'lowerLetter' || format === 'upperLetter') {
+    let number = value;
+    let output = '';
+    while (number > 0) {
+      number--;
+      output = String.fromCharCode(65 + (number % 26)) + output;
+      number = Math.floor(number / 26);
+    }
+    return format === 'lowerLetter' ? output.toLowerCase() : output;
+  }
+  if (format === 'lowerRoman' || format === 'upperRoman') {
+    const numerals: ReadonlyArray<readonly [number, string]> = [
+      [1000, 'M'],
+      [900, 'CM'],
+      [500, 'D'],
+      [400, 'CD'],
+      [100, 'C'],
+      [90, 'XC'],
+      [50, 'L'],
+      [40, 'XL'],
+      [10, 'X'],
+      [9, 'IX'],
+      [5, 'V'],
+      [4, 'IV'],
+      [1, 'I'],
+    ];
+    let number = value;
+    let output = '';
+    for (const [unit, numeral] of numerals)
+      while (number >= unit) {
+        output += numeral;
+        number -= unit;
+      }
+    return format === 'lowerRoman' ? output.toLowerCase() : output;
+  }
+  return String(value);
 }
 
 function marksForRun(run: XmlNode): TextMark[] | undefined {
@@ -498,14 +585,32 @@ function parseBlocks(parent: XmlNode, context: ParseContext): BlockNode[] {
       const paragraph = parseParagraph(child, context);
       const numPr = first(first(child, 'pPr') ?? child, 'numPr');
       const numId = numPr && attribute(first(numPr, 'numId') ?? numPr, 'val');
-      if (numId) {
-        const level = Number(
-          attribute(first(numPr, 'ilvl') ?? numPr, 'val') ?? 0,
-        );
+      const mapping =
+        paragraph.type === 'paragraph' && paragraph.styleId
+          ? context.styleMappings[paragraph.styleId]
+          : undefined;
+      const mappedAsHeading =
+        mapping === 'title' || mapping?.startsWith('heading');
+      const level = Number(
+        attribute(first(numPr ?? child, 'ilvl') ?? numPr ?? child, 'val') ?? 0,
+      );
+      const numbering = numId
+        ? nextNumberingLabel(context, numId, level)
+        : undefined;
+      if (mappedAsHeading && paragraph.type === 'paragraph') {
+        const headingLevel =
+          mapping === 'title' ? 1 : Math.min(Number(mapping?.slice(7)) + 1, 6);
+        blocks.push({
+          ...paragraph,
+          type: 'heading',
+          level: headingLevel as 1 | 2 | 3 | 4 | 5 | 6,
+          ...(numbering ? { numbering } : {}),
+        });
+      } else if (numId) {
         appendListParagraph(
           blocks,
           paragraph,
-          context.numbering.get(`${numId}:${level}`) ?? false,
+          context.numbering.get(`${numId}:${level}`)?.format !== 'bullet',
           level,
         );
       } else blocks.push(paragraph);
@@ -927,6 +1032,8 @@ export const secureDocxReader: DocxReader = {
       limits,
       relationships,
       numbering: parseNumbering(pkg),
+      numberingCounters: new Map(),
+      styleMappings: {},
       equations: {},
       assets: {},
       warnings,
@@ -967,6 +1074,7 @@ export const secureDocxReader: DocxReader = {
     const mappings = Object.fromEntries(
       styles.map(({ id, proposedMapping }) => [id, proposedMapping]),
     );
+    context.styleMappings = mappings;
     const rawBlocks = parseBlocks(body, context);
     const model: DocumentModel = {
       schema: DOCUMENT_MODEL_SCHEMA,

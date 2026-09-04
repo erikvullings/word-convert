@@ -215,7 +215,12 @@ describe('writeEpub', () => {
           },
         ],
       },
-      { type: 'heading', level: 2, children: [{ type: 'text', text: 'One' }] },
+      {
+        type: 'heading',
+        level: 2,
+        numbering: '1',
+        children: [{ type: 'text', text: 'One' }],
+      },
       {
         type: 'list',
         ordered: false,
@@ -260,6 +265,10 @@ describe('writeEpub', () => {
     ).toContain('<ul><li><h2 id="nested">Nested</h2></li></ul>');
     const nav = strFromU8(files['EPUB/nav.xhtml'] ?? new Uint8Array());
     expect(nav).toContain('chapter-002.xhtml#one');
+    expect(nav).toContain('>1 One</a>');
+    expect(
+      strFromU8(files['EPUB/chapter-002.xhtml'] ?? new Uint8Array()),
+    ).toContain('<h2 id="one">1 One</h2>');
     expect(nav).toContain('chapter-002.xhtml#nested');
     expect(nav).toContain('chapter-003.xhtml#detail');
     expect(
