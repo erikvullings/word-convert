@@ -6,7 +6,7 @@ import {
   type DocumentModel,
 } from '@wordconvert/document-model';
 
-import { createBrowserController } from './controller.ts';
+import { applyDocumentTheme, createBrowserController } from './controller.ts';
 import type { WorkerResponse } from './worker/protocol.ts';
 import type { PdfFormulaCandidate } from '@wordconvert/pdf-reader';
 
@@ -105,6 +105,19 @@ describe('browser controller', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it('synchronizes explicit and system themes with the document root', () => {
+    const root = { dataset: {} as DOMStringMap };
+
+    applyDocumentTheme('light', root);
+    expect(root.dataset.theme).toBe('light');
+
+    applyDocumentTheme('dark', root);
+    expect(root.dataset.theme).toBe('dark');
+
+    applyDocumentTheme('system', root);
+    expect(root.dataset.theme).toBeUndefined();
   });
 
   it('reports a selected file that the browser cannot read', async () => {
@@ -439,6 +452,33 @@ describe('browser controller', () => {
       title: 'Attention Is All You Need [1706.03762]',
       files: [expect.objectContaining({ name: '1706.03762v7.epub' })],
     });
+  });
+
+  it('opens a mailto link when native file sharing is unavailable', async () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    vi.stubGlobal('navigator', {});
+    const click = vi.fn();
+    const anchor = { href: '', click };
+    vi.stubGlobal('document', {
+      documentElement: { dataset: {} },
+      createElement: vi.fn(() => anchor),
+    });
+    const controller = createBrowserController();
+    controller.state.output = {
+      filename: 'attention.epub',
+      mediaType: 'application/epub+zip',
+      data: new ArrayBuffer(1),
+    };
+
+    controller.mailDocument?.();
+    await vi.waitFor(() => expect(click).toHaveBeenCalledOnce());
+
+    expect(anchor.href).toBe('mailto:?subject=attention');
   });
 
   it('uses the enriched arXiv title as the EPUB output filename', () => {

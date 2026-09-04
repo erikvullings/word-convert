@@ -60,11 +60,21 @@ import {
   hasCachedTexTellerAssets,
 } from './texteller-cache.ts';
 
+export function applyDocumentTheme(
+  theme: ThemePreference,
+  root: Pick<HTMLElement, 'dataset'>,
+): void {
+  if (theme === 'system') delete root.dataset.theme;
+  else root.dataset.theme = theme;
+}
+
 export function createBrowserController(): AppController {
   const state: AppState = createInitialState(
     new Date().toLocaleDateString('en-CA'),
     loadPreferences(localStorage),
   );
+  if (typeof document !== 'undefined')
+    applyDocumentTheme(state.preferences.theme, document.documentElement);
   if (typeof caches === 'undefined') state.formulaCacheStatus = 'empty';
   else
     void hasCachedTexTellerAssets().then((cached) => {
@@ -649,7 +659,9 @@ export function createBrowserController(): AppController {
             }
           : {}),
         openMailto: (url) => {
-          window.location.href = url;
+          const anchor = document.createElement('a');
+          anchor.href = url;
+          anchor.click();
         },
       }).catch((cause: unknown) => {
         if (cause instanceof DOMException && cause.name === 'AbortError')
@@ -677,7 +689,7 @@ export function createBrowserController(): AppController {
     setTheme(theme: ThemePreference) {
       state.preferences.theme = theme;
       persistPreferences(localStorage, state.preferences);
-      document.documentElement.dataset.theme = theme;
+      applyDocumentTheme(theme, document.documentElement);
     },
     setOutputFormat(format) {
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);

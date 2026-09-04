@@ -114,8 +114,13 @@
   color: var(--ink);
 }
 
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
 :root[data-theme='dark'],
 .app[data-theme='dark'] {
+  color-scheme: dark;
   --page: #121714;
   --panel: #1c241f;
   --ink: #edf3ef;
