@@ -210,7 +210,7 @@ describe('writeEpub', () => {
         children: [
           {
             type: 'link',
-            href: '#detail',
+            href: '#source-toc-detail',
             children: [{ type: 'text', text: 'Detail' }],
           },
         ],
@@ -240,6 +240,7 @@ describe('writeEpub', () => {
       {
         type: 'heading',
         level: 3,
+        id: 'source-toc-detail',
         children: [{ type: 'text', text: 'Detail' }],
       },
     ]);
@@ -270,10 +271,10 @@ describe('writeEpub', () => {
       strFromU8(files['EPUB/chapter-002.xhtml'] ?? new Uint8Array()),
     ).toContain('<h2 id="one">1 One</h2>');
     expect(nav).toContain('chapter-002.xhtml#nested');
-    expect(nav).toContain('chapter-003.xhtml#detail');
+    expect(nav).toContain('chapter-003.xhtml#source-toc-detail');
     expect(
       strFromU8(files['EPUB/chapter-001.xhtml'] ?? new Uint8Array()),
-    ).toContain('href="chapter-003.xhtml#detail"');
+    ).toContain('href="chapter-003.xhtml#source-toc-detail"');
   });
 
   it('serializes model structures, local passive assets, notes, and metadata', async () => {

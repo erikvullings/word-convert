@@ -21,4 +21,13 @@ describe('Markdown preview rendering', () => {
     expect(html).toContain('&lt;script&gt;');
     expect(html).not.toContain('<script>');
   });
+
+  it('renders explicit heading anchors without visible fallback text', () => {
+    const html = renderMarkdownPreview(
+      '<a id="toc123"></a>\n## 1 Introduction\n\n[Introduction](#toc123)',
+    );
+
+    expect(html).toContain('<a id="toc123"></a>');
+    expect(html).not.toContain('&lt;a');
+  });
 });

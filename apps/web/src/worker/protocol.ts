@@ -48,6 +48,7 @@ export type WorkerRequest =
       conversionDate: string;
       cover?: CoverComposition;
       formulaMode?: MathOutputMode;
+      includeInternalLinks?: boolean;
       sourceHtml?: { html: string; xhtml: string; css: string };
     }
   | { type: 'cancel'; operationId: string };

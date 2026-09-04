@@ -62,6 +62,7 @@ function serviceWorkerSource(
     );
   files.push(
     './',
+    './404.html',
     './index.html',
     './manifest.webmanifest',
     './wc.svg',
@@ -147,6 +148,17 @@ export default defineConfig(({ command }) => {
     },
     plugins: [
       formulaRecognizerPlugin(),
+      {
+        name: 'wordconvert-route-fallback',
+        apply: 'build',
+        async writeBundle(options) {
+          const outputDirectory = resolve(String(options.dir ?? 'dist'));
+          await copyFile(
+            resolve(outputDirectory, 'index.html'),
+            resolve(outputDirectory, '404.html'),
+          );
+        },
+      },
       {
         name: 'wordconvert-service-worker',
         apply: 'build',

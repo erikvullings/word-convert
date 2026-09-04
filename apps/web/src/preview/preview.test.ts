@@ -30,6 +30,16 @@ describe('preview safety and warning navigation', () => {
     expect(allowedUri.test('javascript:alert(1)')).toBe(false);
     expect(allowedUri.test('#chapter-1')).toBe(true);
     expect(allowedUri.test('data:image/png;base64,AA==')).toBe(true);
+
+    const container = document.createElement('div');
+    container.innerHTML = DOMPurify.sanitize(
+      '<a id="toc123"></a><a href="#toc123">Introduction</a>',
+      config,
+    );
+    expect(container.querySelector('#toc123')?.textContent).toBe('');
+    expect(container.querySelector('a[href="#toc123"]')?.textContent).toBe(
+      'Introduction',
+    );
   });
 
   it('preserves KaTeX layout styles without relaxing active-content restrictions', () => {

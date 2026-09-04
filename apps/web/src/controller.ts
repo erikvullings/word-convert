@@ -59,6 +59,7 @@ import {
   clearCachedTexTellerAssets,
   hasCachedTexTellerAssets,
 } from './texteller-cache.ts';
+import { parseAppRoute, routePath, type AppRoute } from './routes.ts';
 
 export function applyDocumentTheme(
   theme: ThemePreference,
@@ -213,6 +214,7 @@ export function createBrowserController(): AppController {
       format: state.preferences.outputFormat,
       conversionDate: state.conversionDate,
       formulaMode: state.preferences.formulaMode,
+      includeInternalLinks: state.preferences.markdownIncludeInternalLinks,
       mode:
         state.preferences.outputFormat === 'html'
           ? state.preferences.htmlMode
@@ -234,30 +236,76 @@ export function createBrowserController(): AppController {
     requestConvert();
   };
 
-  const handlePopState = (event: PopStateEvent): void => {
-    if (!state.model) {
+  const updateBrowserRoute = (
+    route: AppRoute,
+    mode: 'push' | 'replace' = 'push',
+  ): void => {
+    if (typeof history === 'undefined') return;
+    const url = new URL(window.location.href);
+    url.pathname = routePath(route, import.meta.env.BASE_URL);
+    const routeState =
+      route.page === 'conversion'
+        ? { stage: 2, format: route.format }
+        : { stage: route.page === 'output-format' ? 1 : 0 };
+    history[mode === 'push' ? 'pushState' : 'replaceState'](
+      routeState,
+      '',
+      url,
+    );
+  };
+
+  const applyRoute = (route: AppRoute, convert: boolean): void => {
+    delete state.review;
+    if (route.page === 'document') {
       state.stage = 0;
-      delete state.review;
-      m.redraw();
       return;
     }
-    const stage =
-      typeof event.state?.stage === 'number' ? event.state.stage : 1;
+    if (!state.model) {
+      state.stage = 0;
+      updateBrowserRoute({ page: 'document' }, 'replace');
+      return;
+    }
+    if (route.page === 'output-format') {
+      state.stage = 1;
+      delete state.output;
+      delete state.markdownEdit;
+      return;
+    }
+    const formatChanged = state.preferences.outputFormat !== route.format;
+    state.preferences.outputFormat = route.format;
+    persistPreferences(localStorage, state.preferences);
+    state.stage = 2;
+    if (formatChanged) {
+      delete state.output;
+      delete state.selectedEpubFile;
+    }
+    if (
+      convert &&
+      (formatChanged || !state.output) &&
+      (route.format !== 'epub' || !epubMetadataIssues(state))
+    )
+      requestConvert();
+  };
+
+  const handlePopState = (event: PopStateEvent): void => {
+    applyRoute(
+      parseAppRoute(window.location.pathname, import.meta.env.BASE_URL),
+      true,
+    );
     state.review = ['styles', 'metadata', 'formula'].includes(
       event.state?.review,
     )
       ? event.state.review
       : undefined;
-    if (stage === 1) {
-      state.stage = 1;
-      delete state.output;
-      delete state.markdownEdit;
-    } else {
-      state.stage = 2;
-    }
     m.redraw();
   };
   if (typeof window !== 'undefined') {
+    const initialRoute = parseAppRoute(
+      window.location.pathname,
+      import.meta.env.BASE_URL,
+    );
+    if (initialRoute.page !== 'document')
+      updateBrowserRoute({ page: 'document' }, 'replace');
     window.addEventListener('beforeunload', disposePdfPreview, { once: true });
     window.addEventListener('popstate', handlePopState);
   }
@@ -368,8 +416,7 @@ export function createBrowserController(): AppController {
       );
       for (const key of Object.keys(state)) Reflect.deleteProperty(state, key);
       Object.assign(state, freshState);
-      if (typeof history !== 'undefined')
-        history.replaceState({ stage: 0 }, '', window.location.href);
+      updateBrowserRoute({ page: 'document' }, 'replace');
       m.redraw();
     },
     selectFiles(files) {
@@ -434,6 +481,7 @@ export function createBrowserController(): AppController {
         : 'docx';
       state.sourceFormat = sourceFormat;
       state.stage = 1;
+      updateBrowserRoute({ page: 'output-format' });
       state.status = 'analysing';
       state.progress = {
         phase: 'inspect',
@@ -497,12 +545,14 @@ export function createBrowserController(): AppController {
       if (state.model) {
         state.status = 'ready';
         state.stage = 1;
+        updateBrowserRoute({ page: 'output-format' }, 'replace');
       } else {
         state.status = 'idle';
         state.stage = 0;
         delete state.selectedFilename;
         delete state.sourceFormat;
         delete state.outputSaved;
+        updateBrowserRoute({ page: 'document' }, 'replace');
       }
       m.redraw();
     },
@@ -570,6 +620,7 @@ export function createBrowserController(): AppController {
           delete state.progress;
           state.stage = 1;
           state.status = 'ready';
+          updateBrowserRoute({ page: 'output-format' });
           remoteDocumentAbort = undefined;
           delete state.remoteDocumentLoading;
           m.redraw();
@@ -699,9 +750,13 @@ export function createBrowserController(): AppController {
       delete state.output;
       delete state.selectedEpubFile;
       state.stage = 2;
-      if (typeof history !== 'undefined')
-        history.pushState({ stage: 2, format }, '', window.location.href);
+      updateBrowserRoute({ page: 'conversion', format });
       if (format !== 'epub' || !epubMetadataIssues(state)) requestConvert();
+    },
+    showOutputFormats() {
+      applyRoute({ page: 'output-format' }, false);
+      updateBrowserRoute({ page: 'output-format' });
+      m.redraw();
     },
     setFormulaMode(mode) {
       state.preferences.formulaMode = mode;
@@ -731,6 +786,12 @@ export function createBrowserController(): AppController {
       state.preferences.markdownMode = mode;
       state.preferences.assetMode = mode === 'zip' ? 'folder' : 'embedded';
       persistPreferences(localStorage, state.preferences);
+      if (state.stage === 2) requestConvert();
+    },
+    setMarkdownIncludeInternalLinks(include) {
+      state.preferences.markdownIncludeInternalLinks = include;
+      persistPreferences(localStorage, state.preferences);
+      delete state.output;
       if (state.stage === 2) requestConvert();
     },
     setEpubIncludeCover(include) {

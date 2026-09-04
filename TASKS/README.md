@@ -50,3 +50,8 @@ These improvements are intentionally outside the initial production path.
 
 - [x] 0024 Add manual PDF formula selection *(needs 0022)*
 - [x] 0025 Benchmark alternative formula recognizers *(needs 0021)*
+
+## Conversion follow-ups
+
+- [x] 0026 Preserve optional DOCX ToC links
+- [x] 0027 Add workflow routes

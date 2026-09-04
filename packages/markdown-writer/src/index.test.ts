@@ -175,6 +175,38 @@ describe('writeMarkdown', () => {
     );
   });
 
+  it('writes optional internal links and invisible heading anchors', () => {
+    const input = model([
+      {
+        type: 'paragraph',
+        children: [
+          {
+            type: 'link',
+            href: '#toc123',
+            children: [{ type: 'text', text: '1 Introduction' }],
+          },
+        ],
+      },
+      {
+        type: 'heading',
+        level: 2,
+        id: 'toc123',
+        numbering: '1',
+        children: [{ type: 'text', text: 'Introduction' }],
+      },
+    ]);
+
+    expect(writeMarkdown(input, { conversionDate: '2026-07-15' })).toBe(
+      '[1 Introduction](#toc123)\n\n<a id="toc123"></a>\n## 1 Introduction\n',
+    );
+    expect(
+      writeMarkdown(input, {
+        conversionDate: '2026-07-15',
+        includeInternalLinks: false,
+      }),
+    ).toBe('1 Introduction\n\n## 1 Introduction\n');
+  });
+
   it('writes headings, escaped paragraphs, formatting, and safe links', () => {
     const markdown = writeMarkdown(
       model([

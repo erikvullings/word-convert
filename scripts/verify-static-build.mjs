@@ -6,6 +6,7 @@ const entries = await readdir(outputDirectory, { recursive: true });
 const files = entries.filter((entry) => extname(entry) !== '');
 const requiredFiles = [
   'index.html',
+  '404.html',
   'manifest.webmanifest',
   'favicon.svg',
   'sw.js',

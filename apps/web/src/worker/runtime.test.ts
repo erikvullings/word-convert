@@ -63,6 +63,46 @@ async function pdfBuffer(): Promise<ArrayBuffer> {
 }
 
 describe('worker runtime', () => {
+  it('can remove Markdown internal links and heading anchors', async () => {
+    const sent: WorkerResponse[] = [];
+    const runtime = createWorkerRuntime((message) => sent.push(message));
+    const input = model();
+    input.blocks = [
+      {
+        type: 'paragraph',
+        children: [
+          {
+            type: 'link',
+            href: '#toc123',
+            children: [{ type: 'text', text: 'Introduction' }],
+          },
+        ],
+      },
+      {
+        type: 'heading',
+        level: 2,
+        id: 'toc123',
+        children: [{ type: 'text', text: 'Introduction' }],
+      },
+    ];
+
+    await runtime.handle({
+      type: 'convert',
+      operationId: 'markdown-without-internal-links',
+      model: input,
+      filename: 'document.docx',
+      format: 'markdown',
+      conversionDate: '2026-07-15',
+      includeInternalLinks: false,
+    });
+
+    const output = sent.at(-1);
+    if (output?.type !== 'output') throw new Error('No Markdown output');
+    expect(new TextDecoder().decode(output.data)).toBe(
+      'Introduction\n\n## Introduction\n',
+    );
+  });
+
   it('reports background PDF layout preparation status', async () => {
     const sent: WorkerResponse[] = [];
     const runtime = createWorkerRuntime((message) => sent.push(message));

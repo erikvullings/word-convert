@@ -15,6 +15,7 @@ import {
 export interface MarkdownWriterOptions extends WriterOptions {
   onWarning?: (warning: ConversionWarning) => void;
   formulaMode?: MathOutputMode;
+  includeInternalLinks?: boolean;
 }
 
 interface RenderContext {
@@ -24,6 +25,7 @@ interface RenderContext {
   assetUrl: (assetId: string) => string | undefined;
   warn: (warning: ConversionWarning) => void;
   formulaMode: MathOutputMode;
+  includeInternalLinks: boolean;
 }
 
 export function writeMarkdown(
@@ -79,6 +81,7 @@ function writeWithAssets(
     assetUrl,
     warn: (warning) => options.onWarning?.(warning),
     formulaMode: options.formulaMode ?? 'source',
+    includeInternalLinks: options.includeInternalLinks ?? true,
   };
   const body = renderBlocks(model.blocks, context);
   const title = renderDocumentTitle(model);
@@ -133,7 +136,11 @@ function renderBlock(block: BlockNode, context: RenderContext): string {
       const numbering = block.numbering
         ? `${escapeText(block.numbering)} `
         : '';
-      return `${'#'.repeat(block.level)} ${numbering}${content}`;
+      const anchor =
+        context.includeInternalLinks && block.id && safeFragmentId(block.id)
+          ? `<a id="${escapeHtmlAttribute(block.id)}"></a>\n`
+          : '';
+      return `${anchor}${'#'.repeat(block.level)} ${numbering}${content}`;
     }
     case 'paragraph':
       return renderInlines(block.children, context);
@@ -283,6 +290,8 @@ function renderInline(
       ? ` "${node.title.replace(/["\\]/g, '\\$&')}"`
       : '';
     const children = renderInlines(node.children, context, true);
+    if (!context.includeInternalLinks && node.href.trim().startsWith('#'))
+      return children;
     if (!safeHref(node.href)) {
       context.warn({
         code: 'markdown-unsafe-link',
@@ -495,6 +504,10 @@ function safeHref(value: string): boolean {
     /^#[A-Za-z0-9_.:-]+$/.test(trimmed) ||
     /^(?:\.\.?\/|\/)?[^\s\\:]+(?:\/[^\s\\]*)?$/.test(trimmed)
   );
+}
+
+function safeFragmentId(value: string): boolean {
+  return /^[A-Za-z0-9_.:-]+$/.test(value);
 }
 
 function hrefScheme(value: string): string {

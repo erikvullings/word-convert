@@ -48,6 +48,13 @@ deeply equal analysis and `DocumentModel` values.
 
 WordConvert targets the current and immediately previous major releases of Chrome, Edge, Firefox, and Safari on desktop, plus the corresponding current mobile engines. The production build targets ES2022 and relies on standards available in those releases: Web Workers, transferable `ArrayBuffer`, `Blob`, `File`, object URLs, structured cloning, HTML canvas, CSS Grid/Flexbox, and module scripts. Browsers exposing the File System Access API use their native save picker so the user can choose the output filename and folder. Other browsers retain the generated filename and use the standard browser download flow.
 
+Workflow URLs use the History API under the configured application base path.
+The static build emits `404.html` from the same application shell so GitHub
+Pages can load document, output-format, Markdown, HTML, and EPUB routes before
+the client normalizes them. Conversion routes require the source document to
+remain in memory; opening one in a fresh browser context returns to document
+selection rather than persisting or reconstructing source data.
+
 Completed EPUB output can be handed to an installed mail client through the Web Share API when the browser reports file-sharing support. The EPUB remains in memory until this explicit user action and is passed as a `File` with the document title as the share title; no recipient, message body, URL, or remote service is supplied. Browsers without file-sharing support open an empty `mailto:` draft with only the encoded subject. The `mailto:` standard cannot attach local files, so attaching the EPUB in that fallback remains a manual mail-client action.
 
 PDF source-page previews are loaded only on request and rasterized on an HTML canvas with a maximum width of 1,200 pixels and a 4-megapixel budget. The browser-canvas path supports embedded fonts that PDF.js cannot reliably draw on `OffscreenCanvas` for some legacy PDFs. Preview rendering is best-effort so recoverable legacy-font errors do not produce blank pages; extraction remains strict. Preview tasks and PNG object URLs are released when replaced, when another source is selected, and when the page unloads.

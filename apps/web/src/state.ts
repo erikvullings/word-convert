@@ -60,6 +60,7 @@ export interface Preferences {
   formulaMode: MathOutputMode;
   htmlMode: HtmlOutputMode;
   markdownMode: MarkdownOutputMode;
+  markdownIncludeInternalLinks: boolean;
   assetMode: AssetOutputMode;
   epubIncludeCover: boolean;
 }
@@ -151,6 +152,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   formulaMode: 'mathml',
   htmlMode: 'standalone',
   markdownMode: 'single',
+  markdownIncludeInternalLinks: true,
   assetMode: 'embedded',
   epubIncludeCover: true,
 };
@@ -230,6 +232,8 @@ export function loadPreferences(storage: PreferenceStorage): Preferences {
         !['standalone', 'zip'].includes(value.htmlMode)) ||
       (value.markdownMode !== undefined &&
         !['single', 'zip'].includes(value.markdownMode)) ||
+      (value.markdownIncludeInternalLinks !== undefined &&
+        typeof value.markdownIncludeInternalLinks !== 'boolean') ||
       (value.assetMode !== undefined &&
         !['embedded', 'folder'].includes(value.assetMode)) ||
       (value.epubIncludeCover !== undefined &&
@@ -242,6 +246,7 @@ export function loadPreferences(storage: PreferenceStorage): Preferences {
       formulaMode: value.formulaMode ?? 'mathml',
       htmlMode: value.htmlMode ?? 'standalone',
       markdownMode: value.markdownMode ?? 'single',
+      markdownIncludeInternalLinks: value.markdownIncludeInternalLinks ?? true,
       assetMode: value.assetMode ?? 'embedded',
       epubIncludeCover: value.epubIncludeCover ?? true,
     } as Preferences;

@@ -66,7 +66,7 @@ const numberedHeadingDocx = () =>
     },
     {
       name: 'word/document.xml',
-      data: `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Introduction</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading2"/><w:numPr><w:ilvl w:val="1"/><w:numId w:val="3"/></w:numPr></w:pPr><w:r><w:t>Scope</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr><w:r><w:t>Actual list item</w:t></w:r></w:p></w:body></w:document>`,
+      data: `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:hyperlink w:anchor="_Alias123"><w:r><w:t>Introduction</w:t></w:r></w:hyperlink><w:r><w:t> / </w:t></w:r><w:hyperlink w:anchor="_Missing"><w:r><w:t>Missing</w:t></w:r></w:hyperlink></w:p><w:bookmarkStart w:id="1" w:name="_Alias123"/><w:sdt><w:sdtContent><w:p><w:pPr><w:pStyle w:val="Heading1"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:bookmarkStart w:id="2" w:name="_Toc123"/><w:r><w:t>Introduction</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:pPr><w:pStyle w:val="Heading2"/><w:numPr><w:ilvl w:val="1"/><w:numId w:val="3"/></w:numPr></w:pPr><w:r><w:t>Scope</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr><w:r><w:t>Actual list item</w:t></w:r></w:p></w:body></w:document>`,
     },
     {
       name: 'word/styles.xml',
@@ -135,10 +135,30 @@ describe('secure DOCX reader', () => {
     const model = await secureDocxReader.read(numberedHeadingDocx(), options);
 
     expect(model.blocks).toMatchObject([
-      { type: 'heading', level: 2, styleId: 'Heading1', numbering: '1' },
+      {
+        type: 'paragraph',
+        children: [
+          { type: 'link', href: '#alias123' },
+          { type: 'text', text: ' / ' },
+          { type: 'text', text: 'Missing' },
+        ],
+      },
+      {
+        type: 'heading',
+        level: 2,
+        styleId: 'Heading1',
+        numbering: '1',
+        id: 'alias123',
+      },
       { type: 'heading', level: 3, styleId: 'Heading2', numbering: '1.1' },
       { type: 'list', ordered: true },
     ]);
+    expect(model.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'internal-link-target-missing',
+        location: '_Missing',
+      }),
+    );
   });
 
   it('converts the comprehensive OOXML fixture into the neutral model', async () => {

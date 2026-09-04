@@ -42,6 +42,7 @@ describe('SPA state', () => {
       formulaMode: 'katex' as const,
       htmlMode: 'standalone' as const,
       markdownMode: 'single' as const,
+      markdownIncludeInternalLinks: false,
       assetMode: 'embedded' as const,
       epubIncludeCover: true,
     };
@@ -62,6 +63,7 @@ describe('SPA state', () => {
       formulaMode: 'mathml',
       htmlMode: 'standalone',
       markdownMode: 'single',
+      markdownIncludeInternalLinks: true,
       assetMode: 'embedded',
       epubIncludeCover: true,
     });

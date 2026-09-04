@@ -697,11 +697,14 @@ describe('App', () => {
     expect(markdown).toContain('Markdown packaging');
     expect(markdown).toContain('Single file');
     expect(markdown).toContain('ZIP with images folder');
+    expect(markdown).toContain('Include internal document links');
     expect(html).toContain('HTML packaging');
     expect(html).toContain('Standalone file');
     expect(html).toContain('ZIP with asset folders');
     expect(epub).not.toContain('Markdown packaging');
     expect(epub).not.toContain('HTML packaging');
+    expect(html).not.toContain('Include internal document links');
+    expect(epub).not.toContain('Include internal document links');
   });
 
   it('shows EPUB configuration in preview stage and explains metadata issues', () => {

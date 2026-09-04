@@ -108,6 +108,7 @@ describe('writeHtml', () => {
       {
         type: 'heading',
         level: 2,
+        id: 'source-toc-123',
         numbering: '1.1',
         children: [{ type: 'text', text: 'One' }],
       },
@@ -136,9 +137,9 @@ describe('writeHtml', () => {
     );
     expect(first).not.toContain('<nav');
     expect(first).toContain('<a href="#one">One</a>');
-    expect(first).toContain('<a href="#one-2">1.1 One</a>');
+    expect(first).toContain('<a href="#source-toc-123">1.1 One</a>');
     expect(first).toContain('<h1 id="one">One</h1>');
-    expect(first).toContain('<h2 id="one-2">1.1 One</h2>');
+    expect(first).toContain('<h2 id="source-toc-123">1.1 One</h2>');
     expect(first).toContain('@media (prefers-color-scheme: dark)');
     expect(first).toContain('figure{clear:both');
     expect(first).toContain('p>img{display:block');

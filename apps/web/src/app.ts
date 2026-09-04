@@ -89,11 +89,13 @@ export interface AppController {
   setRemoteDocumentUrl?(url: string): void;
   loadRemoteDocument?(): void;
   setOutputFormat(format: 'html' | 'markdown' | 'epub'): void;
+  showOutputFormats?(): void;
   setFormulaMode?(mode: MathOutputMode): void;
   setFormulaRecognitionEnabled?(enabled: boolean): void;
   clearFormulaRecognitionCache?(): void;
   setHtmlMode?(mode: HtmlOutputMode): void;
   setMarkdownMode?(mode: MarkdownOutputMode): void;
+  setMarkdownIncludeInternalLinks?(include: boolean): void;
   setEpubIncludeCover?(include: boolean): void;
   setEpubContent?(content: string): void;
   setEpubSourceContent?(content: string): void;
@@ -415,16 +417,26 @@ function outputChooser(controller: AppController): m.Vnode {
                     : 'Configure and inspect the publication package',
               ),
               format === 'markdown'
-                ? packagingOptions(
-                    'Markdown packaging',
-                    state.preferences.markdownMode,
-                    [
-                      ['single', 'Single file'],
-                      ['zip', 'ZIP with images folder'],
-                    ],
-                    (value) =>
-                      controller.setMarkdownMode?.(value as MarkdownOutputMode),
-                  )
+                ? [
+                    packagingOptions(
+                      'Markdown packaging',
+                      state.preferences.markdownMode,
+                      [
+                        ['single', 'Single file'],
+                        ['zip', 'ZIP with images folder'],
+                      ],
+                      (value) =>
+                        controller.setMarkdownMode?.(
+                          value as MarkdownOutputMode,
+                        ),
+                    ),
+                    m(InputCheckbox, {
+                      checked: state.preferences.markdownIncludeInternalLinks,
+                      onchange: (include) =>
+                        controller.setMarkdownIncludeInternalLinks?.(include),
+                      label: 'Include internal document links',
+                    }),
+                  ]
                 : format === 'html'
                   ? packagingOptions(
                       'HTML packaging',
@@ -1227,9 +1239,7 @@ function preview(controller: AppController): m.Vnode {
       ),
       m(Button, {
         label: 'Back to formats',
-        onclick: () => {
-          state.stage = 1;
-        },
+        onclick: () => controller.showOutputFormats?.(),
       }),
     ]);
   const source = outputPreviewSource(
@@ -1576,13 +1586,7 @@ function previewActions(controller: AppController): m.Vnode {
     }),
     m(FlatButton, {
       label: 'Choose another format',
-      onclick: () => {
-        if (typeof history !== 'undefined') history.back();
-        else {
-          state.stage = 1;
-          delete state.output;
-        }
-      },
+      onclick: () => controller.showOutputFormats?.(),
     }),
   ]);
 }

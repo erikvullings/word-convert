@@ -101,6 +101,9 @@ interface ParseContext {
   numbering: Map<string, NumberingLevel>;
   numberingCounters: Map<string, number[]>;
   styleMappings: Readonly<Record<string, StyleMapping>>;
+  bookmarkTargets: ReadonlyMap<string, string>;
+  headingIds: ReadonlyMap<XmlNode, string>;
+  missingInternalLinks: Set<string>;
   equations: Record<string, Equation>;
   assets: DocumentModel['assets'];
   warnings: ConversionWarning[];
@@ -505,6 +508,25 @@ function parseInlines(parent: XmlNode, context: ParseContext): InlineNode[] {
       if (!skipFieldResult) result.push(...parseRun(child, context));
     } else if (name === 'hyperlink') {
       const children = parseInlines(child, context);
+      const anchor = attribute(child, 'anchor');
+      if (anchor) {
+        const target = context.bookmarkTargets.get(anchor);
+        if (target) result.push({ type: 'link', href: `#${target}`, children });
+        else {
+          result.push(...children);
+          if (!context.missingInternalLinks.has(anchor)) {
+            context.missingInternalLinks.add(anchor);
+            context.warnings.push({
+              code: 'internal-link-target-missing',
+              severity: 'warning',
+              message:
+                'An internal document link was kept as text because its target heading is unavailable.',
+              location: anchor,
+            });
+          }
+        }
+        continue;
+      }
       const relationship = context.relationships.get(
         attribute(child, 'id') ?? '',
       );
@@ -528,7 +550,12 @@ function parseInlines(parent: XmlNode, context: ParseContext): InlineNode[] {
       }
     } else if (name === 'oMath' || name === 'oMathPara')
       result.push(addEquation(child, context));
-    else if (name === 'ins' || name === 'smartTag' || name === 'sdt')
+    else if (
+      name === 'ins' ||
+      name === 'smartTag' ||
+      name === 'sdt' ||
+      name === 'sdtContent'
+    )
       result.push(...parseInlines(child, context));
     else if (name === 'del')
       context.warnings.push({
@@ -600,11 +627,13 @@ function parseBlocks(parent: XmlNode, context: ParseContext): BlockNode[] {
       if (mappedAsHeading && paragraph.type === 'paragraph') {
         const headingLevel =
           mapping === 'title' ? 1 : Math.min(Number(mapping?.slice(7)) + 1, 6);
+        const headingId = context.headingIds.get(child);
         blocks.push({
           ...paragraph,
           type: 'heading',
           level: headingLevel as 1 | 2 | 3 | 4 | 5 | 6,
           ...(numbering ? { numbering } : {}),
+          ...(headingId ? { id: headingId } : {}),
         });
       } else if (numId) {
         appendListParagraph(
@@ -615,9 +644,71 @@ function parseBlocks(parent: XmlNode, context: ParseContext): BlockNode[] {
         );
       } else blocks.push(paragraph);
     } else if (name === 'tbl') blocks.push(parseTable(child, context));
-    else if (name === 'sdt') blocks.push(...parseBlocks(child, context));
+    else if (name === 'sdt' || name === 'sdtContent')
+      blocks.push(...parseBlocks(child, context));
   }
   return blocks;
+}
+
+function indexHeadingBookmarks(
+  document: XmlNode,
+  mappings: Readonly<Record<string, StyleMapping>>,
+): {
+  targets: ReadonlyMap<string, string>;
+  headingIds: ReadonlyMap<XmlNode, string>;
+} {
+  const referenced = new Set(
+    descendants(document, 'hyperlink')
+      .map((node) => attribute(node, 'anchor'))
+      .filter((anchor): anchor is string => Boolean(anchor)),
+  );
+  const targets = new Map<string, string>();
+  const headingIds = new Map<XmlNode, string>();
+  const usedIds = new Set<string>();
+  const displacedBookmarks = new Map<XmlNode, string[]>();
+  const body = descendants(document, 'body')[0];
+  let pendingBookmarks: string[] = [];
+  for (const child of body ? elements(body) : []) {
+    if (localName(child) === 'bookmarkStart') {
+      const name = attribute(child, 'name');
+      if (name) pendingBookmarks.push(name);
+      continue;
+    }
+    const paragraph =
+      localName(child) === 'p' ? child : descendants(child, 'p')[0];
+    if (paragraph && pendingBookmarks.length > 0) {
+      displacedBookmarks.set(paragraph, pendingBookmarks);
+      pendingBookmarks = [];
+    }
+  }
+  for (const paragraph of descendants(document, 'p')) {
+    const properties = first(paragraph, 'pPr');
+    const styleId =
+      properties && attribute(first(properties, 'pStyle') ?? properties, 'val');
+    const mapping = styleId ? mappings[styleId] : undefined;
+    if (mapping !== 'title' && !mapping?.startsWith('heading')) continue;
+    const bookmarks = [
+      ...(displacedBookmarks.get(paragraph) ?? []),
+      ...descendants(paragraph, 'bookmarkStart')
+        .map((node) => attribute(node, 'name'))
+        .filter((name): name is string => Boolean(name)),
+    ];
+    const preferred = bookmarks.find((name) => referenced.has(name));
+    if (!preferred) continue;
+    const base =
+      preferred
+        .normalize('NFKD')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '') || 'bookmark';
+    let id = base;
+    let suffix = 1;
+    while (usedIds.has(id)) id = `${base}-${++suffix}`;
+    usedIds.add(id);
+    headingIds.set(paragraph, id);
+    for (const bookmark of bookmarks) targets.set(bookmark, id);
+  }
+  return { targets, headingIds };
 }
 
 function appendListParagraph(
@@ -1034,6 +1125,9 @@ export const secureDocxReader: DocxReader = {
       numbering: parseNumbering(pkg),
       numberingCounters: new Map(),
       styleMappings: {},
+      bookmarkTargets: new Map(),
+      headingIds: new Map(),
+      missingInternalLinks: new Set(),
       equations: {},
       assets: {},
       warnings,
@@ -1074,7 +1168,10 @@ export const secureDocxReader: DocxReader = {
     const mappings = Object.fromEntries(
       styles.map(({ id, proposedMapping }) => [id, proposedMapping]),
     );
+    const bookmarks = indexHeadingBookmarks(document, mappings);
     context.styleMappings = mappings;
+    context.bookmarkTargets = bookmarks.targets;
+    context.headingIds = bookmarks.headingIds;
     const rawBlocks = parseBlocks(body, context);
     const model: DocumentModel = {
       schema: DOCUMENT_MODEL_SCHEMA,

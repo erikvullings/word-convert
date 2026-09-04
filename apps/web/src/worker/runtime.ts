@@ -152,6 +152,8 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                   ? await writeMarkdownZip(request.model, {
                       conversionDate: request.conversionDate,
                       formulaMode: request.formulaMode ?? 'mathml',
+                      includeInternalLinks:
+                        request.includeInternalLinks ?? true,
                       onWarning: (warning) => warnings.push(warning),
                     })
                   : new TextEncoder().encode(
@@ -169,6 +171,8 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                         : writeMarkdown(request.model, {
                             conversionDate: request.conversionDate,
                             formulaMode: request.formulaMode ?? 'mathml',
+                            includeInternalLinks:
+                              request.includeInternalLinks ?? true,
                             onWarning: (warning) => warnings.push(warning),
                           }),
                     );
