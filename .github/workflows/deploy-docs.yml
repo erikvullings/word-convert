@@ -58,7 +58,29 @@ jobs:
       - name: Test and validate representative EPUBs
         run: pnpm test
 
+      - name: Download pinned TexTeller assets
+        env:
+          TEXTELLER_REVISION: 9727784d91d7f8437dc7140941c4335284ce075e
+          TEXTELLER_MODEL_DIR: ${{ runner.temp }}/texteller-q4
+        run: |
+          mkdir -p "$TEXTELLER_MODEL_DIR"
+          curl --fail --location --silent --show-error \
+            --output "$TEXTELLER_MODEL_DIR/encoder.onnx" \
+            "https://huggingface.co/onnx-community/TexTeller-ONNX/resolve/$TEXTELLER_REVISION/onnx/encoder_model_q4.onnx"
+          curl --fail --location --silent --show-error \
+            --output "$TEXTELLER_MODEL_DIR/decoder.onnx" \
+            "https://huggingface.co/onnx-community/TexTeller-ONNX/resolve/$TEXTELLER_REVISION/onnx/decoder_model_q4.onnx"
+          curl --fail --location --silent --show-error \
+            --output "$TEXTELLER_MODEL_DIR/tokenizer.json" \
+            "https://huggingface.co/onnx-community/TexTeller-ONNX/resolve/$TEXTELLER_REVISION/tokenizer.json"
+          cd "$TEXTELLER_MODEL_DIR"
+          echo "de5fe45294a00f45af907b783f3f4764dbdc95386676f4e20175d912cfe8e59a  encoder.onnx" | sha256sum --check --strict
+          echo "d937474a36f212cd704acc811b9eef32405f3aa20c5da812d7bf227abbc6004b  decoder.onnx" | sha256sum --check --strict
+          echo "ec4ca954798a092faf6fefcfa47fb5f85d76cdf6ab170b624ae1a683d53dae14  tokenizer.json" | sha256sum --check --strict
+
       - name: Build static application
+        env:
+          WORDCONVERT_TEXTELLER_MODEL_DIR: ${{ runner.temp }}/texteller-q4
         run: pnpm build
 
       - name: Verify static offline output

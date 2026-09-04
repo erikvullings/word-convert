@@ -10,6 +10,9 @@ const requiredFiles = [
   'manifest.webmanifest',
   'favicon.svg',
   'sw.js',
+  'texteller/encoder.onnx',
+  'texteller/decoder.onnx',
+  'texteller/tokenizer.json',
 ];
 
 for (const requiredFile of requiredFiles) {
