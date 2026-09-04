@@ -1,8 +1,9 @@
 # WordConvert
 
-WordConvert is a privacy-preserving, browser-only DOCX and PDF conversion
-workspace. Document input remains local and is converted through a typed
-neutral document model.
+WordConvert is a privacy-preserving, browser-only document conversion
+workspace. It accepts local DOCX and PDF files plus remote HTML, Markdown,
+plain-text, and PDF documents, including arXiv links. Document processing stays
+on the device and uses a typed neutral document model.
 
 The static site is also an installable progressive web app. After one successful
 load, its application shell, including PDF.js, is cached for offline use;
@@ -11,7 +12,8 @@ downloads continue to run entirely on the device.
 
 It accepts unencrypted `.docx` and text-native `.pdf` files and produces
 standalone HTML, an HTML ZIP, single-file Markdown, a Markdown ZIP, or a
-reflowable EPUB 3 publication. Legacy `.doc`, encrypted documents, and
+reflowable EPUB 3 publication. HTTPS URLs may point to HTML, XHTML, Markdown,
+plain text, or PDF content. Legacy `.doc`, encrypted documents, and
 macro-enabled `.docm` files are rejected.
 
 ## Browser workflow
@@ -20,8 +22,9 @@ The Mithril SPA presents the conversion workflow from document selection
 through download in a responsive, keyboard-accessible light/dark shell. The
 file picker and drag-and-drop target accept `.docx` and `.pdf` input, and the
 interface states clearly that source content is processed only in memory on the
-current device. Local storage is limited to theme/output preferences and
-style-mapping presets.
+current device. A URL field downloads supported remote documents directly in
+the browser without a proxy, credentials, or a referrer. Local storage is
+limited to theme/output preferences and style-mapping presets.
 
 The security defaults cap DOCX input at 50 MiB compressed, 200 MiB expanded,
 1,000 ZIP entries, a 100:1 per-entry compression ratio, and 25 MiB per image.
@@ -39,9 +42,33 @@ The style review table exposes each proposal, confidence, evidence, examples, ef
 
 The metadata review stage covers title, subtitle, structured authors, language, publisher, description, subjects, version, source creation and modification dates, publication and conversion dates, identifier, and rights. Each value shows its provenance, confidence, and extracted, inferred, default, or user-edited status. Editor state remains in memory while moving between workflow stages.
 
+## Remote and arXiv import
+
+WordConvert can open HTTPS documents directly from a URL. arXiv abstract, PDF,
+and HTML links are normalized to arXiv's source-derived HTML representation when
+available, preserving semantic headings, authors, abstracts, links, figures,
+lists, and LaTeXML equations more faithfully than reconstructing them from PDF
+geometry. Imported article images are fetched only from the same origin and are
+subject to bounded count and byte limits; inaccessible images retain their
+alternative text.
+
+Remote HTML is parsed inertly and sanitized before preview or output. Safe
+source structure and bounded CSS are retained for HTML and EPUB conversion, and
+the XHTML can be edited beside a sandboxed live preview. Markdown and plain-text
+documents enter the same semantic output workflow. Remote hosts must permit
+browser access through CORS; WordConvert does not proxy around that policy or
+persist downloaded source content.
+
 ## Style and metadata analysis
 
 `@wordconvert/docx-reader` separates OOXML extraction from analysis and final model construction. `analyseStyles` reports every used paragraph and character style with inherited effective formatting, usage samples, a proposed semantic mapping, confidence, and reasons. Heading evidence follows the documented precedence; font size is never sufficient by itself.
+
+Word heading styles remain semantic headings even when Word numbering is
+attached to them, rather than being misclassified as list items. Multilevel
+decimal, alphabetic, and Roman numbering is reconstructed from OOXML numbering
+definitions and retained in HTML, Markdown, and EPUB output. Caption inference
+also requires consistent figure or table adjacency, avoiding false captions
+when an ordinary body style is reused near a single object.
 
 `@wordconvert/pdf-reader` similarly separates PDF.js extraction, layout
 analysis, user cleanup choices, and final model construction. It preserves
@@ -100,7 +127,8 @@ Tagged PDFs provide the strongest structure; untagged one- and two-column books
 and articles use deterministic geometry and typography heuristics. Complicated
 tables, sidebars, overlapping text, and irregular multi-column layouts may need
 manual review. Image-only pages are preserved as images and produce an explicit
-warning because OCR is not yet included.
+warning because full-page text OCR is not yet included. Formula OCR is supported
+separately for bounded equation regions.
 
 Heading proposals combine OOXML outline levels, stable Word style IDs, document
 structure, localized aliases, inheritance, typography, and usage patterns; font
@@ -131,16 +159,22 @@ analysis remains model-free. Regenerate the pinned model with
 `uv run --python 3.12 scripts/export-heron-onnx.py` and validate the browser
 runtime with `pnpm test:heron`.
 
-Complex PDF formulas use a separately lazy-loaded TexTeller q4 ONNX model only
-after deterministic text reconstruction is insufficient. Its approximately
-257 MB of same-origin assets are downloaded and cached on first use, and complex
-documents take longer to convert. Formula recognition can be disabled and its
-cache can be cleared from the home screen. Formula crops and inference remain
-inside the conversion worker. Check local real ONNX graphs with
+PDF formulas are first detected and reconstructed from local PDF geometry and
+text. Complex candidates that cannot be reconstructed reliably use a separately
+lazy-loaded TexTeller q4 ONNX model. Its approximately 245 MiB of same-origin
+assets are downloaded and cached on first use, with WebGPU preferred and a
+single-threaded WASM fallback; complex documents therefore take longer to
+convert. Formula recognition can be disabled and its cache can be cleared from
+the home screen. Formula crops and inference remain inside the conversion
+worker. Check local real ONNX graphs with
 `WORDCONVERT_TEXTELLER_MODEL_DIR=/path/to/texteller-q4 pnpm test:formula-ocr`.
 Manual page-bounded formula regions use the same local
 recognition, review, cancellation, and resource-limit path; source pixels and
-recognized TeX are never sent to a service. See the
+recognized TeX are never sent to a service. The Formula Review stage shows
+validated KaTeX, confidence and diagnostics, and lets users keep reconstructed
+or recognized TeX, treat a candidate as text, retain its source image, adjust
+its crop, or draw a new region. Recognition failures preserve source content
+rather than silently replacing it. See the
 [formula benchmark](documentation/formula-benchmarks/README.md) for the measured
 accuracy, timing, transfer, memory, and alternative-model decision.
 
