@@ -110,8 +110,12 @@ export async function mailEpub(
     supportsFileSharing = false;
   }
   if (environment.share && supportsFileSharing) {
-    await environment.share(shareData);
-    return;
+    try {
+      await environment.share(shareData);
+      return;
+    } catch (cause) {
+      if (isAbortError(cause)) throw cause;
+    }
   }
   environment.openMailto(`mailto:?subject=${encodeURIComponent(title)}`);
 }

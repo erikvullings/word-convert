@@ -172,28 +172,28 @@ describe('download lifecycle', () => {
     );
   });
 
-  it('reports a native file sharing failure without attempting a blocked fallback', async () => {
+  it('falls back to a mailto draft when native file sharing fails', async () => {
     const openMailto = vi.fn();
 
-    await expect(
-      mailEpub(
-        {
-          filename: 'attention.epub',
-          mediaType: 'application/epub+zip',
-          data: new ArrayBuffer(1),
+    await mailEpub(
+      {
+        filename: 'attention.epub',
+        mediaType: 'application/epub+zip',
+        data: new ArrayBuffer(1),
+      },
+      'Attention & Transformers',
+      {
+        canShare: () => true,
+        share: async () => {
+          throw new DOMException('Sharing unavailable', 'NotAllowedError');
         },
-        'Attention & Transformers',
-        {
-          canShare: () => true,
-          share: async () => {
-            throw new DOMException('Sharing unavailable', 'NotAllowedError');
-          },
-          openMailto,
-        },
-      ),
-    ).rejects.toMatchObject({ name: 'NotAllowedError' });
+        openMailto,
+      },
+    );
 
-    expect(openMailto).not.toHaveBeenCalled();
+    expect(openMailto).toHaveBeenCalledWith(
+      'mailto:?subject=Attention%20%26%20Transformers',
+    );
   });
 
   it('does not open a mail draft when native sharing is cancelled', async () => {
