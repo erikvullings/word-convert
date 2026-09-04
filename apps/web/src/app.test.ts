@@ -329,6 +329,36 @@ describe('App', () => {
     expect(visible).not.toContain('Showing 1 to 1 of 6 pages');
   });
 
+  it('keeps the original PDF preview visible while changing output format', () => {
+    const state = createInitialState('2026-08-30');
+    state.stage = 2;
+    state.status = 'converting';
+    state.sourceFormat = 'pdf';
+    state.model = editorModel();
+    state.pdfAnalysis = {
+      pageCount: 6,
+      analysedPages: [1, 2, 3, 4, 5, 6],
+      crop: { top: 0, bottom: 0 },
+      scannedPages: [],
+      candidates: [],
+    };
+    state.pdfOriginalVisible = true;
+    state.pdfPreviewRequested = true;
+    state.pdfPreview = {
+      pageNumber: 1,
+      width: 800,
+      height: 1_100,
+      url: 'blob:pdf-preview',
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('Creating preview');
+    expect(rendered).toContain('Original PDF');
+    expect(rendered).toContain('blob:pdf-preview');
+    expect(rendered).toContain('preview-comparison--visible');
+  });
+
   it('shows active PDF analysis progress in the loading status', () => {
     const state = createInitialState('2026-08-30');
     state.stage = 1;

@@ -1229,8 +1229,8 @@ function preview(controller: AppController): m.Vnode {
     ]);
   }
 
-  if (!state.output)
-    return m('div', [
+  if (!state.output) {
+    const loading = m('div', [
       m(
         'p',
         state.status === 'converting'
@@ -1242,6 +1242,12 @@ function preview(controller: AppController): m.Vnode {
         onclick: () => controller.showOutputFormats?.(),
       }),
     ]);
+    if (state.sourceFormat !== 'pdf') return loading;
+    return m('.preview-panel', [
+      m('.preview-display-controls', originalPreviewToggle(controller)),
+      outputPreviewWorkspace(controller, loading),
+    ]);
+  }
   const source = outputPreviewSource(
     state.output,
     state.preferences.outputFormat,
