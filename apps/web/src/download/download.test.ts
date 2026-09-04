@@ -93,6 +93,34 @@ describe('download lifecycle', () => {
     expect(release).not.toHaveBeenCalled();
   });
 
+  it('falls back to a browser download when the native save picker fails', async () => {
+    const click = vi.fn();
+    const revoke = vi.fn();
+    const release = vi.fn();
+
+    const saved = await saveDownload(
+      {
+        filename: 'report.epub',
+        mediaType: 'application/epub+zip',
+        data: new ArrayBuffer(4),
+      },
+      {
+        showSaveFilePicker: async () => {
+          throw new DOMException('Picker unavailable', 'NotAllowedError');
+        },
+        createObjectURL: () => 'blob:local-only',
+        revokeObjectURL: revoke,
+        createAnchor: () => ({ href: '', download: '', click }),
+      },
+      release,
+    );
+
+    expect(saved).toBe(true);
+    expect(click).toHaveBeenCalledOnce();
+    expect(revoke).toHaveBeenCalledWith('blob:local-only');
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it('shares an EPUB file with the document title for mail clients', async () => {
     const share = vi.fn<(data: ShareData) => Promise<void>>(
       async () => undefined,
@@ -142,5 +170,52 @@ describe('download lifecycle', () => {
     expect(openMailto).toHaveBeenCalledWith(
       'mailto:?subject=Attention%20%26%20Transformers',
     );
+  });
+
+  it('falls back to a mailto draft when native file sharing fails', async () => {
+    const openMailto = vi.fn();
+
+    await mailEpub(
+      {
+        filename: 'attention.epub',
+        mediaType: 'application/epub+zip',
+        data: new ArrayBuffer(1),
+      },
+      'Attention & Transformers',
+      {
+        canShare: () => true,
+        share: async () => {
+          throw new DOMException('Sharing unavailable', 'NotAllowedError');
+        },
+        openMailto,
+      },
+    );
+
+    expect(openMailto).toHaveBeenCalledWith(
+      'mailto:?subject=Attention%20%26%20Transformers',
+    );
+  });
+
+  it('does not open a mail draft when native sharing is cancelled', async () => {
+    const openMailto = vi.fn();
+
+    await expect(
+      mailEpub(
+        {
+          filename: 'attention.epub',
+          mediaType: 'application/epub+zip',
+          data: new ArrayBuffer(1),
+        },
+        'Attention',
+        {
+          canShare: () => true,
+          share: async () => {
+            throw new DOMException('Cancelled', 'AbortError');
+          },
+          openMailto,
+        },
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(openMailto).not.toHaveBeenCalled();
   });
 });

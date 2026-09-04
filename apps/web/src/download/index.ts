@@ -34,6 +34,15 @@ interface SaveFileHandle {
   }>;
 }
 
+function isAbortError(cause: unknown): boolean {
+  return (
+    typeof cause === 'object' &&
+    cause !== null &&
+    'name' in cause &&
+    cause.name === 'AbortError'
+  );
+}
+
 export function deliverDownload(
   output: DownloadOutput,
   environment: DownloadEnvironment,
@@ -79,9 +88,9 @@ export async function saveDownload(
     release();
     return true;
   } catch (cause) {
-    if (cause instanceof DOMException && cause.name === 'AbortError')
-      return false;
-    throw cause;
+    if (isAbortError(cause)) return false;
+    deliverDownload(output, environment, release);
+    return true;
   }
 }
 
@@ -101,8 +110,12 @@ export async function mailEpub(
     supportsFileSharing = false;
   }
   if (environment.share && supportsFileSharing) {
-    await environment.share(shareData);
-    return;
+    try {
+      await environment.share(shareData);
+      return;
+    } catch (cause) {
+      if (isAbortError(cause)) throw cause;
+    }
   }
   environment.openMailto(`mailto:?subject=${encodeURIComponent(title)}`);
 }
