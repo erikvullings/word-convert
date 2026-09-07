@@ -11,6 +11,26 @@ import type { WorkerResponse } from './worker/protocol.ts';
 import type { PdfFormulaCandidate } from '@wordconvert/pdf-reader';
 import { markdownToBlocks } from './content-editor.ts';
 
+vi.mock('./pdf-preview.ts', () => ({
+  createPdfPagePreviewRenderer: () => ({
+    render: vi.fn(async () => ({
+      pageNumber: 1,
+      width: 1,
+      height: 1,
+      blob: new Blob(
+        [
+          Uint8Array.from([
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0,
+            0, 1, 0, 0, 0, 1,
+          ]),
+        ],
+        { type: 'image/png' },
+      ),
+    })),
+    dispose: vi.fn(async () => undefined),
+  }),
+}));
+
 class WorkerStub {
   readonly postMessage = vi.fn();
   readonly terminate = vi.fn();
@@ -121,6 +141,49 @@ describe('browser controller', () => {
     expect(root.dataset.theme).toBeUndefined();
   });
 
+  it('automatically selects the first PDF page as the initial cover', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([new Uint8Array([1])], 'scan.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    const operationId = controller.state.operationId;
+    if (!operationId) throw new Error('Analysis operation was not started.');
+
+    worker.emit({
+      type: 'analysed',
+      operationId,
+      model: model(),
+      pdfAnalysis: {
+        pageCount: 2,
+        analysedPages: [1, 2],
+        crop: { top: 0, bottom: 0 },
+        scannedPages: [],
+        candidates: [],
+      },
+    });
+
+    expect(controller.state.cover).toMatchObject({
+      source: 'pdf-page',
+      warning: 'Rendering the original first page…',
+    });
+    await vi.waitFor(() =>
+      expect(controller.state.cover.warning).not.toBe(
+        'Rendering the original first page…',
+      ),
+    );
+    controller.dispose?.();
+  });
+
   it('autosaves the active book part before navigating to the next part', () => {
     const worker = new WorkerStub();
     stubWorkers(worker);
@@ -140,12 +203,24 @@ describe('browser controller', () => {
       },
     };
     document.blocks = markdownToBlocks(
-      ['# One', '', 'Original.', '', '# Two', '', 'Keep me.'].join('\n'),
+      [
+        '# One',
+        '',
+        'Original.',
+        '',
+        'More one.',
+        '',
+        '# Two',
+        '',
+        'Keep me.',
+        '',
+        'More two.',
+      ].join('\n'),
       document,
     );
     controller.state.model = document;
     controller.state.preferences.outputFormat = 'epub';
-    controller.setEpubContent?.('# One\n\nRevised.');
+    controller.setEpubContent?.('# One\n\nRevised.\n\nMore one.');
 
     controller.navigateEpubPart?.('next');
 
@@ -159,15 +234,17 @@ describe('browser controller', () => {
       blocks: [
         { type: 'heading', children: [{ text: 'One' }] },
         { type: 'paragraph', children: [{ text: 'Revised.' }] },
+        { type: 'paragraph', children: [{ text: 'More one.' }] },
         { type: 'heading', children: [{ text: 'Two' }] },
         { type: 'paragraph', children: [{ text: 'Keep me.' }] },
+        { type: 'paragraph', children: [{ text: 'More two.' }] },
       ],
       metadata: document.metadata,
       draft: undefined,
     });
   });
 
-  it('blocks part navigation when the draft contains an external image', () => {
+  it('merges a newly shortened part before navigating onward', () => {
     const worker = new WorkerStub();
     stubWorkers(worker);
     vi.stubGlobal('localStorage', {
@@ -177,7 +254,68 @@ describe('browser controller', () => {
     const controller = createBrowserController();
     const document = model();
     document.blocks = markdownToBlocks(
-      ['# One', '', 'Original.', '', '# Two', '', 'Keep me.'].join('\n'),
+      [
+        '# One',
+        '',
+        'One.',
+        '',
+        'More one.',
+        '',
+        '# Two',
+        '',
+        'Two.',
+        '',
+        'More two.',
+        '',
+        '# Three',
+        '',
+        'Three.',
+        '',
+        'More three.',
+      ].join('\n'),
+      document,
+    );
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.navigateEpubPart?.('next');
+    controller.setEpubContent?.('# Two\n\nShort.');
+
+    controller.navigateEpubPart?.('next');
+
+    expect(controller.state.epubParts).toEqual({
+      starts: [0, 5],
+      activeIndex: 1,
+    });
+    expect(controller.state.model.blocks.slice(3, 5)).toMatchObject([
+      { type: 'heading', children: [{ text: 'Two' }] },
+      { type: 'paragraph', children: [{ text: 'Short.' }] },
+    ]);
+  });
+
+  it('blocks part navigation when the draft contains an external image', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks(
+      [
+        '# One',
+        '',
+        'Original.',
+        '',
+        'More one.',
+        '',
+        '# Two',
+        '',
+        'Keep me.',
+        '',
+        'More two.',
+      ].join('\n'),
       document,
     );
     controller.state.model = document;
@@ -194,6 +332,72 @@ describe('browser controller', () => {
       'not stored in the book',
     );
     expect(controller.state.model.blocks).toEqual(document.blocks);
+  });
+
+  it('saves full-book Markdown before returning to part editing', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.previewMode = 'source';
+    controller.setEpubFullContent?.(
+      '# One\n\nRevised.\n\n# Two\n\nAdded from full text.',
+    );
+
+    controller.setEpubPreviewMode?.('edit');
+
+    expect(controller.state.epubFullContentEdit).toBeUndefined();
+    expect(controller.state.model.blocks).toMatchObject([
+      { type: 'heading', children: [{ text: 'One' }] },
+      { type: 'paragraph', children: [{ text: 'Revised.' }] },
+      { type: 'heading', children: [{ text: 'Two' }] },
+      {
+        type: 'paragraph',
+        children: [{ text: 'Added from full text.' }],
+      },
+    ]);
+  });
+
+  it('deletes the active part after confirmation', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    );
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks(
+      '# One\n\nFirst.\n\n# Two\n\nDelete me.',
+      document,
+    );
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.epubParts = { starts: [0, 2], activeIndex: 1 };
+    controller.setEpubContent?.('# Two\n\nEdited before deletion.');
+
+    controller.deleteEpubPart?.();
+
+    expect(controller.state.model.blocks).toMatchObject([
+      { type: 'heading', children: [{ text: 'One' }] },
+      { type: 'paragraph', children: [{ text: 'First.' }] },
+    ]);
+    expect(controller.state.epubParts).toEqual({
+      starts: [0],
+      activeIndex: 0,
+    });
+    expect(controller.state.epubEditorNotice).toBe('Deleted "Two".');
   });
 
   it('autosaves before previewing the current part without changing book settings', () => {
@@ -239,15 +443,39 @@ describe('browser controller', () => {
     const controller = createBrowserController();
     const document = model();
     document.blocks = markdownToBlocks(
-      ['# One', '', 'Opening.', '', '## Section', '', 'Original.'].join('\n'),
+      [
+        '# One',
+        '',
+        'Opening.',
+        '',
+        'Context.',
+        '',
+        '## Section',
+        '',
+        'Original.',
+        '',
+        'More details.',
+      ].join('\n'),
       document,
     );
     controller.state.model = document;
     controller.state.preferences.outputFormat = 'epub';
     controller.setEpubContent?.(
-      ['# One', '', 'Opening.', '', '## Section', '', 'Revised.'].join('\n'),
+      [
+        '# One',
+        '',
+        'Opening.',
+        '',
+        'Context.',
+        '',
+        '## Section',
+        '',
+        'Revised.',
+        '',
+        'More details.',
+      ].join('\n'),
     );
-    controller.setEpubSplitHeading?.(2);
+    controller.setEpubSplitHeading?.(3);
 
     controller.splitEpubPart?.();
 
@@ -256,12 +484,14 @@ describe('browser controller', () => {
       blocks: controller.state.model.blocks,
       notice: controller.state.epubEditorNotice,
     }).toMatchObject({
-      parts: { starts: [0, 2], activeIndex: 1 },
+      parts: { starts: [0, 3], activeIndex: 1 },
       blocks: [
         { type: 'heading', children: [{ text: 'One' }] },
         { type: 'paragraph', children: [{ text: 'Opening.' }] },
+        { type: 'paragraph', children: [{ text: 'Context.' }] },
         { type: 'heading', children: [{ text: 'Section' }] },
         { type: 'paragraph', children: [{ text: 'Revised.' }] },
+        { type: 'paragraph', children: [{ text: 'More details.' }] },
       ],
       notice: 'Split the part at the selected heading.',
     });
@@ -288,6 +518,10 @@ describe('browser controller', () => {
         children: [{ type: 'text', text: 'Opening.' }],
       },
       {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Context.' }],
+      },
+      {
         type: 'heading',
         level: 2,
         children: [{ type: 'text', text: 'Section' }],
@@ -296,16 +530,22 @@ describe('browser controller', () => {
         type: 'paragraph',
         children: [{ type: 'text', text: 'Details.' }],
       },
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'More details.' }],
+      },
     ];
     controller.state.model = document;
     controller.state.preferences.outputFormat = 'epub';
-    controller.setEpubContent?.('# One\n\nOpening.\n\n## Section\n\nDetails.');
-    controller.setEpubSplitHeading?.(2);
     controller.setEpubContent?.(
-      '# One\n\nOpening.\n\nInserted.\n\n## Section\n\nDetails.',
+      '# One\n\nOpening.\n\nContext.\n\n## Section\n\nDetails.\n\nMore details.',
+    );
+    controller.setEpubSplitHeading?.(4);
+    controller.setEpubContent?.(
+      '# One\n\nOpening.\n\nContext.\n\nInserted.\n\n## Section\n\nDetails.\n\nMore details.',
     );
     expect(controller.state.epubSplitBlockOffset).toBeUndefined();
-    controller.setEpubSplitHeading?.(3);
+    controller.setEpubSplitHeading?.(5);
 
     controller.splitEpubPart?.();
 
@@ -314,14 +554,16 @@ describe('browser controller', () => {
       blocks: controller.state.model.blocks,
       notice: controller.state.epubEditorNotice,
     }).toMatchObject({
-      parts: { starts: [0, 4], activeIndex: 1 },
+      parts: { starts: [0, 5], activeIndex: 1 },
       blocks: [
         { type: 'heading', children: [{ text: 'One' }] },
         { type: 'pageBreak' },
         { type: 'paragraph', children: [{ text: 'Opening.' }] },
+        { type: 'paragraph', children: [{ text: 'Context.' }] },
         { type: 'paragraph', children: [{ text: 'Inserted.' }] },
         { type: 'heading', children: [{ text: 'Section' }] },
         { type: 'paragraph', children: [{ text: 'Details.' }] },
+        { type: 'paragraph', children: [{ text: 'More details.' }] },
       ],
       notice: 'Split the part at the selected heading.',
     });
@@ -362,12 +604,24 @@ describe('browser controller', () => {
     const controller = createBrowserController();
     const document = model();
     document.blocks = markdownToBlocks(
-      ['# One', '', 'Original.', '', '# Two', '', 'Keep me.'].join('\n'),
+      [
+        '# One',
+        '',
+        'Original.',
+        '',
+        'More one.',
+        '',
+        '# Two',
+        '',
+        'Keep me.',
+        '',
+        'More two.',
+      ].join('\n'),
       document,
     );
     controller.state.model = document;
     controller.state.preferences.outputFormat = 'epub';
-    controller.setEpubContent?.('# One\n\nRevised.');
+    controller.setEpubContent?.('# One\n\nRevised.\n\nMore one.');
     const revision = controller.state.epubEditorRevision;
 
     controller.mergeEpubPart?.('next');
@@ -381,8 +635,10 @@ describe('browser controller', () => {
       blocks: [
         { type: 'heading', children: [{ text: 'One' }] },
         { type: 'paragraph', children: [{ text: 'Revised.' }] },
+        { type: 'paragraph', children: [{ text: 'More one.' }] },
         { type: 'heading', children: [{ text: 'Two' }] },
         { type: 'paragraph', children: [{ text: 'Keep me.' }] },
+        { type: 'paragraph', children: [{ text: 'More two.' }] },
       ],
       revision: revision + 1,
     });
@@ -480,13 +736,25 @@ describe('browser controller', () => {
     const controller = createBrowserController();
     const document = model();
     document.blocks = markdownToBlocks(
-      ['# One', '', 'First.', '', '# Two', '', 'Original.'].join('\n'),
+      [
+        '# One',
+        '',
+        'First.',
+        '',
+        'More one.',
+        '',
+        '# Two',
+        '',
+        'Original.',
+        '',
+        'More two.',
+      ].join('\n'),
       document,
     );
     controller.state.model = document;
     controller.state.preferences.outputFormat = 'epub';
     controller.navigateEpubPart?.('next');
-    controller.setEpubContent?.('# Two\n\nRevised.');
+    controller.setEpubContent?.('# Two\n\nRevised.\n\nMore two.');
 
     controller.convert();
 
@@ -496,8 +764,10 @@ describe('browser controller', () => {
     expect(request.model.blocks).toMatchObject([
       { type: 'heading', children: [{ text: 'One' }] },
       { type: 'paragraph', children: [{ text: 'First.' }] },
+      { type: 'paragraph', children: [{ text: 'More one.' }] },
       { type: 'heading', children: [{ text: 'Two' }] },
       { type: 'paragraph', children: [{ text: 'Revised.' }] },
+      { type: 'paragraph', children: [{ text: 'More two.' }] },
     ]);
   });
 

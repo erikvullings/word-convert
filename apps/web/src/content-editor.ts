@@ -64,6 +64,8 @@ export interface ContentPartSplitHeading {
   title: string;
 }
 
+const MINIMUM_PART_BLOCKS = 3;
+
 export function createContentPartState(
   model: Pick<DocumentModel, 'blocks'>,
 ): ContentPartState {
@@ -74,6 +76,35 @@ export function createContentPartState(
     ),
   ];
   return { starts, activeIndex: 0 };
+}
+
+export function createPracticalContentPartState(
+  model: Pick<DocumentModel, 'blocks'>,
+): ContentPartState {
+  return normalizeContentPartState(model, createContentPartState(model));
+}
+
+export function normalizeContentPartState(
+  model: Pick<DocumentModel, 'blocks'>,
+  state: ContentPartState,
+): ContentPartState {
+  const activeStart = state.starts[state.activeIndex] ?? 0;
+  const starts = [...state.starts];
+  while (starts.length > 1) {
+    const tinyIndex = starts.findIndex((start, index) => {
+      const end = starts[index + 1] ?? model.blocks.length;
+      return (
+        visibleBlockCount(model.blocks.slice(start, end)) < MINIMUM_PART_BLOCKS
+      );
+    });
+    if (tinyIndex < 0) break;
+    starts.splice(tinyIndex === 0 ? 1 : tinyIndex, 1);
+  }
+  const activeIndex = Math.max(
+    0,
+    starts.findLastIndex((start) => start <= activeStart),
+  );
+  return { starts, activeIndex };
 }
 
 export function contentPartSummaries(
@@ -206,6 +237,29 @@ export function mergeContentPart(
   };
 }
 
+export function deleteContentPart(
+  model: DocumentModel,
+  state: ContentPartState,
+): { model: DocumentModel; state: ContentPartState } | undefined {
+  if (state.starts.length <= 1) return undefined;
+  const start = state.starts[state.activeIndex] ?? 0;
+  const end = state.starts[state.activeIndex + 1] ?? model.blocks.length;
+  const removed = end - start;
+  const starts = state.starts
+    .filter((_, index) => index !== state.activeIndex)
+    .map((partStart) => (partStart >= end ? partStart - removed : partStart));
+  return {
+    model: {
+      ...model,
+      blocks: [...model.blocks.slice(0, start), ...model.blocks.slice(end)],
+    },
+    state: {
+      starts,
+      activeIndex: Math.min(state.activeIndex, starts.length - 1),
+    },
+  };
+}
+
 export function splitContentPart(
   model: DocumentModel,
   state: ContentPartState,
@@ -219,7 +273,10 @@ export function splitContentPart(
     blockOffset <= 0 ||
     splitAt >= end ||
     block?.type !== 'heading' ||
-    block.level !== 2
+    block.level !== 2 ||
+    visibleBlockCount(model.blocks.slice(start, splitAt)) <
+      MINIMUM_PART_BLOCKS ||
+    visibleBlockCount(model.blocks.slice(splitAt, end)) < MINIMUM_PART_BLOCKS
   )
     return undefined;
   return {
@@ -235,6 +292,10 @@ export function splitContentPart(
   };
 }
 
+function visibleBlockCount(blocks: readonly BlockNode[]): number {
+  return blocks.filter((block) => block.type !== 'pageBreak').length;
+}
+
 export function contentPartSplitHeadings(
   model: Pick<DocumentModel, 'blocks'>,
   state: ContentPartState,
@@ -244,7 +305,12 @@ export function contentPartSplitHeadings(
   return model.blocks
     .slice(start + 1, end)
     .flatMap((block, index) =>
-      block.type === 'heading' && block.level === 2
+      block.type === 'heading' &&
+      block.level === 2 &&
+      visibleBlockCount(model.blocks.slice(start, start + index + 1)) >=
+        MINIMUM_PART_BLOCKS &&
+      visibleBlockCount(model.blocks.slice(start + index + 1, end)) >=
+        MINIMUM_PART_BLOCKS
         ? [{ blockOffset: index + 1, title: inlineText(block.children) }]
         : [],
     );

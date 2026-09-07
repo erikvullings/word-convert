@@ -78,3 +78,8 @@ reset or duplicate that state.
   Restored a dedicated EPUB cover tab, system-aware editor theming, and
   on-demand first-page PDF cover rasterization. Focused and full tests,
   typechecking, linting, production build, and static offline verification pass.
+- 2026-09-07 GitHub Copilot: Addressed inspection feedback by automatically
+  selecting PDF page 1 as the initial cover, restoring a full-book WYSIWYG
+  editor, making the Markdown view editable, folding parts smaller than three
+  visible blocks into an adjacent part, rejecting undersized splits, and adding
+  confirmed part deletion.

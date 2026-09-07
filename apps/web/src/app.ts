@@ -64,7 +64,7 @@ import {
   contentPartModel,
   contentPartSplitHeadings,
   contentPartSummaries,
-  createContentPartState,
+  createPracticalContentPartState,
   withMarkdownContent,
 } from './content-editor.ts';
 
@@ -83,6 +83,7 @@ const previewModeOptionsWithEdit = [
 const epubPreviewModeOptions = [
   { id: 'cover' as const, label: 'Front cover' },
   ...previewModeOptionsWithEdit,
+  { id: 'full-edit' as const, label: 'Full text' },
   { id: 'package' as const, label: 'EPUB files' },
 ];
 
@@ -119,10 +120,12 @@ export interface AppController {
   setMarkdownIncludeInternalLinks?(include: boolean): void;
   setEpubIncludeCover?(include: boolean): void;
   setEpubContent?(content: string): void;
+  setEpubFullContent?(content: string): void;
   setEpubPreviewMode?(mode: PreviewMode): void;
   navigateEpubPart?(direction: 'previous' | 'next'): void;
   previewEpubContent?(scope: EpubPreviewScope): void;
   mergeEpubPart?(direction: 'previous' | 'next'): void;
+  deleteEpubPart?(): void;
   setEpubSplitHeading?(blockOffset: number | undefined): void;
   splitEpubPart?(): void;
   setEpubSourceContent?(content: string): void;
@@ -1205,24 +1208,25 @@ function preview(controller: AppController): m.Vnode {
                 ]),
               ])
             : epubPartEditor(controller, source)
-          : state.previewMode === 'source'
-            ? m(
-                'pre.markdown-source',
-                state.sourceHtml ? source : markdownSourcePreview(source),
-              )
-            : state.previewMode === 'package'
-              ? epubLayoutPreview(controller)
-              : state.sourceHtml
-                ? sourceHtmlPreview(state, source)
-                : m(
-                    'article.document-preview',
-                    m.trust(
-                      DOMPurify.sanitize(
-                        epubRenderedPreview(state, source),
-                        previewSanitizeConfig(),
+          : state.previewMode === 'full-edit'
+            ? epubFullEditor(controller, source, 'wysiwyg')
+            : state.previewMode === 'source'
+              ? state.sourceHtml
+                ? m('pre.markdown-source', source)
+                : epubFullEditor(controller, source, 'markdown')
+              : state.previewMode === 'package'
+                ? epubLayoutPreview(controller)
+                : state.sourceHtml
+                  ? sourceHtmlPreview(state, source)
+                  : m(
+                      'article.document-preview',
+                      m.trust(
+                        DOMPurify.sanitize(
+                          epubRenderedPreview(state, source),
+                          previewSanitizeConfig(),
+                        ),
                       ),
-                    ),
-                  );
+                    );
     return m('.preview-panel', [
       previewActions(controller),
       epubConfiguration(controller),
@@ -1232,11 +1236,13 @@ function preview(controller: AppController): m.Vnode {
           m(RadioButtons<PreviewMode>, {
             id: 'epub-preview-mode',
             options: state.sourceHtml
-              ? epubPreviewModeOptions.map((option) =>
-                  option.id === 'source'
-                    ? { ...option, label: 'HTML' }
-                    : option,
-                )
+              ? epubPreviewModeOptions
+                  .filter((option) => option.id !== 'full-edit')
+                  .map((option) =>
+                    option.id === 'source'
+                      ? { ...option, label: 'HTML' }
+                      : option,
+                  )
               : epubPreviewModeOptions,
             checkedId: state.previewMode,
             className: 'row',
@@ -1392,13 +1398,52 @@ function epubContentSource(state: AppState): string {
   if (state.sourceHtml) return state.epubSourceEdit ?? state.sourceHtml.xhtml;
   if (state.previewMode === 'edit' && state.epubContentEdit !== undefined)
     return state.epubContentEdit;
+  if (
+    (state.previewMode === 'full-edit' || state.previewMode === 'source') &&
+    state.epubFullContentEdit !== undefined
+  )
+    return state.epubFullContentEdit;
   if (!state.model) return '';
-  const partState = state.epubParts ?? createContentPartState(state.model);
+  const partState =
+    state.epubParts ?? createPracticalContentPartState(state.model);
   const contentModel =
-    state.previewMode === 'edit' || state.epubPreviewScope === 'part'
+    state.previewMode === 'edit' ||
+    (state.previewMode === 'rendered' && state.epubPreviewScope === 'part')
       ? contentPartModel(state.model, partState)
       : state.model;
   return contentEditorSource(contentModel);
+}
+
+function epubFullEditor(
+  controller: AppController,
+  source: string,
+  mode: 'wysiwyg' | 'markdown',
+): m.Vnode {
+  const theme = editorTheme(controller.state.preferences.theme);
+  return m('section.book-full-editor[aria-label="Full book editor"]', [
+    ...(controller.state.epubEditorNotice
+      ? [
+          m(
+            'p[role="status"]',
+            { key: 'editor-notice' },
+            controller.state.epubEditorNotice,
+          ),
+        ]
+      : []),
+    m(MarkdownEditor, {
+      key: `epub-full-${mode}-${controller.state.epubEditorRevision}-${theme}`,
+      content: source,
+      mode,
+      onContentChange: (newContent: string) =>
+        controller.setEpubFullContent?.(newContent),
+      htmlToMarkdown: epubEditorHtmlToMarkdown,
+      markdownToHtml: renderMarkdown,
+      placeholder: 'Edit the full book…',
+      theme,
+      toolbar: mode === 'wysiwyg',
+      showTabs: false,
+    }),
+  ]);
 }
 
 export function epubEditorHtmlToMarkdown(html: string): string {
@@ -1485,7 +1530,8 @@ function epubPartEditor(controller: AppController, source: string): m.Vnode {
   const { state } = controller;
   if (!state.model)
     return m('p[role="status"]', 'No document content is available.');
-  const partState = state.epubParts ?? createContentPartState(state.model);
+  const partState =
+    state.epubParts ?? createPracticalContentPartState(state.model);
   const parts = contentPartSummaries(state.model, partState);
   const activePart = parts[partState.activeIndex];
   const currentModel = contentPartModel(state.model, partState);
@@ -1538,6 +1584,11 @@ function epubPartEditor(controller: AppController, source: string): m.Vnode {
         label: 'Merge with next',
         disabled: partState.activeIndex >= parts.length - 1,
         onclick: () => controller.mergeEpubPart?.('next'),
+      }),
+      m(FlatButton, {
+        label: 'Delete part',
+        disabled: parts.length <= 1,
+        onclick: () => controller.deleteEpubPart?.(),
       }),
     ]),
     m('.book-part-split', [

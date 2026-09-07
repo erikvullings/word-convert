@@ -11,6 +11,8 @@ import {
   contentPartSummaries,
   contentPartSplitHeadings,
   createContentPartState,
+  createPracticalContentPartState,
+  deleteContentPart,
   markdownToBlocks,
   mergeContentPart,
   saveContentPart,
@@ -72,6 +74,35 @@ describe('EPUB content editor', () => {
     ]);
   });
 
+  it('merges automatically derived parts that contain fewer than three visible blocks', () => {
+    const document = model();
+    document.blocks = markdownToBlocks(
+      [
+        '# Substantial',
+        '',
+        'First.',
+        '',
+        'Second.',
+        '',
+        '# Tiny',
+        '',
+        'Only one line.',
+        '',
+        '# Next',
+        '',
+        'Third.',
+        '',
+        'Fourth.',
+      ].join('\n'),
+      document,
+    );
+
+    expect(createPracticalContentPartState(document)).toEqual({
+      starts: [0, 5],
+      activeIndex: 0,
+    });
+  });
+
   it('saves one part into the semantic model and shifts later boundaries', () => {
     const document = model();
     document.metadata.title = {
@@ -129,20 +160,82 @@ describe('EPUB content editor', () => {
     });
   });
 
+  it('deletes the active part and activates the nearest remaining part', () => {
+    const document = model();
+    document.blocks = markdownToBlocks(
+      [
+        '# One',
+        '',
+        'First.',
+        '',
+        '# Two',
+        '',
+        'Second.',
+        '',
+        '# Three',
+        '',
+        'Third.',
+      ].join('\n'),
+      document,
+    );
+    const state = {
+      ...createContentPartState(document),
+      activeIndex: 1,
+    };
+
+    const deleted = deleteContentPart(document, state);
+
+    expect(deleted).toMatchObject({
+      state: { starts: [0, 2], activeIndex: 1 },
+      model: {
+        blocks: [
+          { type: 'heading', children: [{ text: 'One' }] },
+          { type: 'paragraph', children: [{ text: 'First.' }] },
+          { type: 'heading', children: [{ text: 'Three' }] },
+          { type: 'paragraph', children: [{ text: 'Third.' }] },
+        ],
+      },
+    });
+  });
+
   it('splits before a selected level-two heading and activates the new part', () => {
     const document = model();
     document.blocks = markdownToBlocks(
-      ['# One', '', 'Opening.', '', '## Section', '', 'Details.'].join('\n'),
+      [
+        '# One',
+        '',
+        'Opening.',
+        '',
+        'Context.',
+        '',
+        '## Section',
+        '',
+        'Details.',
+        '',
+        'More details.',
+      ].join('\n'),
       document,
     );
     const state = createContentPartState(document);
 
-    const split = splitContentPart(document, state, 2);
+    const split = splitContentPart(document, state, 3);
 
     expect(split).toEqual({
       model: document,
-      state: { starts: [0, 2], activeIndex: 1 },
+      state: { starts: [0, 3], activeIndex: 1 },
     });
+  });
+
+  it('rejects a split that would create a two-block part', () => {
+    const document = model();
+    document.blocks = markdownToBlocks(
+      '# One\n\nOpening.\n\n## Tiny\n\nDetails.',
+      document,
+    );
+
+    expect(
+      splitContentPart(document, createContentPartState(document), 2),
+    ).toBeUndefined();
   });
 
   it('offers only non-leading level-two headings as split points', () => {
@@ -153,16 +246,22 @@ describe('EPUB content editor', () => {
         '',
         'Opening.',
         '',
+        'Context.',
+        '',
         '### Detail',
         '',
         '## New part',
+        '',
+        'Details.',
+        '',
+        'More details.',
       ].join('\n'),
       document,
     );
 
     expect(
       contentPartSplitHeadings(document, createContentPartState(document)),
-    ).toEqual([{ blockOffset: 3, title: 'New part' }]);
+    ).toEqual([{ blockOffset: 4, title: 'New part' }]);
   });
 
   it('creates a current-part model without changing book-level data', () => {
