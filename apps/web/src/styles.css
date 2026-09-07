@@ -900,6 +900,38 @@ h1 {
   max-width: 100%;
 }
 
+.book-part-editor {
+  display: grid;
+  gap: 1rem;
+}
+
+.book-part-heading,
+.book-part-navigation,
+.book-part-actions,
+.book-part-split {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.book-part-heading {
+  justify-content: space-between;
+}
+
+.book-part-heading h3,
+.book-part-heading p {
+  margin: 0;
+}
+
+.book-part-heading h3 {
+  font-size: 1.5rem;
+}
+
+.book-part-split > :first-child {
+  min-width: min(24rem, 100%);
+}
+
 .original-preview-toggle {
   display: flex;
   justify-content: flex-end;

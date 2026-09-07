@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { JSDOM } from 'jsdom';
+import { describe, expect, it, vi } from 'vitest';
 import {
   DOCUMENT_MODEL_SCHEMA,
   DOCUMENT_MODEL_VERSION,
@@ -8,6 +9,8 @@ import { strToU8, zipSync } from 'fflate';
 
 import {
   dateInputValue,
+  editorTheme,
+  epubEditorHtmlToMarkdown,
   epubRenderedPreview,
   extractHtmlBody,
   markdownSourcePreview,
@@ -18,6 +21,7 @@ import {
   type AppController,
 } from './app.ts';
 import { createInitialState } from './state.ts';
+import { createContentPartState, markdownToBlocks } from './content-editor.ts';
 
 describe('App', () => {
   it('formats ISO timestamps for HTML date inputs', () => {
@@ -34,6 +38,49 @@ describe('App', () => {
     ).toBe(
       'Before ![Diagram](data:image/png;base64,…) [site](https://example.com) after',
     );
+  });
+
+  it('preserves semantic inline content from the WYSIWYG editor', () => {
+    const dom = new JSDOM();
+    vi.stubGlobal('document', dom.window.document);
+    const markdown = epubEditorHtmlToMarkdown(`
+      <p>
+        <a id="section"></a>
+        <u><strong>underlined</strong></u><br>
+        <sub>below</sub>
+        <span data-wordconvert-equation-id="second" data-wordconvert-display="inline">
+          <span class="katex"><math><annotation encoding="application/x-tex">duplicate</annotation></math></span>
+        </span>
+        <span class="katex">
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <semantics><mrow><mi>x</mi></mrow><annotation encoding="application/x-tex">x</annotation></semantics>
+          </math>
+        </span>
+        <sup id="fnref:note-1"><a href="#fn:note-1">[note-1]</a></sup>
+      </p>
+      <pre><code class="language-ts">const x = 1;
+  return x;</code></pre>
+      <div class="footnotes"><ol><li id="fn:note-1">Note body</li></ol></div>
+    `);
+
+    expect(markdown).toContain('<a id="section"></a>');
+    expect(markdown).toContain('<u>**underlined**</u>');
+    expect(markdown).toContain('  \n');
+    expect(markdown).toContain('<sub>below</sub>');
+    expect(markdown).toContain('[wordconvert-equation:second]');
+    expect(markdown).toContain('$x$');
+    expect(markdown).toContain('[^note-1]');
+    expect(markdown).toContain(
+      ['```ts', 'const x = 1;', '  return x;', '```'].join('\n'),
+    );
+    expect(markdown).not.toContain('Note body');
+    vi.unstubAllGlobals();
+  });
+
+  it('resolves the editor theme from the system preference', () => {
+    expect(editorTheme('system', () => true)).toBe('dark');
+    expect(editorTheme('system', () => false)).toBe('light');
+    expect(editorTheme('dark', () => false)).toBe('dark');
   });
 
   it('keeps the original PDF horizontally centred while scaling', () => {
@@ -775,7 +822,7 @@ describe('App', () => {
     const state = createInitialState('2026-07-16');
     state.stage = 2;
     state.preferences.outputFormat = 'epub';
-    state.previewMode = 'package';
+    state.previewMode = 'cover';
     state.cover.source = 'generated';
     state.model = editorModel();
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
@@ -796,6 +843,11 @@ describe('App', () => {
     ])
       expect(rendered).toContain(label);
     expect(rendered).toContain('semantic XHTML title page is always included');
+
+    state.previewMode = 'package';
+    const packaged = JSON.stringify(renderApp(controllerFor(state)));
+    expect(packaged).not.toContain('Live cover preview');
+    expect(packaged).not.toContain('Text alignment');
   });
 
   it('renders EPUB file list as a selector with a right-side content viewer', () => {
@@ -885,6 +937,16 @@ describe('App', () => {
     expect(rendered).toContain('EPUB files');
     expect(rendered).toContain('Editable EPUB content');
     expect(rendered).toContain('Show original');
+    expect(rendered).toContain('Part 1 of 1');
+    expect(rendered).toContain('Previous part');
+    expect(rendered).toContain('Next part');
+    expect(rendered).toContain('"label":"Previous part","disabled":true');
+    expect(rendered).toContain('"label":"Next part","disabled":true');
+    expect(rendered).toContain('Preview this part');
+    expect(rendered).toContain('Preview entire book');
+    expect(rendered).toContain('Merge with previous');
+    expect(rendered).toContain('Merge with next');
+    expect(rendered).toContain('Split at heading');
   });
 
   it('preserves inline equation image presentation in the EPUB preview', () => {
@@ -923,6 +985,36 @@ describe('App', () => {
     const rendered = epubRenderedPreview(state, '');
 
     expect(rendered).toContain('equation-image image-width-45');
+  });
+
+  it('renders either the current part or the entire semantic book', () => {
+    const state = createInitialState('2026-07-15');
+    state.model = editorModel();
+    state.model.blocks = markdownToBlocks(
+      ['# One', '', 'First.', '', '# Two', '', 'Second.'].join('\n'),
+      state.model,
+    );
+    state.epubParts = {
+      ...createContentPartState(state.model),
+      activeIndex: 1,
+    };
+    state.epubPreviewScope = 'part';
+
+    const part = epubRenderedPreview(state, '');
+    state.epubPreviewScope = 'book';
+    const book = epubRenderedPreview(state, '');
+
+    expect({
+      partHasFirst: part.includes('First.'),
+      partHasSecond: part.includes('Second.'),
+      bookHasFirst: book.includes('First.'),
+      bookHasSecond: book.includes('Second.'),
+    }).toEqual({
+      partHasFirst: false,
+      partHasSecond: true,
+      bookHasFirst: true,
+      bookHasSecond: true,
+    });
   });
 
   it('shows source HTML editing beside an isolated styled preview', () => {

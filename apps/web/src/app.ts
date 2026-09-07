@@ -17,7 +17,10 @@ import {
   Select,
   TextInput,
 } from 'mithril-materialized';
-import { MarkdownEditor } from 'mithril-markdown-wysiwyg';
+import {
+  htmlToMarkdown as editorHtmlToMarkdown,
+  MarkdownEditor,
+} from 'mithril-markdown-wysiwyg';
 import DOMPurify from 'dompurify';
 import { strFromU8, unzipSync } from 'fflate';
 import 'katex/dist/katex.min.css';
@@ -28,6 +31,7 @@ import {
   WORKFLOW_STAGES,
   type AppState,
   type DownloadOutput,
+  type EpubPreviewScope,
   type FormulaReviewFilter,
   type PreviewMode,
   type ThemePreference,
@@ -40,7 +44,6 @@ import {
 } from './cover.ts';
 import { createCoverSvg } from '@wordconvert/cover-generator';
 import type { MathOutputMode } from '@wordconvert/math-converter';
-import { writeMarkdown } from '@wordconvert/markdown-writer';
 import {
   SOURCE_HTML_EQUATION_LAYOUT_STYLES,
   SOURCE_HTML_PARAGRAPH_TITLE_STYLES,
@@ -56,6 +59,14 @@ import { formulaReviewEditor } from './formula-review.ts';
 import { renderMarkdownPreview as renderMarkdown } from './markdown-preview.ts';
 import { HtmlSourceEditor } from './html-source-editor.ts';
 import { sanitizeEditedSourceHtml } from './text-document-import.ts';
+import {
+  contentEditorSource,
+  contentPartModel,
+  contentPartSplitHeadings,
+  contentPartSummaries,
+  createContentPartState,
+  withMarkdownContent,
+} from './content-editor.ts';
 
 const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
   id: mapping,
@@ -70,9 +81,19 @@ const previewModeOptionsWithEdit = [
   { id: 'edit' as const, label: 'Edit' },
 ];
 const epubPreviewModeOptions = [
+  { id: 'cover' as const, label: 'Front cover' },
   ...previewModeOptionsWithEdit,
   { id: 'package' as const, label: 'EPUB files' },
 ];
+
+export function editorTheme(
+  theme: ThemePreference,
+  prefersDark = (): boolean =>
+    typeof matchMedia !== 'undefined' &&
+    matchMedia('(prefers-color-scheme: dark)').matches,
+): 'light' | 'dark' {
+  return theme === 'system' ? (prefersDark() ? 'dark' : 'light') : theme;
+}
 
 export interface AppController {
   state: AppState;
@@ -98,6 +119,12 @@ export interface AppController {
   setMarkdownIncludeInternalLinks?(include: boolean): void;
   setEpubIncludeCover?(include: boolean): void;
   setEpubContent?(content: string): void;
+  setEpubPreviewMode?(mode: PreviewMode): void;
+  navigateEpubPart?(direction: 'previous' | 'next'): void;
+  previewEpubContent?(scope: EpubPreviewScope): void;
+  mergeEpubPart?(direction: 'previous' | 'next'): void;
+  setEpubSplitHeading?(blockOffset: number | undefined): void;
+  splitEpubPart?(): void;
   setEpubSourceContent?(content: string): void;
   setStyleMapping(styleId: string, mapping: StyleMapping): void;
   acceptHighConfidence(): void;
@@ -829,18 +856,6 @@ function epubConfiguration(controller: AppController): m.Vnode {
       'p',
       'The title, language, identifier, and authors come from the analysed document metadata.',
     ),
-    m('.row.epub-config-grid', [coverEditor(controller)]),
-    m('label', [
-      m('input', {
-        type: 'checkbox',
-        checked: controller.state.preferences.epubIncludeCover,
-        onchange: (event: Event) =>
-          controller.setEpubIncludeCover?.(
-            (event.currentTarget as HTMLInputElement).checked,
-          ),
-      }),
-      'Include the configured EPUB cover',
-    ]),
     issues.length
       ? m('p.error[role="alert"]', [
           `Update required EPUB metadata: ${issues.join('; ')}. `,
@@ -859,6 +874,23 @@ function epubConfiguration(controller: AppController): m.Vnode {
             ? 'Refreshing EPUB preview…'
             : 'EPUB preview updates automatically when metadata changes.',
         ),
+  ]);
+}
+
+function epubCoverPanel(controller: AppController): m.Vnode {
+  return m('section.epub-cover-panel', [
+    coverEditor(controller),
+    m('label', [
+      m('input', {
+        type: 'checkbox',
+        checked: controller.state.preferences.epubIncludeCover,
+        onchange: (event: Event) =>
+          controller.setEpubIncludeCover?.(
+            (event.currentTarget as HTMLInputElement).checked,
+          ),
+      }),
+      'Include the configured EPUB cover',
+    ]),
   ]);
 }
 
@@ -894,6 +926,9 @@ function coverEditor(controller: AppController): m.Vnode {
             label: 'Extracted document image',
             disabled: images.length <= 0,
           },
+          ...(controller.state.sourceFormat === 'pdf'
+            ? [{ id: 'pdf-page' as const, label: 'Original PDF first page' }]
+            : []),
           { id: 'generated', label: 'Generated typographic cover' },
         ],
         onchange: (checkedIds: CoverSource[]) => {
@@ -1143,61 +1178,51 @@ function preview(controller: AppController): m.Vnode {
   if (state.preferences.outputFormat === 'epub') {
     const source = epubContentSource(state);
     const converted =
-      state.previewMode === 'edit'
-        ? state.sourceHtml
-          ? m('.source-edit-comparison', [
-              m('section.preview-pane', [
-                m('h3', 'HTML'),
-                m(
-                  '.html-source-editor-pane',
-                  m(HtmlSourceEditor, {
-                    content: source,
-                    theme:
-                      state.preferences.theme === 'dark' ? 'dark' : 'light',
-                    onContentChange: (newContent: string) => {
-                      state.epubSourceEdit = newContent;
-                      controller.setEpubSourceContent?.(newContent);
-                      m.redraw();
-                    },
-                  }),
-                ),
-              ]),
-              m('section.preview-pane', [
-                m('h3', 'Rendered'),
-                sourceHtmlPreview(state, source),
-              ]),
-            ])
-          : m(MarkdownEditor, {
-              content: source,
-              mode: 'wysiwyg',
-              onContentChange: (newContent: string) => {
-                state.epubContentEdit = newContent;
-                controller.setEpubContent?.(newContent);
-              },
-              markdownToHtml: renderMarkdown,
-              placeholder: 'Edit document content…',
-              theme: state.preferences.theme === 'dark' ? 'dark' : 'light',
-              toolbar: true,
-              showTabs: true,
-            })
-        : state.previewMode === 'source'
-          ? m(
-              'pre.markdown-source',
-              state.sourceHtml ? source : markdownSourcePreview(source),
-            )
-          : state.previewMode === 'package'
-            ? epubLayoutPreview(controller)
-            : state.sourceHtml
-              ? sourceHtmlPreview(state, source)
-              : m(
-                  'article.document-preview',
-                  m.trust(
-                    DOMPurify.sanitize(
-                      epubRenderedPreview(state, source),
-                      previewSanitizeConfig(),
-                    ),
+      state.previewMode === 'cover'
+        ? epubCoverPanel(controller)
+        : state.previewMode === 'edit'
+          ? state.sourceHtml
+            ? m('.source-edit-comparison', [
+                m('section.preview-pane', [
+                  m('h3', 'HTML'),
+                  m(
+                    '.html-source-editor-pane',
+                    m(HtmlSourceEditor, {
+                      content: source,
+                      theme:
+                        state.preferences.theme === 'dark' ? 'dark' : 'light',
+                      onContentChange: (newContent: string) => {
+                        state.epubSourceEdit = newContent;
+                        controller.setEpubSourceContent?.(newContent);
+                        m.redraw();
+                      },
+                    }),
                   ),
-                );
+                ]),
+                m('section.preview-pane', [
+                  m('h3', 'Rendered'),
+                  sourceHtmlPreview(state, source),
+                ]),
+              ])
+            : epubPartEditor(controller, source)
+          : state.previewMode === 'source'
+            ? m(
+                'pre.markdown-source',
+                state.sourceHtml ? source : markdownSourcePreview(source),
+              )
+            : state.previewMode === 'package'
+              ? epubLayoutPreview(controller)
+              : state.sourceHtml
+                ? sourceHtmlPreview(state, source)
+                : m(
+                    'article.document-preview',
+                    m.trust(
+                      DOMPurify.sanitize(
+                        epubRenderedPreview(state, source),
+                        previewSanitizeConfig(),
+                      ),
+                    ),
+                  );
     return m('.preview-panel', [
       previewActions(controller),
       epubConfiguration(controller),
@@ -1215,9 +1240,9 @@ function preview(controller: AppController): m.Vnode {
               : epubPreviewModeOptions,
             checkedId: state.previewMode,
             className: 'row',
-            checkboxClass: 'col s3',
+            checkboxClass: 'col s12 m4 l2',
             onchange: (mode) => {
-              state.previewMode = mode;
+              controller.setEpubPreviewMode?.(mode);
             },
           }),
         ),
@@ -1288,6 +1313,7 @@ function preview(controller: AppController): m.Vnode {
         ? (() => {
             if (state.markdownEdit === undefined) state.markdownEdit = source;
             return m(MarkdownEditor, {
+              key: `markdown-editor-${editorTheme(state.preferences.theme)}`,
               content: state.markdownEdit,
               mode: 'wysiwyg',
               onContentChange: (newContent: string) => {
@@ -1295,7 +1321,7 @@ function preview(controller: AppController): m.Vnode {
               },
               markdownToHtml: renderMarkdown,
               placeholder: 'Edit markdown…',
-              theme: state.preferences.theme === 'dark' ? 'dark' : 'light',
+              theme: editorTheme(state.preferences.theme),
               toolbar: true,
               showTabs: true,
             });
@@ -1325,10 +1351,14 @@ export function epubRenderedPreview(state: AppState, source: string): string {
         )?.html ?? '');
   if (state.epubContentEdit !== undefined || !state.model)
     return renderMarkdown(source);
-  const metadata = { ...state.model.metadata };
+  const previewModel =
+    state.epubPreviewScope === 'part' && state.epubParts
+      ? contentPartModel(state.model, state.epubParts)
+      : state.model;
+  const metadata = { ...previewModel.metadata };
   delete metadata.title;
   return writeHtml(
-    { ...state.model, metadata },
+    { ...previewModel, metadata },
     {
       conversionDate: state.conversionDate,
       mode: 'fragment',
@@ -1360,17 +1390,203 @@ function sourcePreviewThemeCss(theme: ThemePreference): string {
 
 function epubContentSource(state: AppState): string {
   if (state.sourceHtml) return state.epubSourceEdit ?? state.sourceHtml.xhtml;
-  if (state.epubContentEdit !== undefined) return state.epubContentEdit;
+  if (state.previewMode === 'edit' && state.epubContentEdit !== undefined)
+    return state.epubContentEdit;
   if (!state.model) return '';
-  const metadata = { ...state.model.metadata };
-  delete metadata.title;
-  return writeMarkdown(
-    { ...state.model, metadata },
-    {
-      conversionDate: state.conversionDate,
-      formulaMode: 'source',
-    },
-  );
+  const partState = state.epubParts ?? createContentPartState(state.model);
+  const contentModel =
+    state.previewMode === 'edit' || state.epubPreviewScope === 'part'
+      ? contentPartModel(state.model, partState)
+      : state.model;
+  return contentEditorSource(contentModel);
+}
+
+export function epubEditorHtmlToMarkdown(html: string): string {
+  const container = document.createElement('div');
+  container.innerHTML = html;
+  const replacements: { token: string; markdown: string }[] = [];
+  const preserve = (element: Element, markdown: string): void => {
+    const token = `WORDCONVERTSEMANTIC${replacements.length}TOKEN`;
+    replacements.push({ token, markdown });
+    element.replaceWith(document.createTextNode(token));
+  };
+
+  for (const element of container.querySelectorAll<HTMLElement>(
+    '[data-wordconvert-equation-id]',
+  )) {
+    const id = element.dataset.wordconvertEquationId;
+    if (!id) continue;
+    const display = element.dataset.wordconvertDisplay === 'block';
+    preserve(
+      element,
+      display
+        ? `[wordconvert-equation-block:${encodeURIComponent(id)}]`
+        : `[wordconvert-equation:${encodeURIComponent(id)}]`,
+    );
+  }
+  for (const element of container.querySelectorAll('.katex')) {
+    const annotation = element.querySelector(
+      'annotation[encoding="application/x-tex"]',
+    )?.textContent;
+    if (annotation === undefined || annotation === null) continue;
+    const display = element.querySelector('math[display="block"]');
+    preserve(element, display ? `$$\n${annotation}\n$$` : `$${annotation}$`);
+  }
+  for (const element of container.querySelectorAll('sup[id^="fnref:"]')) {
+    const id = element.id.slice('fnref:'.length);
+    if (id) preserve(element, `[^${id}]`);
+  }
+  for (const element of container.querySelectorAll('.footnotes'))
+    element.remove();
+  for (const element of container.querySelectorAll('a[id]')) {
+    if (!element.textContent?.trim())
+      preserve(element, `<a id="${escapeHtmlAttribute(element.id)}"></a>`);
+  }
+  for (const element of container.querySelectorAll('pre')) {
+    const code = element.querySelector(':scope > code');
+    const language =
+      Array.from(code?.classList ?? [])
+        .find((value) => value.startsWith('language-'))
+        ?.slice('language-'.length) ?? '';
+    const value = code?.textContent ?? element.textContent ?? '';
+    const fence = value.includes('```') ? '````' : '```';
+    preserve(element, `${fence}${language}\n${value}\n${fence}`);
+  }
+  for (const element of container.querySelectorAll('br'))
+    preserve(element, '  \n');
+  for (const element of Array.from(
+    container.querySelectorAll('u, sub, sup'),
+  ).reverse()) {
+    const tag = element.tagName.toLowerCase();
+    preserve(
+      element,
+      `<${tag}>${editorHtmlToMarkdown(element.innerHTML)}</${tag}>`,
+    );
+  }
+
+  let markdown = editorHtmlToMarkdown(container.innerHTML);
+  for (const replacement of replacements.reverse())
+    markdown = markdown.replaceAll(replacement.token, replacement.markdown);
+  return markdown;
+}
+
+function escapeHtmlText(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return escapeHtmlText(value).replaceAll('"', '&quot;');
+}
+
+function epubPartEditor(controller: AppController, source: string): m.Vnode {
+  const { state } = controller;
+  if (!state.model)
+    return m('p[role="status"]', 'No document content is available.');
+  const partState = state.epubParts ?? createContentPartState(state.model);
+  const parts = contentPartSummaries(state.model, partState);
+  const activePart = parts[partState.activeIndex];
+  const currentModel = contentPartModel(state.model, partState);
+  const draftModel =
+    state.epubContentEdit === undefined
+      ? currentModel
+      : withMarkdownContent(currentModel, state.epubContentEdit);
+  const splitHeadings = contentPartSplitHeadings(draftModel, {
+    starts: [0],
+    activeIndex: 0,
+  });
+  const theme = editorTheme(state.preferences.theme);
+  return m('section.book-part-editor[aria-label="Book part editor"]', [
+    m('.book-part-heading', [
+      m('div', [
+        m('h3', activePart?.title ?? `Part ${partState.activeIndex + 1}`),
+        m(
+          'p[aria-live="polite"]',
+          `Part ${partState.activeIndex + 1} of ${parts.length}`,
+        ),
+      ]),
+      m('.book-part-navigation', [
+        m(FlatButton, {
+          label: 'Previous part',
+          disabled: partState.activeIndex === 0,
+          onclick: () => controller.navigateEpubPart?.('previous'),
+        }),
+        m(FlatButton, {
+          label: 'Next part',
+          disabled: partState.activeIndex >= parts.length - 1,
+          onclick: () => controller.navigateEpubPart?.('next'),
+        }),
+      ]),
+    ]),
+    m('.book-part-actions', [
+      m(Button, {
+        label: 'Preview this part',
+        onclick: () => controller.previewEpubContent?.('part'),
+      }),
+      m(Button, {
+        label: 'Preview entire book',
+        onclick: () => controller.previewEpubContent?.('book'),
+      }),
+      m(FlatButton, {
+        label: 'Merge with previous',
+        disabled: partState.activeIndex === 0,
+        onclick: () => controller.mergeEpubPart?.('previous'),
+      }),
+      m(FlatButton, {
+        label: 'Merge with next',
+        disabled: partState.activeIndex >= parts.length - 1,
+        onclick: () => controller.mergeEpubPart?.('next'),
+      }),
+    ]),
+    m('.book-part-split', [
+      m(Select<number>, {
+        label: 'Level-two heading',
+        checkedId: state.epubSplitBlockOffset ?? -1,
+        options: [
+          { id: -1, label: 'Choose a ## heading', disabled: true },
+          ...splitHeadings.map(({ blockOffset, title }) => ({
+            id: blockOffset,
+            label: title || 'Untitled heading',
+          })),
+        ],
+        onchange: (checkedIds: number[]) => {
+          const blockOffset = checkedIds[0];
+          controller.setEpubSplitHeading?.(
+            blockOffset === undefined || blockOffset < 0
+              ? undefined
+              : blockOffset,
+          );
+        },
+      }),
+      m(Button, {
+        label: 'Split at heading',
+        disabled: state.epubSplitBlockOffset === undefined,
+        onclick: () => controller.splitEpubPart?.(),
+      }),
+    ]),
+    state.epubEditorNotice
+      ? m('p[role="status"]', state.epubEditorNotice)
+      : null,
+    m('.book-part-editor-content', [
+      m(MarkdownEditor, {
+        key: `epub-part-${partState.activeIndex}-${state.epubEditorRevision}-${theme}`,
+        content: source,
+        mode: 'wysiwyg',
+        onContentChange: (newContent: string) => {
+          state.epubContentEdit = newContent;
+          controller.setEpubContent?.(newContent);
+        },
+        htmlToMarkdown: epubEditorHtmlToMarkdown,
+        markdownToHtml: renderMarkdown,
+        placeholder: 'Edit document content…',
+        theme,
+        toolbar: true,
+        showTabs: true,
+      }),
+    ]),
+  ]);
 }
 
 function outputPreviewWorkspace(

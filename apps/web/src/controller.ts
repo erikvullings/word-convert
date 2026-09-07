@@ -35,7 +35,16 @@ import {
   titleTextWarning,
 } from '@wordconvert/cover-generator';
 import { mailEpub, saveDownload } from './download/index.ts';
-import { withMarkdownContent } from './content-editor.ts';
+import {
+  contentPartModel,
+  contentPartSplitHeadings,
+  createContentPartState,
+  mergeContentPart,
+  saveContentPart,
+  splitContentPart,
+  unsupportedContentImageSources,
+  withMarkdownContent,
+} from './content-editor.ts';
 import {
   fetchRemoteDocument,
   fetchRemoteHtmlImages,
@@ -76,6 +85,14 @@ export function createBrowserController(): AppController {
   );
   if (typeof document !== 'undefined')
     applyDocumentTheme(state.preferences.theme, document.documentElement);
+  const colorSchemeQuery =
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-color-scheme: dark)')
+      : undefined;
+  const handleColorSchemeChange = (): void => {
+    if (state.preferences.theme === 'system') m.redraw();
+  };
+  colorSchemeQuery?.addEventListener('change', handleColorSchemeChange);
   if (typeof caches === 'undefined') state.formulaCacheStatus = 'empty';
   else
     void hasCachedTexTellerAssets().then((cached) => {
@@ -89,6 +106,7 @@ export function createBrowserController(): AppController {
   let sourceFilename: string | undefined;
   let autoPreviewOperationId: string | undefined;
   let pdfLayoutOperationId: string | undefined;
+  let pdfCoverOperationId: string | undefined;
   let epubRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let remoteDocumentAbort: AbortController | undefined;
   let previewRenderer:
@@ -104,6 +122,53 @@ export function createBrowserController(): AppController {
     | undefined;
   let formulaSelectionSourceImageId: string | undefined;
   let disposed = false;
+  const resetEpubPartState = (): void => {
+    delete state.epubContentEdit;
+    delete state.epubEditorNotice;
+    delete state.epubParts;
+    delete state.epubSplitBlockOffset;
+    delete state.epubSplitHeadingIdentity;
+    state.epubEditorRevision += 1;
+    state.epubPreviewScope = 'book';
+  };
+  const ensureEpubParts = (): void => {
+    if (!state.model) return;
+    state.epubParts ??= createContentPartState(state.model);
+    state.epubParts.activeIndex = Math.min(
+      state.epubParts.starts.length - 1,
+      Math.max(0, state.epubParts.activeIndex),
+    );
+  };
+  const saveActiveEpubPart = (clearDraft = true): boolean => {
+    if (!state.model || state.epubContentEdit === undefined) return true;
+    ensureEpubParts();
+    if (!state.epubParts) return true;
+    const unsupportedImages = unsupportedContentImageSources(
+      state.epubContentEdit,
+      state.model,
+    );
+    if (unsupportedImages.length > 0) {
+      state.epubEditorNotice =
+        'This part contains an image that is not stored in the book. Remove it before leaving the editor.';
+      state.status = 'ready';
+      delete state.operationId;
+      return false;
+    }
+    const saved = saveContentPart(
+      state.model,
+      state.epubParts,
+      state.epubContentEdit,
+    );
+    state.model = saved.model;
+    state.epubParts = saved.state;
+    if (clearDraft) {
+      delete state.epubContentEdit;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
+    }
+    state.outputSaved = false;
+    return true;
+  };
   const releasePdfPreview = (): void => {
     if (state.pdfPreview) URL.revokeObjectURL(state.pdfPreview.url);
     delete state.pdfPreview;
@@ -176,11 +241,79 @@ export function createBrowserController(): AppController {
     pendingPdfPreviewPage = pageNumber;
     void renderPendingPdfPage();
   };
+  const requestPdfFrontCover = (): void => {
+    if (!sourceInput || state.sourceFormat !== 'pdf') {
+      state.cover = {
+        ...state.cover,
+        warning: 'The original PDF page is not available.',
+      };
+      return;
+    }
+    const coverOperationId = operationId('pdf-cover');
+    pdfCoverOperationId = coverOperationId;
+    const input = sourceInput.slice(0);
+    const loading: CoverSettings = {
+      ...state.cover,
+      source: 'pdf-page',
+      warning: 'Rendering the original first page…',
+    };
+    delete loading.image;
+    delete loading.imageName;
+    state.cover = loading;
+    void import('./pdf-preview.ts')
+      .then(async ({ createPdfPagePreviewRenderer }) => {
+        const renderer = createPdfPagePreviewRenderer();
+        try {
+          const preview = await renderer.render(input, 1);
+          const image = prepareCoverImage({
+            mediaType: 'image/png',
+            data: new Uint8Array(await preview.blob.arrayBuffer()),
+            width: preview.width,
+            height: preview.height,
+          });
+          if (
+            pdfCoverOperationId !== coverOperationId ||
+            state.cover.source !== 'pdf-page'
+          )
+            return;
+          const next: CoverSettings = {
+            ...state.cover,
+            source: 'pdf-page',
+            image,
+            imageName: 'Original PDF page 1',
+          };
+          delete next.warning;
+          state.cover = next;
+          state.outputSaved = false;
+          refreshEpubPreview();
+          m.redraw();
+        } finally {
+          await renderer.dispose();
+        }
+      })
+      .catch((cause: unknown) => {
+        if (
+          pdfCoverOperationId !== coverOperationId ||
+          state.cover.source !== 'pdf-page'
+        )
+          return;
+        state.cover = {
+          ...state.cover,
+          warning:
+            cause instanceof Error
+              ? cause.message
+              : 'The original PDF first page could not be rendered.',
+        };
+        m.redraw();
+      });
+  };
   const requestConvert = (): void => {
     if (!state.model) return;
     if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
     epubRefreshTimer = undefined;
     delete state.markdownEdit;
+    if (state.preferences.outputFormat === 'epub' && !saveActiveEpubPart(false))
+      return;
     state.outputSaved = false;
     state.status = 'converting';
     state.operationId = operationId('convert');
@@ -205,11 +338,7 @@ export function createBrowserController(): AppController {
     worker.postMessage({
       type: 'convert',
       operationId: state.operationId,
-      model:
-        state.preferences.outputFormat === 'epub' &&
-        state.epubContentEdit !== undefined
-          ? withMarkdownContent(state.model, state.epubContentEdit)
-          : state.model,
+      model: state.model,
       filename: conversionSourceFilename(state, sourceFilename),
       format: state.preferences.outputFormat,
       conversionDate: state.conversionDate,
@@ -255,6 +384,11 @@ export function createBrowserController(): AppController {
   };
 
   const applyRoute = (route: AppRoute, convert: boolean): void => {
+    if (
+      state.preferences.outputFormat === 'epub' &&
+      (route.page !== 'conversion' || route.format !== 'epub')
+    )
+      if (!saveActiveEpubPart()) return;
     delete state.review;
     if (route.page === 'document') {
       state.stage = 0;
@@ -385,12 +519,14 @@ export function createBrowserController(): AppController {
       remoteDocumentAbort = undefined;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
+      pdfCoverOperationId = undefined;
       disposePdfPreview();
       worker.terminate();
       if (typeof window !== 'undefined') {
         window.removeEventListener('beforeunload', disposePdfPreview);
         window.removeEventListener('popstate', handlePopState);
       }
+      colorSchemeQuery?.removeEventListener('change', handleColorSchemeChange);
     },
     reset() {
       if (
@@ -404,6 +540,7 @@ export function createBrowserController(): AppController {
       remoteDocumentAbort = undefined;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
+      pdfCoverOperationId = undefined;
       disposePdfPreview();
       replaceWorker();
       sourceInput = undefined;
@@ -422,6 +559,7 @@ export function createBrowserController(): AppController {
     selectFiles(files) {
       const file = files[0];
       if (!file) return;
+      pdfCoverOperationId = undefined;
       if (
         pdfLayoutOperationId ||
         state.status === 'analysing' ||
@@ -447,7 +585,7 @@ export function createBrowserController(): AppController {
       delete state.output;
       state.outputSaved = false;
       delete state.selectedEpubFile;
-      delete state.epubContentEdit;
+      resetEpubPartState();
       delete state.epubSourceEdit;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
@@ -612,6 +750,7 @@ export function createBrowserController(): AppController {
             },
           );
           if (remoteDocumentAbort !== abort) return;
+          resetEpubPartState();
           state.model = imported.model;
           if (imported.sourceHtml) state.sourceHtml = imported.sourceHtml;
           else delete state.sourceHtml;
@@ -745,11 +884,14 @@ export function createBrowserController(): AppController {
     setOutputFormat(format) {
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
+      if (state.preferences.outputFormat === 'epub' && !saveActiveEpubPart())
+        return;
       state.preferences.outputFormat = format;
       persistPreferences(localStorage, state.preferences);
       delete state.output;
       delete state.selectedEpubFile;
       state.stage = 2;
+      if (format === 'epub') ensureEpubParts();
       updateBrowserRoute({ page: 'conversion', format });
       if (format !== 'epub' || !epubMetadataIssues(state)) requestConvert();
     },
@@ -801,6 +943,9 @@ export function createBrowserController(): AppController {
     },
     setEpubContent(content) {
       state.epubContentEdit = content;
+      delete state.epubEditorNotice;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
       state.outputSaved = false;
       if (state.preferences.outputFormat !== 'epub' || state.stage !== 2)
         return;
@@ -817,6 +962,127 @@ export function createBrowserController(): AppController {
         epubRefreshTimer = undefined;
         refreshEpubPreview();
       }, 300);
+    },
+    setEpubPreviewMode(mode) {
+      if (!state.sourceHtml && mode !== 'edit' && !saveActiveEpubPart()) return;
+      state.previewMode = mode;
+      if (mode !== 'edit') refreshEpubPreview();
+    },
+    navigateEpubPart(direction) {
+      if (!saveActiveEpubPart()) return;
+      ensureEpubParts();
+      if (!state.epubParts) return;
+      const offset = direction === 'previous' ? -1 : 1;
+      const activeIndex = state.epubParts.activeIndex + offset;
+      if (activeIndex < 0 || activeIndex >= state.epubParts.starts.length)
+        return;
+      state.epubParts = { ...state.epubParts, activeIndex };
+      state.previewMode = 'edit';
+      delete state.epubContentEdit;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
+      delete state.epubEditorNotice;
+    },
+    previewEpubContent(scope) {
+      if (!saveActiveEpubPart()) return;
+      state.epubPreviewScope = scope;
+      state.previewMode = 'rendered';
+      refreshEpubPreview();
+    },
+    mergeEpubPart(direction) {
+      if (!saveActiveEpubPart()) return;
+      ensureEpubParts();
+      if (!state.model || !state.epubParts) return;
+      const merged = mergeContentPart(state.model, state.epubParts, direction);
+      if (!merged) {
+        state.epubEditorNotice = `There is no ${direction} part to merge.`;
+        return;
+      }
+      state.model = merged.model;
+      state.epubParts = merged.state;
+      state.epubEditorRevision += 1;
+      delete state.epubContentEdit;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
+      state.epubEditorNotice =
+        direction === 'previous'
+          ? 'Merged with the previous part.'
+          : 'Merged with the next part.';
+      state.outputSaved = false;
+      refreshEpubPreview();
+    },
+    setEpubSplitHeading(blockOffset) {
+      if (blockOffset === undefined) {
+        delete state.epubSplitBlockOffset;
+        delete state.epubSplitHeadingIdentity;
+        return;
+      }
+      state.epubSplitBlockOffset = blockOffset;
+      ensureEpubParts();
+      if (!state.model || !state.epubParts) return;
+      const currentPart = contentPartModel(state.model, state.epubParts);
+      const draft =
+        state.epubContentEdit === undefined
+          ? currentPart
+          : withMarkdownContent(currentPart, state.epubContentEdit);
+      const headings = contentPartSplitHeadings(draft, {
+        starts: [0],
+        activeIndex: 0,
+      });
+      const selectedIndex = headings.findIndex(
+        (heading) => heading.blockOffset === blockOffset,
+      );
+      const selected = headings[selectedIndex];
+      if (!selected) {
+        delete state.epubSplitHeadingIdentity;
+        return;
+      }
+      state.epubSplitHeadingIdentity = {
+        title: selected.title,
+        occurrence: headings
+          .slice(0, selectedIndex)
+          .filter((heading) => heading.title === selected.title).length,
+      };
+    },
+    splitEpubPart() {
+      const blockOffset = state.epubSplitBlockOffset;
+      const headingIdentity = state.epubSplitHeadingIdentity;
+      if (!saveActiveEpubPart()) return;
+      ensureEpubParts();
+      if (!state.model || !state.epubParts || blockOffset === undefined) {
+        state.epubEditorNotice =
+          'Select a level-two heading to split this part.';
+        return;
+      }
+      const currentPart = contentPartModel(state.model, state.epubParts);
+      const matchingHeadings = headingIdentity
+        ? contentPartSplitHeadings(currentPart, {
+            starts: [0],
+            activeIndex: 0,
+          }).filter((heading) => heading.title === headingIdentity.title)
+        : [];
+      const resolvedBlockOffset =
+        matchingHeadings[headingIdentity?.occurrence ?? -1]?.blockOffset ??
+        blockOffset;
+      const split = splitContentPart(
+        state.model,
+        state.epubParts,
+        resolvedBlockOffset,
+      );
+      if (!split) {
+        state.epubEditorNotice =
+          'The selected heading is not a valid split point.';
+        return;
+      }
+      state.model = split.model;
+      state.epubParts = split.state;
+      state.epubEditorRevision += 1;
+      delete state.epubContentEdit;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
+      state.epubEditorNotice = 'Split the part at the selected heading.';
+      state.outputSaved = false;
+      refreshEpubPreview();
     },
     setEpubSourceContent(content) {
       state.epubSourceEdit = content;
@@ -850,7 +1116,7 @@ export function createBrowserController(): AppController {
     },
     rerunAnalysis() {
       if (!sourceInput || !sourceFilename) return;
-      delete state.epubContentEdit;
+      resetEpubPartState();
       delete state.epubSourceEdit;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
@@ -887,7 +1153,7 @@ export function createBrowserController(): AppController {
     rescanPdfSample() {
       if (!sourceInput || !sourceFilename || state.sourceFormat !== 'pdf')
         return;
-      delete state.epubContentEdit;
+      resetEpubPartState();
       delete state.epubSourceEdit;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
@@ -1391,6 +1657,11 @@ export function createBrowserController(): AppController {
       refreshEpubPreview();
     },
     setCoverSource(source: CoverSource) {
+      pdfCoverOperationId = undefined;
+      if (source === 'pdf-page') {
+        requestPdfFrontCover();
+        return;
+      }
       state.cover = { ...state.cover, source };
       state.outputSaved = false;
       refreshEpubPreview();
@@ -1504,6 +1775,13 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
       delete state.formulaExtractionId;
     }
     inferDocumentLanguage(response.model);
+    delete state.epubContentEdit;
+    delete state.epubEditorNotice;
+    delete state.epubParts;
+    delete state.epubSplitBlockOffset;
+    delete state.epubSplitHeadingIdentity;
+    state.epubEditorRevision += 1;
+    state.epubPreviewScope = 'book';
     state.model = response.model;
     if (response.pdfAnalysis) {
       state.pdfAnalysis = response.pdfAnalysis;
