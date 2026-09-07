@@ -27,16 +27,27 @@ const MAX_PAGES = 2_000;
 const MAX_WIDTH = 1_200;
 const MAX_PIXELS = 4_000_000;
 
-export function createPdfPagePreviewRenderer(): PdfPagePreviewRenderer {
-  const loadingTasks = new Set<PDFDocumentLoadingTask>();
-  const renderTasks = new Set<RenderTask>();
+export function createPdfPagePreviewRenderer(
+  loadDocument: typeof getDocument = getDocument,
+): PdfPagePreviewRenderer {
+  let loadedInput: ArrayBuffer | undefined;
+  let loadingTask: PDFDocumentLoadingTask | undefined;
+  let loadedDocument: PDFDocumentProxy | undefined;
+  let renderTask: RenderTask | undefined;
 
   const cancel = async (): Promise<void> => {
-    for (const task of renderTasks) task.cancel();
-    renderTasks.clear();
-    const pending = [...loadingTasks];
-    loadingTasks.clear();
-    await Promise.all(pending.map((task) => task.destroy()));
+    renderTask?.cancel();
+    renderTask = undefined;
+    const task = loadingTask;
+    loadingTask = undefined;
+    loadedDocument = undefined;
+    loadedInput = undefined;
+    if (task)
+      try {
+        await task.destroy();
+      } catch {
+        // PDF.js cleanup is best-effort; a failed destroy must not poison reuse.
+      }
   };
   const dispose = async (): Promise<void> => {
     await cancel();
@@ -48,9 +59,12 @@ export function createPdfPagePreviewRenderer(): PdfPagePreviewRenderer {
     task: PDFDocumentLoadingTask;
     document: PDFDocumentProxy;
   }> => {
+    if (loadedInput === input && loadingTask && loadedDocument)
+      return { task: loadingTask, document: loadedDocument };
+    await cancel();
     if (input.byteLength > MAX_INPUT_BYTES)
       throw new Error('PDF exceeds the input size limit.');
-    const task = getDocument({
+    const task = loadDocument({
       data: new Uint8Array(input.slice(0)),
       disableAutoFetch: true,
       disableRange: true,
@@ -61,14 +75,24 @@ export function createPdfPagePreviewRenderer(): PdfPagePreviewRenderer {
       useWasm: false,
       verbosity: 0,
     });
-    loadingTasks.add(task);
+    loadingTask = task;
+    loadedInput = input;
     try {
       const document = await task.promise;
       if (document.numPages > MAX_PAGES)
         throw new Error('PDF exceeds the page limit.');
+      loadedDocument = document;
       return { task, document };
     } catch (cause) {
-      if (loadingTasks.delete(task)) await task.destroy();
+      if (loadingTask === task) {
+        loadingTask = undefined;
+        loadedInput = undefined;
+      }
+      try {
+        await task.destroy();
+      } catch {
+        // Preserve the load failure rather than replacing it with cleanup failure.
+      }
       throw cause;
     }
   };
@@ -79,50 +103,45 @@ export function createPdfPagePreviewRenderer(): PdfPagePreviewRenderer {
       await dispose();
     },
     async render(input, pageNumber) {
-      await cancel();
       const loaded = await load(input);
+      if (
+        !Number.isInteger(pageNumber) ||
+        pageNumber < 1 ||
+        pageNumber > loaded.document.numPages
+      )
+        throw new Error('The requested PDF preview page does not exist.');
+      const page = await loaded.document.getPage(pageNumber);
       try {
-        if (
-          !Number.isInteger(pageNumber) ||
-          pageNumber < 1 ||
-          pageNumber > loaded.document.numPages
-        )
-          throw new Error('The requested PDF preview page does not exist.');
-        const page = await loaded.document.getPage(pageNumber);
+        const base = page.getViewport({ scale: 1 });
+        const scale = Math.min(
+          MAX_WIDTH / base.width,
+          Math.sqrt(MAX_PIXELS / (base.width * base.height)),
+        );
+        const viewport = page.getViewport({ scale });
+        const width = Math.max(1, Math.round(viewport.width));
+        const height = Math.max(1, Math.round(viewport.height));
+        const canvas = documentOwner().createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const currentRenderTask = page.render({
+          canvas,
+          viewport,
+          background: '#ffffff',
+        });
+        renderTask = currentRenderTask;
         try {
-          const base = page.getViewport({ scale: 1 });
-          const scale = Math.min(
-            MAX_WIDTH / base.width,
-            Math.sqrt(MAX_PIXELS / (base.width * base.height)),
-          );
-          const viewport = page.getViewport({ scale });
-          const width = Math.max(1, Math.round(viewport.width));
-          const height = Math.max(1, Math.round(viewport.height));
-          const canvas = documentOwner().createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const renderTask = page.render({
-            canvas,
-            viewport,
-            background: '#ffffff',
-          });
-          renderTasks.add(renderTask);
-          try {
-            await renderTask.promise;
-            return {
-              pageNumber,
-              width,
-              height,
-              blob: await canvasBlob(canvas),
-            };
-          } finally {
-            renderTasks.delete(renderTask);
-          }
+          await currentRenderTask.promise;
+          return {
+            pageNumber,
+            width,
+            height,
+            blob: await canvasBlob(canvas),
+          };
         } finally {
-          page.cleanup();
+          if (renderTask === currentRenderTask) renderTask = undefined;
         }
       } finally {
-        if (loadingTasks.delete(loaded.task)) await loaded.task.destroy();
+        page.cleanup();
       }
     },
   };
