@@ -7,6 +7,10 @@ allowBuilds:
   simple-git-hooks: true
 
 minimumReleaseAgeExclude:
-  - slimdown-js@1.4.1
+  - slimdown-js@1.4.1 || 1.5.3 || 1.5.4
+  - '@codemirror/state@6.7.4'
+  - dompurify@3.4.15
+  - katex@0.18.7
+  - mithril-markdown-wysiwyg@0.3.2 || 0.4.0
 
 onlyBuiltDependencies: []
