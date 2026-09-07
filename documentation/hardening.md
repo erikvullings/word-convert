@@ -55,7 +55,46 @@ the client normalizes them. Conversion routes require the source document to
 remain in memory; opening one in a fresh browser context returns to document
 selection rather than persisting or reconstructing source data.
 
-Completed EPUB output can be handed to an installed mail client through the Web Share API when the browser reports file-sharing support. The EPUB remains in memory until this explicit user action and is passed as a `File` with the document title as the share title; no recipient, message body, URL, or remote service is supplied. Browsers without file-sharing support open an empty `mailto:` draft with only the encoded subject. The `mailto:` standard cannot attach local files, so attaching the EPUB in that fallback remains a manual mail-client action.
+Completed EPUB output can be handed to a user-selected installed application
+through the Web Share API. WordConvert requires both `navigator.share` and
+`navigator.canShare`, tests the actual generated `application/epub+zip` `File`,
+and repeats that check immediately before sharing. The call is made directly
+from the **Share EPUB** action because Web Share requires transient user
+activation. Production therefore requires HTTPS; localhost is treated as a
+secure development context by supported browsers.
+
+The EPUB remains in memory until this explicit action and is passed directly to
+the browser/operating-system share sheet. WordConvert supplies only the EPUB
+file, document title, and short share text. It does not upload document content,
+call an external sharing service, add tracking, or select a recipient. Cancelling
+the share sheet is normal and produces no error or automatic download.
+
+When the real EPUB file cannot be shared, the UI presents **Download EPUB** and
+**Email…**. Email first completes the existing local save/download flow, then
+opens a standard `mailto:` draft whose body tells the user to attach the named
+downloaded file manually. A cancelled save does not open email. The fallback
+does not use non-standard attachment parameters, EPUB data, Blob URLs, or local
+filesystem paths in the URL. Unexpected native-share failures leave the local
+download action available and show a concise recoverable error.
+
+### EPUB Web Share evidence
+
+Runtime results recorded on 7 September 2026 against
+`navigator.canShare({ files: [epubFile] })` with an
+`application/epub+zip` file:
+
+| Platform and browser | Secure context | EPUB accepted | Native target/attachment result |
+| --- | --- | --- | --- |
+| macOS Chrome 146 | yes (localhost) | yes | Not selected; opening and completing the OS share sheet requires manual interaction |
+| macOS Edge 152 | yes (localhost) | yes | Not selected; opening and completing the OS share sheet requires manual interaction |
+| macOS Safari | untested | untested | Installed, but Safari WebDriver/native share-sheet setup was unavailable for this run |
+| Firefox desktop | untested | untested | Browser unavailable on the test machine |
+| iOS/iPadOS Safari | untested | untested | Device unavailable |
+| Android Chrome | untested | untested | Device unavailable |
+
+This table is evidence, not a browser allowlist. The application always uses
+runtime detection because operating-system share targets and accepted file types
+can change independently of browser versions.
 
 PDF source-page previews are loaded only on request and rasterized on an HTML canvas with a maximum width of 1,200 pixels and a 4-megapixel budget. The browser-canvas path supports embedded fonts that PDF.js cannot reliably draw on `OffscreenCanvas` for some legacy PDFs. Preview rendering is best-effort so recoverable legacy-font errors do not produce blank pages; extraction remains strict. Preview tasks and PNG object URLs are released when replaced, when another source is selected, and when the page unloads.
 

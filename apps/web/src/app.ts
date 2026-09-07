@@ -82,6 +82,8 @@ export interface AppController {
   cancel(): void;
   convert(): void;
   download(): void;
+  canShareDocument?(): boolean;
+  shareDocument?(): void;
   mailDocument?(): void;
   setOutputFilename(filename: string): void;
   setMarkdownContent?(content: string): void;
@@ -1574,14 +1576,15 @@ export function extractHtmlBody(source: string): string {
 
 function previewActions(controller: AppController): m.Vnode {
   const state = controller.state;
+  const isEpub = state.output?.mediaType === 'application/epub+zip';
   return m('.preview-actions', [
     outputFilenameField(controller),
     m(Button, {
-      label: 'Download',
+      label: isEpub ? 'Download EPUB' : 'Download',
       disabled: !state.output,
       onclick: () => controller.download(),
     }),
-    mailDocumentButton(controller),
+    epubDeliveryButton(controller),
     m(FlatButton, {
       label: 'Review style mapping',
       onclick: () => openReview(state, 'styles'),
@@ -1764,23 +1767,26 @@ export function navigateToWarning(
 }
 
 function downloadPanel(controller: AppController): m.Vnode {
+  const isEpub = controller.state.output?.mediaType === 'application/epub+zip';
   return m('div', [
     m('p', 'Your converted document is ready.'),
     outputFilenameField(controller),
     m(Button, {
-      label: 'Download',
+      label: isEpub ? 'Download EPUB' : 'Download',
       onclick: () => controller.download(),
     }),
-    mailDocumentButton(controller),
+    epubDeliveryButton(controller),
   ]);
 }
 
-function mailDocumentButton(controller: AppController): m.Vnode | null {
+function epubDeliveryButton(controller: AppController): m.Vnode | null {
   if (controller.state.output?.mediaType !== 'application/epub+zip')
     return null;
+  const canShare = controller.canShareDocument?.() === true;
   return m(Button, {
-    label: 'Mail document',
-    onclick: () => controller.mailDocument?.(),
+    label: canShare ? 'Share EPUB' : 'Email…',
+    onclick: () =>
+      canShare ? controller.shareDocument?.() : controller.mailDocument?.(),
   });
 }
 

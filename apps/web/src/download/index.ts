@@ -13,11 +13,33 @@ export interface DownloadEnvironment {
   showSaveFilePicker?(options: SaveFilePickerOptions): Promise<SaveFileHandle>;
 }
 
-export interface MailEnvironment {
-  canShare?(data: ShareData): boolean;
-  share?(data: ShareData): Promise<void>;
+export interface EmailEnvironment {
   openMailto(url: string): void;
 }
+
+export interface ShareEnvironment {
+  canShare?(data: ShareData): boolean;
+  share?(data: ShareData): Promise<void>;
+}
+
+export interface ShareEpubOptions {
+  blob: Blob;
+  filename: string;
+  title?: string;
+  text?: string;
+}
+
+export interface EmailEpubOptions {
+  title: string;
+  filename: string;
+  recipient?: string;
+}
+
+export type ShareEpubResult =
+  | { status: 'shared' }
+  | { status: 'cancelled' }
+  | { status: 'unsupported' }
+  | { status: 'failed'; error: unknown };
 
 interface SaveFilePickerOptions {
   suggestedName: string;
@@ -41,6 +63,65 @@ function isAbortError(cause: unknown): boolean {
     'name' in cause &&
     cause.name === 'AbortError'
   );
+}
+
+export function createEpubFile(blob: Blob, filename: string): File {
+  return new File(
+    [blob],
+    filename.toLowerCase().endsWith('.epub') ? filename : `${filename}.epub`,
+    { type: 'application/epub+zip' },
+  );
+}
+
+export function canShareEpub(
+  file: File,
+  environment: ShareEnvironment,
+): boolean {
+  if (!environment.share || !environment.canShare) return false;
+  try {
+    return environment.canShare({ files: [file] });
+  } catch {
+    return false;
+  }
+}
+
+export async function shareEpub(
+  options: ShareEpubOptions,
+  environment: ShareEnvironment,
+): Promise<ShareEpubResult> {
+  const file = createEpubFile(options.blob, options.filename);
+  if (!canShareEpub(file, environment)) return { status: 'unsupported' };
+
+  try {
+    await environment.share?.({
+      ...(options.title ? { title: options.title } : {}),
+      ...(options.text ? { text: options.text } : {}),
+      files: [file],
+    });
+    return { status: 'shared' };
+  } catch (error) {
+    return isAbortError(error)
+      ? { status: 'cancelled' }
+      : { status: 'failed', error };
+  }
+}
+
+export function openEpubEmail(
+  options: EmailEpubOptions,
+  environment: EmailEnvironment,
+): void {
+  const subject = encodeURIComponent(`EPUB: ${options.title}`);
+  const body = encodeURIComponent(
+    [
+      `I've created an EPUB version of "${options.title}".`,
+      '',
+      `Please attach the downloaded file "${options.filename}" to this message.`,
+    ].join('\n'),
+  );
+  const recipient = options.recipient
+    ? encodeURIComponent(options.recipient)
+    : '';
+  environment.openMailto(`mailto:${recipient}?subject=${subject}&body=${body}`);
 }
 
 export function deliverDownload(
@@ -92,30 +173,4 @@ export async function saveDownload(
     deliverDownload(output, environment, release);
     return true;
   }
-}
-
-export async function mailEpub(
-  output: DownloadOutput,
-  title: string,
-  environment: MailEnvironment,
-): Promise<void> {
-  const file = new File([output.data], output.filename, {
-    type: output.mediaType,
-  });
-  const shareData: ShareData = { title, files: [file] };
-  let supportsFileSharing = false;
-  try {
-    supportsFileSharing = environment.canShare?.(shareData) === true;
-  } catch {
-    supportsFileSharing = false;
-  }
-  if (environment.share && supportsFileSharing) {
-    try {
-      await environment.share(shareData);
-      return;
-    } catch (cause) {
-      if (isAbortError(cause)) throw cause;
-    }
-  }
-  environment.openMailto(`mailto:?subject=${encodeURIComponent(title)}`);
 }

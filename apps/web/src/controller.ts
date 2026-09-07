@@ -34,7 +34,13 @@ import {
   prepareCoverImage,
   titleTextWarning,
 } from '@wordconvert/cover-generator';
-import { mailEpub, saveDownload } from './download/index.ts';
+import {
+  canShareEpub,
+  createEpubFile,
+  openEpubEmail,
+  saveDownload,
+  shareEpub,
+} from './download/index.ts';
 import { withMarkdownContent } from './content-editor.ts';
 import {
   fetchRemoteDocument,
@@ -695,35 +701,107 @@ export function createBrowserController(): AppController {
           m.redraw();
         });
     },
+    canShareDocument() {
+      const output = state.output;
+      if (output?.mediaType !== 'application/epub+zip') return false;
+      return canShareEpub(
+        createEpubFile(
+          new Blob([output.data], { type: 'application/epub+zip' }),
+          output.filename,
+        ),
+        {
+          ...(typeof navigator.canShare === 'function'
+            ? { canShare: (data) => navigator.canShare(data) }
+            : {}),
+          ...(typeof navigator.share === 'function'
+            ? { share: (data) => navigator.share(data) }
+            : {}),
+        },
+      );
+    },
+    shareDocument() {
+      const output = state.output;
+      if (output?.mediaType !== 'application/epub+zip') return;
+      const title =
+        state.model?.metadata.title?.value.trim() ||
+        output.filename.replace(/\.epub$/i, '');
+      void shareEpub(
+        {
+          blob: new Blob([output.data], { type: 'application/epub+zip' }),
+          filename: output.filename,
+          title,
+          text: `EPUB: ${title}`,
+        },
+        {
+          ...(typeof navigator.canShare === 'function'
+            ? { canShare: (data) => navigator.canShare(data) }
+            : {}),
+          ...(typeof navigator.share === 'function'
+            ? { share: (data) => navigator.share(data) }
+            : {}),
+        },
+      ).then((result) => {
+        if (result.status === 'failed') {
+          state.error = {
+            code: 'conversion-failed',
+            message:
+              'This EPUB could not be shared. You can download it instead.',
+            recoverable: true,
+          };
+        }
+        m.redraw();
+      });
+    },
     mailDocument() {
       const output = state.output;
       if (output?.mediaType !== 'application/epub+zip') return;
       const title =
         state.model?.metadata.title?.value.trim() ||
         output.filename.replace(/\.epub$/i, '');
-      void mailEpub(output, title, {
-        ...(typeof navigator.canShare === 'function' &&
-        typeof navigator.share === 'function'
-          ? {
-              canShare: (data) => navigator.canShare(data),
-              share: (data) => navigator.share(data),
-            }
-          : {}),
-        openMailto: (url) => {
-          const anchor = document.createElement('a');
-          anchor.href = url;
-          anchor.click();
+      void saveDownload(
+        output,
+        {
+          createObjectURL: (blob) => URL.createObjectURL(blob),
+          revokeObjectURL: (url) => URL.revokeObjectURL(url),
+          createAnchor: () => document.createElement('a'),
+          ...('showSaveFilePicker' in window
+            ? {
+                showSaveFilePicker: (options: unknown) =>
+                  (
+                    window as unknown as {
+                      showSaveFilePicker: (
+                        pickerOptions: unknown,
+                      ) => Promise<never>;
+                    }
+                  ).showSaveFilePicker(options),
+              }
+            : {}),
         },
-      }).catch((cause: unknown) => {
-        if (cause instanceof DOMException && cause.name === 'AbortError')
-          return;
-        state.error = {
-          code: 'conversion-failed',
-          message: 'The converted EPUB could not be opened for mailing.',
-          recoverable: true,
-        };
-        m.redraw();
-      });
+        () => undefined,
+      )
+        .then((saved) => {
+          if (!saved) return;
+          state.outputSaved = true;
+          openEpubEmail(
+            { title, filename: output.filename },
+            {
+              openMailto: (url) => {
+                const anchor = document.createElement('a');
+                anchor.href = url;
+                anchor.click();
+              },
+            },
+          );
+          m.redraw();
+        })
+        .catch(() => {
+          state.error = {
+            code: 'conversion-failed',
+            message: 'The converted EPUB could not be saved for emailing.',
+            recoverable: true,
+          };
+          m.redraw();
+        });
     },
     setOutputFilename(filename) {
       if (!state.output) return;

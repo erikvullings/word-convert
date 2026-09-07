@@ -72,7 +72,31 @@ describe('App', () => {
     ).toBe('<h1>Report</h1><p>Body</p>');
   });
 
-  it('allows the generated output filename to be edited before download', () => {
+  it('offers native EPUB sharing when the generated file is supported', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 3;
+    state.output = {
+      filename: 'report.epub',
+      mediaType: 'application/epub+zip',
+      data: new ArrayBuffer(1),
+    };
+
+    const rendered = JSON.stringify(
+      renderApp({
+        ...controllerFor(state),
+        canShareDocument: () => true,
+      }),
+    );
+
+    expect(rendered).toContain('Output filename');
+    expect(rendered).toContain('"value":"report"');
+    expect(rendered).not.toContain('"value":"report.epub"');
+    expect(rendered).toContain('Download EPUB');
+    expect(rendered).toContain('Share EPUB');
+    expect(rendered).not.toContain('Email…');
+  });
+
+  it('offers download and email when EPUB file sharing is unsupported', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 3;
     state.output = {
@@ -83,13 +107,12 @@ describe('App', () => {
 
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
-    expect(rendered).toContain('Output filename');
-    expect(rendered).toContain('"value":"report"');
-    expect(rendered).not.toContain('"value":"report.epub"');
-    expect(rendered).toContain('Mail document');
+    expect(rendered).toContain('Download EPUB');
+    expect(rendered).toContain('Email…');
+    expect(rendered).not.toContain('Share EPUB');
   });
 
-  it('does not offer mail delivery for non-EPUB output', () => {
+  it('does not offer sharing or email for non-EPUB output', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 3;
     state.preferences.outputFormat = 'html';
@@ -101,7 +124,8 @@ describe('App', () => {
 
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
-    expect(rendered).not.toContain('Mail document');
+    expect(rendered).not.toContain('Share EPUB');
+    expect(rendered).not.toContain('Email…');
   });
 
   it('renders a focused local workflow with accessible file selection', () => {

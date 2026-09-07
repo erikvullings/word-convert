@@ -415,7 +415,8 @@ describe('browser controller', () => {
     expect(controller.state.output.filename).toBe('Final handbook.epub');
   });
 
-  it('mails the ready EPUB using its document metadata title', async () => {
+  it('detects and shares the ready EPUB using its document metadata title', async () => {
+    const redraw = vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
     const worker = new WorkerStub();
     stubWorkers(worker);
     vi.stubGlobal('localStorage', {
@@ -445,16 +446,50 @@ describe('browser controller', () => {
       data: new ArrayBuffer(1),
     };
 
-    controller.mailDocument?.();
-    await vi.waitFor(() => expect(share).toHaveBeenCalledOnce());
+    expect(controller.canShareDocument?.()).toBe(true);
+
+    controller.shareDocument?.();
+    await vi.waitFor(() => expect(redraw).toHaveBeenCalledOnce());
 
     expect(share.mock.calls[0]?.[0]).toMatchObject({
       title: 'Attention Is All You Need [1706.03762]',
+      text: 'EPUB: Attention Is All You Need [1706.03762]',
       files: [expect.objectContaining({ name: '1706.03762v7.epub' })],
     });
   });
 
-  it('opens a mailto link when native file sharing is unavailable', async () => {
+  it('ignores share cancellation and reports unexpected share failures', async () => {
+    const redraw = vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const share = vi
+      .fn<(data: ShareData) => Promise<void>>()
+      .mockRejectedValueOnce(new DOMException('Cancelled', 'AbortError'))
+      .mockRejectedValueOnce(new Error('Share target failed'));
+    vi.stubGlobal('navigator', { canShare: () => true, share });
+    const controller = createBrowserController();
+    controller.state.output = {
+      filename: 'attention.epub',
+      mediaType: 'application/epub+zip',
+      data: new ArrayBuffer(1),
+    };
+
+    controller.shareDocument?.();
+    await vi.waitFor(() => expect(redraw).toHaveBeenCalledTimes(1));
+    expect(controller.state.error).toBeUndefined();
+
+    controller.shareDocument?.();
+    await vi.waitFor(() => expect(redraw).toHaveBeenCalledTimes(2));
+    expect(controller.state.error?.message).toBe(
+      'This EPUB could not be shared. You can download it instead.',
+    );
+  });
+
+  it('downloads the EPUB before opening an email draft', async () => {
     const worker = new WorkerStub();
     stubWorkers(worker);
     vi.stubGlobal('localStorage', {
@@ -462,12 +497,30 @@ describe('browser controller', () => {
       setItem: () => undefined,
     });
     vi.stubGlobal('navigator', {});
-    const click = vi.fn();
-    const anchor = { href: '', click };
+    vi.stubGlobal('window', {
+      location: { pathname: '/' },
+      addEventListener: () => undefined,
+    });
+    const events: string[] = [];
+    const anchors: Array<{ href: string; download: string; click(): void }> =
+      [];
     vi.stubGlobal('document', {
       documentElement: { dataset: {} },
-      createElement: vi.fn(() => anchor),
+      createElement: vi.fn(() => {
+        const anchor = {
+          href: '',
+          download: '',
+          click: () =>
+            events.push(
+              anchor.href.startsWith('mailto:') ? 'email' : 'download',
+            ),
+        };
+        anchors.push(anchor);
+        return anchor;
+      }),
     });
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:epub');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const controller = createBrowserController();
     controller.state.output = {
       filename: 'attention.epub',
@@ -476,9 +529,14 @@ describe('browser controller', () => {
     };
 
     controller.mailDocument?.();
-    await vi.waitFor(() => expect(click).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(events).toEqual(['download', 'email']));
 
-    expect(anchor.href).toBe('mailto:?subject=attention');
+    expect(anchors[1]?.href).toContain('mailto:?subject=EPUB%3A%20attention');
+    expect(decodeURIComponent(anchors[1]?.href ?? '')).toContain(
+      'Please attach the downloaded file "attention.epub" to this message.',
+    );
+    expect(controller.state.output).toBeDefined();
+    expect(controller.state.outputSaved).toBe(true);
   });
 
   it('uses the enriched arXiv title as the EPUB output filename', () => {
