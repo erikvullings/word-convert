@@ -5,11 +5,13 @@ import {
   type PDFDocumentProxy,
   type RenderTask,
 } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import pdfJsWorkerSrc from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 
-import { pdfJsDecoderBaseUrl } from './pdfjs-assets.ts';
+import { pdfJsDecoderBaseUrl, pdfJsWorkerUrl } from './pdfjs-assets.ts';
 
-GlobalWorkerOptions.workerSrc = pdfJsWorkerSrc;
+GlobalWorkerOptions.workerSrc = pdfJsWorkerUrl(
+  __WORDCONVERT_BASE_PATH__,
+  globalThis.location.origin,
+);
 
 export interface PdfPagePreviewResult {
   pageNumber: number;

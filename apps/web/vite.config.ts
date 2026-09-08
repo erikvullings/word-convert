@@ -12,6 +12,7 @@ import {
 import {
   pdfJsDecoderAssetPath,
   pdfJsDecoderAssets,
+  pdfJsWorkerAssetPath,
 } from './src/pdfjs-assets.ts';
 
 const repositoryName = 'word-convert';
@@ -32,6 +33,12 @@ const configuredRecognizer = fileURLToPath(
 );
 const pdfJsDecoderDirectory = fileURLToPath(
   new URL('./node_modules/pdfjs-dist/wasm/', import.meta.url),
+);
+const pdfJsWorkerFile = fileURLToPath(
+  new URL(
+    './node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs',
+    import.meta.url,
+  ),
 );
 
 export function resolveTexTellerDevModelDirectory(
@@ -63,6 +70,24 @@ function pdfJsDecoderAssetsPlugin(base: string): Plugin {
   return {
     name: 'wordconvert-pdfjs-decoder-assets',
     configureServer(server) {
+      const workerRequestPath = new URL(pdfJsWorkerAssetPath, developmentBase)
+        .pathname;
+      server.middlewares.use(workerRequestPath, (_request, response) => {
+        void readFile(pdfJsWorkerFile).then(
+          (asset) => {
+            response.statusCode = 200;
+            response.setHeader(
+              'Content-Type',
+              'text/javascript; charset=utf-8',
+            );
+            response.end(asset);
+          },
+          () => {
+            response.statusCode = 404;
+            response.end();
+          },
+        );
+      });
       for (const file of pdfJsDecoderAssets) {
         const requestPath = new URL(
           pdfJsDecoderAssetPath(file),
@@ -91,6 +116,11 @@ function pdfJsDecoderAssetsPlugin(base: string): Plugin {
       }
     },
     async generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: pdfJsWorkerAssetPath,
+        source: await readFile(pdfJsWorkerFile),
+      });
       await Promise.all(
         pdfJsDecoderAssets.map(async (file) => {
           this.emitFile({

@@ -13,6 +13,7 @@ export const pdfJsDecoderAssets = [
 ] as const;
 
 export type PdfJsDecoderAsset = (typeof pdfJsDecoderAssets)[number];
+export const pdfJsWorkerAssetPath = 'pdfjs/pdf.worker.mjs';
 
 export function pdfJsDecoderAssetPath(file: PdfJsDecoderAsset): string {
   return `pdfjs/${file}`;
@@ -20,4 +21,8 @@ export function pdfJsDecoderAssetPath(file: PdfJsDecoderAsset): string {
 
 export function pdfJsDecoderBaseUrl(basePath: string, origin: string): string {
   return new URL('pdfjs/', new URL(basePath, origin)).href;
+}
+
+export function pdfJsWorkerUrl(basePath: string, origin: string): string {
+  return new URL(pdfJsWorkerAssetPath, new URL(basePath, origin)).href;
 }

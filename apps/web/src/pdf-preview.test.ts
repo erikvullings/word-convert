@@ -2,18 +2,15 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { destroy, getDocument } = vi.hoisted(() => ({
+const { destroy, getDocument, globalWorkerOptions } = vi.hoisted(() => ({
   destroy: vi.fn(async () => undefined),
   getDocument: vi.fn(),
+  globalWorkerOptions: {} as { workerSrc?: string },
 }));
 
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
   getDocument,
-  GlobalWorkerOptions: {},
-}));
-
-vi.mock('pdfjs-dist/legacy/build/pdf.worker.mjs?url', () => ({
-  default: '/assets/pdf.worker.mjs',
+  GlobalWorkerOptions: globalWorkerOptions,
 }));
 
 import { createPdfPagePreviewRenderer } from './pdf-preview.ts';
@@ -22,13 +19,13 @@ describe('PDF page preview renderer', () => {
   beforeEach(() => {
     destroy.mockClear();
     getDocument.mockReset();
+  });
+
+  it('loads bundled image decoders for scanned PDF pages', async () => {
     getDocument.mockReturnValue({
       destroy,
       promise: Promise.reject(new Error('Stop after inspecting options.')),
     });
-  });
-
-  it('loads bundled image decoders for scanned PDF pages', async () => {
     const renderer = createPdfPagePreviewRenderer();
 
     await expect(renderer.render(new ArrayBuffer(8), 1)).rejects.toThrow(
@@ -42,5 +39,11 @@ describe('PDF page preview renderer', () => {
       }),
     );
     expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it('loads the PDF worker from the stable application asset path', () => {
+    expect(globalWorkerOptions.workerSrc).toBe(
+      'http://localhost:3000/pdfjs/pdf.worker.mjs',
+    );
   });
 });

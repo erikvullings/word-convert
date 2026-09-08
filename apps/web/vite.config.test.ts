@@ -6,6 +6,8 @@ import {
   pdfJsDecoderAssetPath,
   pdfJsDecoderAssets,
   pdfJsDecoderBaseUrl,
+  pdfJsWorkerAssetPath,
+  pdfJsWorkerUrl,
 } from './src/pdfjs-assets.ts';
 
 describe('Vite formula recognizer configuration', () => {
@@ -44,6 +46,16 @@ describe('PDF.js decoder assets', () => {
         'https://example.test/document-selection',
       ),
     ).toBe('https://example.test/word-convert/pdfjs/');
+  });
+
+  it('keeps the PDF worker on a stable application-owned URL', () => {
+    expect(
+      pdfJsWorkerUrl(
+        '/word-convert/',
+        'https://example.test/document-selection',
+      ),
+    ).toBe('https://example.test/word-convert/pdfjs/pdf.worker.mjs');
+    expect(pdfJsWorkerAssetPath).toBe('pdfjs/pdf.worker.mjs');
   });
 
   it('bundles the image decoders and their license files', () => {

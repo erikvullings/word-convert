@@ -167,6 +167,201 @@ export function unsupportedContentImageSources(
   ];
 }
 
+interface ContentImageImportLimits {
+  maxImages: number;
+  maxImageBytes: number;
+  maxTotalBytes: number;
+}
+
+type ContentImageImportResult =
+  | { ok: true; model: DocumentModel; markdown: string }
+  | {
+      ok: false;
+      reason:
+        | 'invalid-image'
+        | 'image-too-large'
+        | 'too-many-images'
+        | 'images-too-large';
+      message: string;
+    };
+
+const DEFAULT_CONTENT_IMAGE_LIMITS: ContentImageImportLimits = {
+  maxImages: 100,
+  maxImageBytes: 10 * 1024 * 1024,
+  maxTotalBytes: 50 * 1024 * 1024,
+};
+type ContentImageMediaType =
+  'image/avif' | 'image/gif' | 'image/jpeg' | 'image/png' | 'image/webp';
+const CONTENT_IMAGE_MEDIA_EXTENSIONS = new Map<ContentImageMediaType, string>([
+  ['image/avif', 'avif'],
+  ['image/gif', 'gif'],
+  ['image/jpeg', 'jpg'],
+  ['image/png', 'png'],
+  ['image/webp', 'webp'],
+] as const);
+
+export function importContentDataImages(
+  markdown: string,
+  model: DocumentModel,
+  limits: ContentImageImportLimits = DEFAULT_CONTENT_IMAGE_LIMITS,
+): ContentImageImportResult {
+  const assetsByUrl = new Map(assetUrls(model));
+  const assets = { ...model.assets };
+  const replacements = new Map<string, string>();
+  let imageCount = Object.keys(assets).filter((id) =>
+    id.startsWith('editor-image-'),
+  ).length;
+  let totalBytes = Object.values(assets)
+    .filter((asset) => asset.id.startsWith('editor-image-'))
+    .reduce((total, asset) => total + asset.data.byteLength, 0);
+  let nextImageNumber = 1;
+
+  for (const source of new Set(collectImageSources(Lexer.lex(markdown)))) {
+    if (
+      assetsByUrl.has(source) ||
+      !source.toLowerCase().startsWith('data:image/')
+    )
+      continue;
+    const parsed = parseContentImageDataUri(source, limits.maxImageBytes);
+    if (!parsed.ok) return parsed;
+    const canonicalSource = `data:${parsed.mediaType};base64,${base64(parsed.data)}`;
+    replacements.set(source, canonicalSource);
+    if (assetsByUrl.has(canonicalSource)) continue;
+    if (imageCount >= limits.maxImages)
+      return {
+        ok: false,
+        reason: 'too-many-images',
+        message: `A book can contain at most ${limits.maxImages} images inserted from Markdown.`,
+      };
+    if (totalBytes + parsed.data.byteLength > limits.maxTotalBytes)
+      return {
+        ok: false,
+        reason: 'images-too-large',
+        message: 'Images inserted from Markdown exceed the total size limit.',
+      };
+    let id = `editor-image-${String(nextImageNumber).padStart(4, '0')}`;
+    while (assets[id]) {
+      nextImageNumber += 1;
+      id = `editor-image-${String(nextImageNumber).padStart(4, '0')}`;
+    }
+    const extension = CONTENT_IMAGE_MEDIA_EXTENSIONS.get(parsed.mediaType);
+    assets[id] = {
+      id,
+      mediaType: parsed.mediaType,
+      data: parsed.data,
+      filename: `${id}.${extension}`,
+    };
+    assetsByUrl.set(canonicalSource, id);
+    imageCount += 1;
+    totalBytes += parsed.data.byteLength;
+    nextImageNumber += 1;
+  }
+
+  const normalizedMarkdown = [...replacements].reduce(
+    (content, [source, replacement]) => content.split(source).join(replacement),
+    markdown,
+  );
+  return {
+    ok: true,
+    model:
+      Object.keys(assets).length === Object.keys(model.assets).length
+        ? model
+        : { ...model, assets },
+    markdown: normalizedMarkdown,
+  };
+}
+
+function parseContentImageDataUri(
+  source: string,
+  maxImageBytes: number,
+):
+  | {
+      ok: true;
+      mediaType: ContentImageMediaType;
+      data: Uint8Array;
+    }
+  | Extract<ContentImageImportResult, { ok: false }> {
+  const comma = source.indexOf(',');
+  const mediaType = source
+    .slice(5, comma)
+    .replace(/;base64$/i, '')
+    .toLowerCase();
+  const encoded = source.slice(comma + 1);
+  if (
+    comma < 0 ||
+    !/;base64$/i.test(source.slice(0, comma)) ||
+    !CONTENT_IMAGE_MEDIA_EXTENSIONS.has(mediaType as ContentImageMediaType) ||
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) ||
+    encoded.length % 4 === 1
+  )
+    return invalidContentImage();
+  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
+  if (Math.floor((encoded.length * 3) / 4) - padding > maxImageBytes)
+    return {
+      ok: false,
+      reason: 'image-too-large',
+      message: 'An image inserted from Markdown exceeds the size limit.',
+    };
+  let data: Uint8Array;
+  try {
+    const binary = atob(encoded);
+    data = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    return invalidContentImage();
+  }
+  if (
+    data.byteLength > maxImageBytes ||
+    !hasContentImageSignature(mediaType, data)
+  )
+    return data.byteLength > maxImageBytes
+      ? {
+          ok: false,
+          reason: 'image-too-large',
+          message: 'An image inserted from Markdown exceeds the size limit.',
+        }
+      : invalidContentImage();
+  return {
+    ok: true,
+    mediaType: mediaType as ContentImageMediaType,
+    data,
+  };
+}
+
+function invalidContentImage(): Extract<
+  ContentImageImportResult,
+  { ok: false }
+> {
+  return {
+    ok: false,
+    reason: 'invalid-image',
+    message:
+      'Inserted images must be valid base64-encoded AVIF, GIF, JPEG, PNG, or WebP data URIs.',
+  };
+}
+
+function hasContentImageSignature(
+  mediaType: string,
+  data: Uint8Array,
+): boolean {
+  const ascii = (start: number, end: number): string =>
+    String.fromCharCode(...data.subarray(start, end));
+  if (mediaType === 'image/png')
+    return [137, 80, 78, 71, 13, 10, 26, 10].every(
+      (byte, index) => data[index] === byte,
+    );
+  if (mediaType === 'image/jpeg')
+    return data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+  if (mediaType === 'image/gif')
+    return ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a';
+  if (mediaType === 'image/webp')
+    return ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP';
+  return (
+    mediaType === 'image/avif' &&
+    ascii(4, 8) === 'ftyp' &&
+    ['avif', 'avis'].includes(ascii(8, 12))
+  );
+}
+
 function collectImageSources(tokens: readonly Token[]): string[] {
   return tokens.flatMap((token) => {
     const current =
@@ -183,7 +378,14 @@ function collectImageSources(tokens: readonly Token[]): string[] {
               : [],
           )
         : [];
-    return [...current, ...nested, ...items];
+    const tableCells =
+      token.type === 'table'
+        ? [
+            ...(token as Tokens.Table).header,
+            ...(token as Tokens.Table).rows.flat(),
+          ].flatMap((cell) => collectImageSources(cell.tokens))
+        : [];
+    return [...current, ...nested, ...items, ...tableCells];
   });
 }
 
@@ -197,7 +399,7 @@ export function saveContentPart(
   const original = model.blocks.slice(start, end);
   const replacement = restoreBlockSemantics(
     original,
-    markdownToBlocks(markdown, model),
+    markdownToBlocks(normalizeContentPartMarkdown(markdown), model),
   );
   const delta = replacement.length - (end - start);
   return {
@@ -216,6 +418,41 @@ export function saveContentPart(
       ),
     },
   };
+}
+
+export function normalizeContentPartMarkdown(markdown: string): string {
+  const segments = markdown.split(/(\r?\n)/);
+  let fence: { marker: '`' | '~'; length: number } | undefined;
+  for (let index = 0; index < segments.length; index += 2) {
+    const line = segments[index] ?? '';
+    const content = line.replace(/^(?: {0,3}> ?)+/, '');
+    const opening = /^ {0,3}(`{3,}|~{3,})/.exec(content)?.[1];
+    if (fence) {
+      const closing = new RegExp(
+        `^ {0,3}\\${fence.marker}{${fence.length},}[ \\t]*$`,
+      );
+      if (closing.test(content)) fence = undefined;
+      continue;
+    }
+    if (opening) {
+      fence = {
+        marker: opening[0] as '`' | '~',
+        length: opening.length,
+      };
+      continue;
+    }
+    const nextLine = segments[index + 2];
+    if (
+      nextLine !== undefined &&
+      nextLine.trim().length > 0 &&
+      !/^(?: {4}|\t)/.test(content) &&
+      /[ \t]{2,}$/.test(line)
+    )
+      segments[index] = line.replace(/[ \t]{2,}$/, '');
+    else continue;
+    segments[index + 1] = `${segments[index + 1] ?? '\n'}\n`;
+  }
+  return segments.join('');
 }
 
 export function mergeContentPart(

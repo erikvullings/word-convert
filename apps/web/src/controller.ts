@@ -41,6 +41,7 @@ import {
   contentPartSummaries,
   createPracticalContentPartState,
   deleteContentPart,
+  importContentDataImages,
   mergeContentPart,
   normalizeContentPartState,
   saveContentPart,
@@ -151,9 +152,19 @@ export function createBrowserController(): AppController {
     if (!state.model || state.epubContentEdit === undefined) return true;
     ensureEpubParts();
     if (!state.epubParts) return true;
-    const unsupportedImages = unsupportedContentImageSources(
+    const importedImages = importContentDataImages(
       state.epubContentEdit,
       state.model,
+    );
+    if (!importedImages.ok) {
+      state.epubEditorNotice = importedImages.message;
+      state.status = 'ready';
+      delete state.operationId;
+      return false;
+    }
+    const unsupportedImages = unsupportedContentImageSources(
+      importedImages.markdown,
+      importedImages.model,
     );
     if (unsupportedImages.length > 0) {
       state.epubEditorNotice =
@@ -163,9 +174,9 @@ export function createBrowserController(): AppController {
       return false;
     }
     const saved = saveContentPart(
-      state.model,
+      importedImages.model,
       state.epubParts,
-      state.epubContentEdit,
+      importedImages.markdown,
     );
     state.model = saved.model;
     state.epubParts = normalizeParts
@@ -181,9 +192,19 @@ export function createBrowserController(): AppController {
   };
   const saveFullEpubContent = (clearDraft = true): boolean => {
     if (!state.model || state.epubFullContentEdit === undefined) return true;
-    const unsupportedImages = unsupportedContentImageSources(
+    const importedImages = importContentDataImages(
       state.epubFullContentEdit,
       state.model,
+    );
+    if (!importedImages.ok) {
+      state.epubEditorNotice = importedImages.message;
+      state.status = 'ready';
+      delete state.operationId;
+      return false;
+    }
+    const unsupportedImages = unsupportedContentImageSources(
+      importedImages.markdown,
+      importedImages.model,
     );
     if (unsupportedImages.length > 0) {
       state.epubEditorNotice =
@@ -192,7 +213,10 @@ export function createBrowserController(): AppController {
       delete state.operationId;
       return false;
     }
-    state.model = withMarkdownContent(state.model, state.epubFullContentEdit);
+    state.model = withMarkdownContent(
+      importedImages.model,
+      importedImages.markdown,
+    );
     state.epubParts = createPracticalContentPartState(state.model);
     if (clearDraft) {
       state.epubEditorRevision += 1;
@@ -1062,6 +1086,21 @@ export function createBrowserController(): AppController {
       const activeIndex = state.epubParts.activeIndex + offset;
       if (activeIndex < 0 || activeIndex >= state.epubParts.starts.length)
         return;
+      state.epubParts = { ...state.epubParts, activeIndex };
+      state.previewMode = 'edit';
+      delete state.epubContentEdit;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
+      delete state.epubEditorNotice;
+    },
+    setEpubPart(partIndex) {
+      if (!saveActiveEpubPart()) return;
+      ensureEpubParts();
+      if (!state.epubParts || !Number.isInteger(partIndex)) return;
+      const activeIndex = Math.min(
+        Math.max(0, partIndex),
+        state.epubParts.starts.length - 1,
+      );
       state.epubParts = { ...state.epubParts, activeIndex };
       state.previewMode = 'edit';
       delete state.epubContentEdit;

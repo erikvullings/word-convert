@@ -13,6 +13,7 @@ import {
   createContentPartState,
   createPracticalContentPartState,
   deleteContentPart,
+  importContentDataImages,
   markdownToBlocks,
   mergeContentPart,
   saveContentPart,
@@ -142,6 +143,49 @@ describe('EPUB content editor', () => {
       metadata: document.metadata,
       assets: document.assets,
     });
+  });
+
+  it('saves hard line breaks in a part as separate paragraphs', () => {
+    const document = model();
+    document.blocks = markdownToBlocks(
+      '# One\n\nOriginal.\n\nMore text.',
+      document,
+    );
+
+    const saved = saveContentPart(
+      document,
+      createContentPartState(document),
+      '# One\n\nFirst line.  \nSecond line.\n\nMore text.',
+    );
+
+    expect(saved.model.blocks).toMatchObject([
+      { type: 'heading', children: [{ text: 'One' }] },
+      { type: 'paragraph', children: [{ text: 'First line.' }] },
+      { type: 'paragraph', children: [{ text: 'Second line.' }] },
+      { type: 'paragraph', children: [{ text: 'More text.' }] },
+    ]);
+  });
+
+  it('preserves trailing spaces and newlines inside fenced code blocks', () => {
+    const document = model();
+    document.blocks = markdownToBlocks(
+      '# One\n\nOriginal.\n\nMore text.',
+      document,
+    );
+
+    const saved = saveContentPart(
+      document,
+      createContentPartState(document),
+      ['# One', '', '```txt', 'line  ', 'next', '```', '', 'More text.'].join(
+        '\n',
+      ),
+    );
+
+    expect(saved.model.blocks).toMatchObject([
+      { type: 'heading' },
+      { type: 'codeBlock', text: 'line  \nnext' },
+      { type: 'paragraph', children: [{ text: 'More text.' }] },
+    ]);
   });
 
   it('merges only adjacent part boundaries without changing document content', () => {
@@ -369,6 +413,103 @@ describe('EPUB content editor', () => {
         document,
       ),
     ).toEqual(['https://example.com/image.png']);
+  });
+
+  it('imports newly inserted base64 images into the document model', () => {
+    const document = model();
+    const source =
+      '![Pixel](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nQAAAABJRU5ErkJggg==)';
+
+    const imported = importContentDataImages(source, document);
+
+    expect(imported.ok).toBe(true);
+    if (!imported.ok) return;
+    expect(imported.model.assets['editor-image-0001']).toMatchObject({
+      id: 'editor-image-0001',
+      mediaType: 'image/png',
+      filename: 'editor-image-0001.png',
+    });
+    expect(imported.model.assets['editor-image-0001']?.data).toHaveLength(67);
+    expect(unsupportedContentImageSources(source, imported.model)).toEqual([]);
+    expect(markdownToBlocks(source, imported.model)).toMatchObject([
+      {
+        type: 'paragraph',
+        children: [{ type: 'image', assetId: 'editor-image-0001' }],
+      },
+    ]);
+  });
+
+  it('imports base64 images inserted inside Markdown table cells', () => {
+    const document = model();
+    const source = [
+      '| Image |',
+      '| --- |',
+      '| ![Pixel](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nQAAAABJRU5ErkJggg==) |',
+    ].join('\n');
+
+    const imported = importContentDataImages(source, document);
+
+    expect(imported.ok).toBe(true);
+    if (!imported.ok) return;
+    expect(imported.model.assets['editor-image-0001']).toMatchObject({
+      mediaType: 'image/png',
+    });
+    expect(markdownToBlocks(source, imported.model)).toMatchObject([
+      {
+        type: 'table',
+        rows: [
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Image' }],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'image', assetId: 'editor-image-0001' }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('rejects inserted base64 data that is not the declared image type', () => {
+    const imported = importContentDataImages(
+      '![Not an image](data:image/png;base64,SGVsbG8=)',
+      model(),
+    );
+
+    expect(imported).toMatchObject({
+      ok: false,
+      reason: 'invalid-image',
+    });
+  });
+
+  it('bounds newly inserted base64 image data before decoding it', () => {
+    const imported = importContentDataImages(
+      '![Pixel](data:image/png;base64,iVBORw0KGgo=)',
+      model(),
+      { maxImages: 1, maxImageBytes: 4, maxTotalBytes: 8 },
+    );
+
+    expect(imported).toMatchObject({
+      ok: false,
+      reason: 'image-too-large',
+    });
   });
 
   it('does not consume body text when an image caption is deleted', () => {

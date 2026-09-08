@@ -22,30 +22,33 @@ reset or duplicate that state.
 
 - The content editor presents one ordered chapter or part at a time and clearly
   identifies the current part and its position in the book.
-- Previous and next controls save the current part before switching, are
-  keyboard accessible, and are disabled at the corresponding book boundary.
-- Every action that leaves or restructures the current part, including preview,
-  merge, and split, first applies the latest editor content to the in-memory
-  semantic document model so no accepted edit is lost.
-- Users can preview either the current part or the entire book. Both previews
-  use the semantic HTML fragment renderer and the shared restrictive DOMPurify
-  insertion policy.
-- Users can merge the current part with an immediately adjacent part without
-  losing content, assets, equations, notes, ordering, or semantic structure.
-- With the cursor or selection on a level-two (`##`) heading, users can split
-  the current part immediately before that heading. The selected heading starts
-  the new adjacent part; invalid split locations are rejected with a clear
-  editor notice.
+- The part editor uses the same first/previous/next/last pager pattern as the
+  PDF preview. Navigation saves the current part before switching, is keyboard
+  accessible, and is disabled at the corresponding book boundary.
+- The original PDF and active-part editor remain side by side at equal viewport
+  heights, with independent scrolling and aligned pagination.
+- Edit mode stays focused on one practical part at a time. It does not expose
+  separate preview, manual merge, or manual split controls; undersized parts are
+  folded into an adjacent part automatically.
+- The full-book Markdown tab remains editable, uses the regular Markdown
+  editor, and masks base64 image payloads without discarding their underlying
+  data.
+- Markdown images inserted as validated base64 raster data are retained in the
+  semantic document model and final EPUB.
+- A part can be deleted after confirmation, except when it is the only
+  remaining part.
+- Hard Markdown line breaks in Edit mode become paragraph boundaries rather
+  than inline `<br>` elements.
 - Book-level metadata and output settings remain unchanged while navigating,
-  splitting, merging, and previewing parts, and final conversion still uses the
-  complete reconstructed book.
-- Focused tests cover part derivation, boundary navigation, autosave-before-
-  switch, current-part versus whole-book preview, lossless adjacent merges,
-  valid and invalid `##` splits, and preservation of book-level state.
+  deleting, and editing parts, and final conversion still uses the complete
+  reconstructed book.
+- Focused tests cover practical part derivation, pager navigation,
+  autosave-before-switch, base64 image ingestion, paragraph normalization,
+  deletion, and preservation of book-level state.
 
 ## Implementation Notes
 
-- Build part operations as pure transformations around
+- Build part derivation and save operations as pure transformations around
   `apps/web/src/content-editor.ts`, then wire them through
   `apps/web/src/state.ts`, `apps/web/src/controller.ts`, and
   `apps/web/src/app.ts`.
@@ -55,8 +58,9 @@ reset or duplicate that state.
 - Keep part boundaries as editor workflow state over the semantic model rather
   than adding output-format-specific chapter objects. Final writers must receive
   the same complete `DocumentModel` contract.
-- Reuse the HTML writer's fragment mode for both preview scopes, and sanitize
-  only at the browser insertion boundary.
+- Keep the PDF.js worker and decoder assets on stable, base-path-safe,
+  application-owned URLs so original-page previews survive Vite dependency
+  re-optimization and work in static builds.
 
 ## Agent Notes
 
@@ -93,3 +97,12 @@ reset or duplicate that state.
   Replaced the mode radios with accessible tabs, removed the duplicate full-text
   mode, moved EPUB guidance below the workspace, and upgraded the Markdown
   dependencies.
+- 2026-09-08 GitHub Copilot: Replaced the raw full-book Markdown textarea with
+  the regular Markdown editor, masked base64 payloads, and imported
+  signature-checked raster data URIs into semantic assets with bounded resource
+  limits.
+- 2026-09-08 GitHub Copilot: Simplified Edit mode to per-part editing,
+  deletion, and a shared first/previous/next/last pager. Removed manual preview,
+  merge, and split controls, normalized hard line breaks to paragraph
+  boundaries, matched editor and PDF viewport heights, and moved PDF.js workers
+  to a stable application-owned URL.

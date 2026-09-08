@@ -244,6 +244,57 @@ describe('browser controller', () => {
     });
   });
 
+  it('autosaves before jumping directly to a part', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks(
+      [
+        '# One',
+        '',
+        'Original.',
+        '',
+        'More one.',
+        '',
+        '# Two',
+        '',
+        'Keep two.',
+        '',
+        'More two.',
+        '',
+        '# Three',
+        '',
+        'Keep three.',
+        '',
+        'More three.',
+      ].join('\n'),
+      document,
+    );
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.setEpubContent?.('# One\n\nRevised.\n\nMore one.');
+
+    controller.setEpubPart?.(2);
+
+    expect({
+      activeIndex: controller.state.epubParts?.activeIndex,
+      firstParagraph: controller.state.model.blocks[1],
+      draft: controller.state.epubContentEdit,
+    }).toMatchObject({
+      activeIndex: 2,
+      firstParagraph: {
+        type: 'paragraph',
+        children: [{ text: 'Revised.' }],
+      },
+      draft: undefined,
+    });
+  });
+
   it('merges a newly shortened part before navigating onward', () => {
     const worker = new WorkerStub();
     stubWorkers(worker);
@@ -361,6 +412,38 @@ describe('browser controller', () => {
       {
         type: 'paragraph',
         children: [{ text: 'Added from full text.' }],
+      },
+    ]);
+  });
+
+  it('stores base64 images inserted in the full-book Markdown editor', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.previewMode = 'source';
+    controller.setEpubFullContent?.(
+      '# One\n\n![Pixel](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nQAAAABJRU5ErkJggg==)',
+    );
+
+    controller.setEpubPreviewMode?.('edit');
+
+    expect(controller.state.epubEditorNotice).toBeUndefined();
+    expect(controller.state.model.assets['editor-image-0001']).toMatchObject({
+      mediaType: 'image/png',
+    });
+    expect(controller.state.model.blocks).toMatchObject([
+      { type: 'heading', children: [{ text: 'One' }] },
+      {
+        type: 'paragraph',
+        children: [{ type: 'image', assetId: 'editor-image-0001' }],
       },
     ]);
   });

@@ -62,10 +62,9 @@ import { sanitizeEditedSourceHtml } from './text-document-import.ts';
 import {
   contentEditorSource,
   contentPartModel,
-  contentPartSplitHeadings,
   contentPartSummaries,
   createPracticalContentPartState,
-  withMarkdownContent,
+  normalizeContentPartMarkdown,
 } from './content-editor.ts';
 
 const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
@@ -124,6 +123,7 @@ export interface AppController {
   setEpubFullContent?(content: string): void;
   setEpubPreviewMode?(mode: PreviewMode): void;
   navigateEpubPart?(direction: 'previous' | 'next'): void;
+  setEpubPart?(partIndex: number): void;
   previewEpubContent?(scope: EpubPreviewScope): void;
   mergeEpubPart?(direction: 'previous' | 'next'): void;
   deleteEpubPart?(): void;
@@ -766,6 +766,17 @@ function pdfPaginationControls(
   pageCount: number,
 ): m.Vnode {
   const page = controller.state.pdfPreviewPage;
+  return paginationControls('page', page, pageCount, (target) =>
+    controller.setPdfPreviewPage?.(target),
+  );
+}
+
+function paginationControls(
+  item: 'page' | 'part',
+  current: number,
+  total: number,
+  select: (target: number) => void,
+): m.Vnode {
   const button = (
     label: string,
     symbol: string,
@@ -779,17 +790,18 @@ function pdfPaginationControls(
         disabled,
         title: label,
         'aria-label': label,
-        onclick: () => controller.setPdfPreviewPage?.(target),
+        onclick: () => select(target),
       },
       symbol,
     );
+  const name = `${item[0]?.toUpperCase()}${item.slice(1)}`;
   return m('.datatable-pagination.pdf-pagination', [
     m('.pagination-controls', [
-      button('First page', '⏮', 1, page <= 1),
-      button('Previous page', '◀', page - 1, page <= 1),
-      m('span.page-info', `Page ${page} of ${pageCount}`),
-      button('Next page', '▶', page + 1, page >= pageCount),
-      button('Last page', '⏭', pageCount, page >= pageCount),
+      button(`First ${item}`, '⏮', 1, current <= 1),
+      button(`Previous ${item}`, '◀', current - 1, current <= 1),
+      m('span.page-info', `${name} ${current} of ${total}`),
+      button(`Next ${item}`, '▶', current + 1, current >= total),
+      button(`Last ${item}`, '⏭', total, current >= total),
     ]),
   ]);
 }
@@ -1459,6 +1471,7 @@ function epubMarkdownEditor(
   controller: AppController,
   source: string,
 ): m.Vnode {
+  const theme = editorTheme(controller.state.preferences.theme);
   return m('section.book-full-editor[aria-label="Full book Markdown editor"]', [
     ...(controller.state.epubEditorNotice
       ? [
@@ -1469,16 +1482,20 @@ function epubMarkdownEditor(
           ),
         ]
       : []),
-    m('textarea.epub-markdown-editor', {
-      key: `epub-full-markdown-${controller.state.epubEditorRevision}`,
-      value: source,
-      'aria-label': 'Full book Markdown',
-      oninput: (event: InputEvent) =>
-        controller.setEpubFullContent?.(
-          (event.currentTarget as HTMLTextAreaElement).value,
-        ),
-      spellcheck: false,
+    m(MarkdownEditor, {
+      key: `epub-full-markdown-${controller.state.epubEditorRevision}-${theme}`,
+      content: source,
+      mode: 'markdown',
+      onContentChange: (newContent: string) =>
+        controller.setEpubFullContent?.(newContent),
+      htmlToMarkdown: (content: string) => content,
+      markdownToHtml: renderMarkdown,
+      hideBase64Images: true,
+      onModeChange: () => undefined,
       placeholder: 'Edit the full book…',
+      theme,
+      toolbar: true,
+      showTabs: false,
     }),
   ]);
 }
@@ -1571,87 +1588,14 @@ function epubPartEditor(controller: AppController, source: string): m.Vnode {
     state.epubParts ?? createPracticalContentPartState(state.model);
   const parts = contentPartSummaries(state.model, partState);
   const activePart = parts[partState.activeIndex];
-  const currentModel = contentPartModel(state.model, partState);
-  const draftModel =
-    state.epubContentEdit === undefined
-      ? currentModel
-      : withMarkdownContent(currentModel, state.epubContentEdit);
-  const splitHeadings = contentPartSplitHeadings(draftModel, {
-    starts: [0],
-    activeIndex: 0,
-  });
   const theme = editorTheme(state.preferences.theme);
   return m('section.book-part-editor[aria-label="Book part editor"]', [
     m('.book-part-heading', [
-      m('div', [
-        m('h3', activePart?.title ?? `Part ${partState.activeIndex + 1}`),
-        m(
-          'p[aria-live="polite"]',
-          `Part ${partState.activeIndex + 1} of ${parts.length}`,
-        ),
-      ]),
-      m('.book-part-navigation', [
-        m(FlatButton, {
-          label: 'Previous part',
-          disabled: partState.activeIndex === 0,
-          onclick: () => controller.navigateEpubPart?.('previous'),
-        }),
-        m(FlatButton, {
-          label: 'Next part',
-          disabled: partState.activeIndex >= parts.length - 1,
-          onclick: () => controller.navigateEpubPart?.('next'),
-        }),
-      ]),
-    ]),
-    m('.book-part-actions', [
-      m(Button, {
-        label: 'Preview this part',
-        onclick: () => controller.previewEpubContent?.('part'),
-      }),
-      m(Button, {
-        label: 'Preview entire book',
-        onclick: () => controller.previewEpubContent?.('book'),
-      }),
-      m(FlatButton, {
-        label: 'Merge with previous',
-        disabled: partState.activeIndex === 0,
-        onclick: () => controller.mergeEpubPart?.('previous'),
-      }),
-      m(FlatButton, {
-        label: 'Merge with next',
-        disabled: partState.activeIndex >= parts.length - 1,
-        onclick: () => controller.mergeEpubPart?.('next'),
-      }),
+      m('h3', activePart?.title ?? `Part ${partState.activeIndex + 1}`),
       m(FlatButton, {
         label: 'Delete part',
         disabled: parts.length <= 1,
         onclick: () => controller.deleteEpubPart?.(),
-      }),
-    ]),
-    m('.book-part-split', [
-      m(Select<number>, {
-        label: 'Level-two heading',
-        checkedId: state.epubSplitBlockOffset ?? -1,
-        options: [
-          { id: -1, label: 'Choose a ## heading', disabled: true },
-          ...splitHeadings.map(({ blockOffset, title }) => ({
-            id: blockOffset,
-            label: title || 'Untitled heading',
-          })),
-        ],
-        onchange: (checkedIds: number[]) => {
-          const blockOffset = checkedIds[0];
-          controller.setEpubSplitHeading?.(
-            blockOffset === undefined || blockOffset < 0
-              ? undefined
-              : blockOffset,
-          );
-        },
-      }),
-      m(Button, {
-        label: 'Split at heading',
-        disabled: state.epubSplitBlockOffset === undefined,
-        onclick: () => controller.splitEpubPart?.(),
       }),
     ]),
     state.epubEditorNotice
@@ -1660,7 +1604,7 @@ function epubPartEditor(controller: AppController, source: string): m.Vnode {
     m('.book-part-editor-content', [
       m(MarkdownEditor, {
         key: `epub-part-${partState.activeIndex}-${state.epubEditorRevision}-${theme}`,
-        content: renderMarkdown(source),
+        content: renderMarkdown(normalizeContentPartMarkdown(source)),
         mode: 'wysiwyg',
         onContentChange: (newContent: string) => {
           state.epubContentEdit = newContent;
@@ -1668,12 +1612,25 @@ function epubPartEditor(controller: AppController, source: string): m.Vnode {
         },
         htmlToMarkdown: epubEditorHtmlToMarkdown,
         markdownToHtml: renderMarkdown,
+        onModeChange: () => undefined,
         placeholder: 'Edit document content…',
         theme,
         toolbar: true,
-        showTabs: true,
+        showTabs: false,
       }),
     ]),
+    paginationControls(
+      'part',
+      partState.activeIndex + 1,
+      parts.length,
+      (target) => {
+        if (target === partState.activeIndex)
+          controller.navigateEpubPart?.('previous');
+        else if (target === partState.activeIndex + 2)
+          controller.navigateEpubPart?.('next');
+        else controller.setEpubPart?.(target - 1);
+      },
+    ),
   ]);
 }
 
@@ -1700,7 +1657,9 @@ function outputPreviewWorkspace(
           ])
         : null,
       m('section.preview-pane.preview-pane--converted', [
-        visible ? m('h3', 'Converted document') : null,
+        visible && state.previewMode !== 'edit'
+          ? m('h3', 'Converted document')
+          : null,
         converted,
       ]),
     ],

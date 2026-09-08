@@ -957,16 +957,40 @@ describe('App', () => {
     expect(rendered).toContain('Editable EPUB content');
     expect(rendered).toContain('Show original');
     expect(rendered).toContain('Part 1 of 1');
+    expect(rendered).toContain('First part');
     expect(rendered).toContain('Previous part');
     expect(rendered).toContain('Next part');
-    expect(rendered).toContain('"label":"Previous part","disabled":true');
-    expect(rendered).toContain('"label":"Next part","disabled":true');
-    expect(rendered).toContain('Preview this part');
-    expect(rendered).toContain('Preview entire book');
-    expect(rendered).toContain('Merge with previous');
-    expect(rendered).toContain('Merge with next');
+    expect(rendered).toContain('Last part');
+    expect(rendered).toContain(
+      '"disabled":true,"title":"Previous part","aria-label":"Previous part"',
+    );
+    expect(rendered).toContain(
+      '"disabled":true,"title":"Next part","aria-label":"Next part"',
+    );
+    expect(rendered).toContain('"showTabs":false');
     expect(rendered).toContain('Delete part');
-    expect(rendered).toContain('Split at heading');
+    expect(rendered).not.toContain('Preview this part');
+    expect(rendered).not.toContain('Preview entire book');
+    expect(rendered).not.toContain('Merge with previous');
+    expect(rendered).not.toContain('Merge with next');
+    expect(rendered).not.toContain('Split at heading');
+  });
+
+  it('renders EPUB hard line breaks as separate editable paragraphs', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.preferences.outputFormat = 'epub';
+    state.previewMode = 'edit';
+    state.model = editorModel();
+    state.epubContentEdit = 'First line.  \nSecond line.';
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain(
+      '<p>\\nFirst line.\\n</p>\\n\\n<p>\\nSecond line.\\n</p>',
+    );
+    expect(rendered).not.toContain('<br>');
   });
 
   it('renders Markdown as an editable full-book source with block spacing', () => {
@@ -989,7 +1013,9 @@ describe('App', () => {
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
     expect(rendered).toContain('Full book Markdown editor');
-    expect(rendered).toContain('epub-markdown-editor');
+    expect(rendered).toContain('"mode":"markdown"');
+    expect(rendered).toContain('"hideBase64Images":true');
+    expect(rendered).toContain('"showTabs":false');
     expect(rendered).toContain('# First\\n\\nOne.');
     expect(rendered).toContain('# Second\\n\\nTwo.');
   });
