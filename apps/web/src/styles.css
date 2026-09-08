@@ -370,14 +370,8 @@ h1 {
   text-align: center;
 }
 
-.document-file-input {
-  width: min(100%, 30rem);
-  color: var(--muted);
-  font: inherit;
-}
-
-.document-file-input::file-selector-button {
-  margin-right: 0.75rem;
+.document-file-picker {
+  max-width: 100%;
   padding: 0.8rem 1.2rem;
   border: 0;
   border-radius: 0.4rem;
@@ -388,7 +382,11 @@ h1 {
   font-weight: 700;
 }
 
-.document-file-input:focus-visible {
+.document-file-picker:hover {
+  background: var(--accent-strong);
+}
+
+.document-file-picker:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 3px;
 }

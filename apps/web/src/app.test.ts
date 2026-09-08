@@ -18,6 +18,7 @@ import {
   outputPreviewSource,
   renderApp,
   scaledPreviewScrollOffset,
+  selectDocumentWithPicker,
   type AppController,
 } from './app.ts';
 import { createInitialState } from './state.ts';
@@ -91,6 +92,34 @@ describe('App', () => {
   it('keeps the original PDF horizontally centred while scaling', () => {
     expect(scaledPreviewScrollOffset(0, 800, 800, 1_200)).toBe(200);
     expect(scaledPreviewScrollOffset(300, 800, 1_600, 2_400)).toBe(650);
+  });
+
+  it('selects a document through the File System Access picker', async () => {
+    const state = createInitialState('2026-08-29');
+    const controller = controllerFor(state);
+    const selectFiles = vi.fn();
+    controller.selectFiles = selectFiles;
+    const file = new File(['fixture'], 'fixture.pdf', {
+      type: 'application/pdf',
+    });
+    const showPicker = vi.fn(async () => [{ getFile: async () => file }]);
+
+    await selectDocumentWithPicker(controller, showPicker);
+
+    expect(showPicker).toHaveBeenCalledWith({
+      multiple: false,
+      types: [
+        {
+          description: 'Word and PDF documents',
+          accept: {
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+              ['.docx'],
+            'application/pdf': ['.pdf'],
+          },
+        },
+      ],
+    });
+    expect(selectFiles).toHaveBeenCalledWith([file]);
   });
 
   it.each([
@@ -194,9 +223,11 @@ describe('App', () => {
     expect(rendered).toContain('Go to WordConvert home');
     expect(rendered).toContain('All processing stays on this device');
     expect(rendered).toContain('Choose a DOCX or PDF document');
+    expect(rendered).toContain('"className":"document-file-picker"');
     expect(rendered).toContain(
       '"id":"document-input","className":"document-file-input"',
     );
+    expect(rendered).toContain('"hidden":true');
     expect(rendered).not.toContain('label.file-label');
     expect(rendered).not.toContain('or drag and drop');
     expect(rendered).toContain('Open a document from a URL');
