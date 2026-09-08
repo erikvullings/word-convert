@@ -21,7 +21,8 @@ distributed in its browser bundle.
 | long | 5.3.2 | Apache-2.0 | Daniel Wirtz and contributors | <https://github.com/dcodeIO/long.js> |
 | platform | 1.3.6 | MIT | Benjamin Tan and contributors | <https://github.com/bestiejs/platform.js> |
 | protobufjs | 7.6.6 | BSD-3-Clause | Daniel Wirtz and contributors | <https://github.com/protobufjs/protobuf.js> |
-| PDF.js (`pdfjs-dist`) | 6.2.108 | Apache-2.0 | Mozilla Foundation and PDF.js contributors | <https://github.com/mozilla/pdf.js> |
+| PDF.js (`pdfjs-dist`) | 6.3.289 | Apache-2.0 | Mozilla Foundation and PDF.js contributors | <https://github.com/mozilla/pdf.js> |
+| PDF.js image decoders (OpenJPEG, JBIG2/PDFium, QCMS, and PDF.js wrappers) | bundled with `pdfjs-dist` 6.3.289 | Apache-2.0, BSD-2-Clause, BSD-3-Clause, and MIT | Mozilla Foundation, Université catholique de Louvain and OpenJPEG contributors, PDFium Authors, Mozilla Corporation, Marti Maria | <https://github.com/mozilla/pdf.js/tree/master/external> |
 | slimdown-js | 1.5.0 | MIT | Copyright (c) 2019 Erik Vullings | <https://github.com/erikvullings/slimdown-js> |
 | slimdown-katex | 0.2.1 | MIT | No copyright notice in published package | <https://www.npmjs.com/package/slimdown-katex> |
 | Docling Heron model | revision `8f39ad3` | Apache-2.0 | IBM Research and Docling contributors | <https://huggingface.co/docling-project/docling-layout-heron> |
@@ -32,6 +33,8 @@ and the Docling Heron model are also used under Apache License 2.0. The reviewed
 distributions do not include a separate required `NOTICE` file. A copy of the
 Apache-2.0 terms is included in
 [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt).
+The decoder-specific upstream licence texts are distributed beside the decoder
+assets under `pdfjs/`.
 
 The MIT-licensed dependencies retain their upstream copyright and permission
 notices from the table above under these common terms:

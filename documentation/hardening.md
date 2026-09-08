@@ -26,7 +26,7 @@ This document is the release checklist for security, privacy, performance, and b
 | PDF formula recognition | At most 100 candidates per page and 1,000 per document; 4 MP per temporary crop, 40 MP total, and 512 decoder tokens; strict safe KaTeX validation; preserve source on every failure | Formula candidate, real-crop, fake-session adapter, cancellation, and opt-in real-model tests |
 | Remote document import | HTTPS only, omit credentials/referrer, enforce 50 MiB while streaming, validate HTML/Markdown/text/PDF response types, parse HTML inertly, and keep URL/bytes out of persistence | Remote document normalization, classification, limit, semantic-import, and failure tests |
 | Encrypted or malformed PDF | Reject before semantic analysis with private structured errors | Password-protected and malformed PDF corpus fixtures |
-| PDF external loading | Supply exact bytes; disable range, streaming, auto-fetch, system-font, and external WASM loading | Worker privacy regression spies on `fetch` during DOCX and PDF analysis |
+| PDF external loading | Supply exact bytes; disable range, streaming, auto-fetch, and system-font loading; page previews may fetch only bundled, same-origin PDF.js image decoders | Worker privacy regression spies on `fetch` during DOCX and PDF analysis; static build and decoder-path tests cover local decoder assets |
 | False-positive page-furniture removal | Crop bounds are explicit; repeated content is parity/position aware; medium/low confidence remains until user review | PDF layout tests cover crop boundaries, short documents, odd/even headers, and explicit candidate overrides |
 
 All reader limits are configurable through `DocxReaderOptions.limits`. Raising them increases peak memory exposure and should be a deliberate host-application decision.
@@ -34,6 +34,7 @@ All reader limits are configurable through `DocxReaderOptions.limits`. Raising t
 PDF limits are configurable through `PdfReaderOptions.limits`. The application
 conversion worker launches the bundled PDF.js module worker; conversion does not
 load optional CMaps, standard fonts, image decoders, or WASM from remote URLs.
+Source-page previews load only the bundled, same-origin PDF.js image decoders.
 
 ## Determinism and performance budget
 
@@ -46,7 +47,7 @@ deeply equal analysis and `DocumentModel` values.
 
 ## Browser support policy
 
-WordConvert targets the current and immediately previous major releases of Chrome, Edge, Firefox, and Safari on desktop, plus the corresponding current mobile engines. The production build targets ES2022 and relies on standards available in those releases: Web Workers, transferable `ArrayBuffer`, `Blob`, `File`, object URLs, structured cloning, HTML canvas, CSS Grid/Flexbox, and module scripts. Browsers exposing the File System Access API use their native save picker so the user can choose the output filename and folder. Other browsers retain the generated filename and use the standard browser download flow.
+WordConvert targets the current and immediately previous major releases of Chrome, Edge, Firefox, and Safari on desktop, plus the corresponding current mobile engines. The production build targets ES2022 and relies on standards available in those releases: Web Workers, WebAssembly, transferable `ArrayBuffer`, `Blob`, `File`, object URLs, structured cloning, HTML canvas, CSS Grid/Flexbox, and module scripts. Browsers exposing the File System Access API use their native save picker so the user can choose the output filename and folder. Other browsers retain the generated filename and use the standard browser download flow.
 
 Workflow URLs use the History API under the configured application base path.
 The static build emits `404.html` from the same application shell so GitHub
@@ -57,7 +58,7 @@ selection rather than persisting or reconstructing source data.
 
 Completed EPUB output can be handed to an installed mail client through the Web Share API when the browser reports file-sharing support. The EPUB remains in memory until this explicit user action and is passed as a `File` with the document title as the share title; no recipient, message body, URL, or remote service is supplied. Browsers without file-sharing support open an empty `mailto:` draft with only the encoded subject. The `mailto:` standard cannot attach local files, so attaching the EPUB in that fallback remains a manual mail-client action.
 
-PDF source-page previews are loaded only on request and rasterized on an HTML canvas with a maximum width of 1,200 pixels and a 4-megapixel budget. The browser-canvas path supports embedded fonts that PDF.js cannot reliably draw on `OffscreenCanvas` for some legacy PDFs. Preview rendering is best-effort so recoverable legacy-font errors do not produce blank pages; extraction remains strict. Preview tasks and PNG object URLs are released when replaced, when another source is selected, and when the page unloads.
+PDF source-page previews are loaded only on request and rasterized on an HTML canvas with a maximum width of 1,200 pixels and a 4-megapixel budget. The browser-canvas path supports embedded fonts that PDF.js cannot reliably draw on `OffscreenCanvas` for some legacy PDFs. Bundled OpenJPEG, JBIG2, and QCMS decoder assets allow scanned JPEG 2000 pages and masks to render without a network dependency; their JavaScript fallbacks are shipped beside the WebAssembly modules. Preview rendering is best-effort so recoverable legacy-font errors do not produce blank pages; extraction remains strict. Preview tasks and PNG object URLs are released when replaced, when another source is selected, and when the page unloads.
 
 Initial PDF cleanup analysis reads five deterministic representative pages by default, without extracting images. The user can increase and rescan that sample before the first full-document pass. Output choices remain unavailable until cleanup is applied to the complete document. Crop bands omit text only; images are retained even when they overlap a configured band.
 

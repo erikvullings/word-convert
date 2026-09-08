@@ -2,6 +2,9 @@ import { defineConfig } from 'vitest/config';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
+  define: {
+    __WORDCONVERT_BASE_PATH__: JSON.stringify('/'),
+  },
   resolve: {
     alias: {
       'virtual:wordconvert-formula-recognizer': fileURLToPath(

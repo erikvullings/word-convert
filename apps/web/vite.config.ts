@@ -9,6 +9,10 @@ import {
   textTellerAssetPath,
   type TexTellerAsset,
 } from './src/worker/texteller-assets.ts';
+import {
+  pdfJsDecoderAssetPath,
+  pdfJsDecoderAssets,
+} from './src/pdfjs-assets.ts';
 
 const repositoryName = 'word-convert';
 const browserFixture = fileURLToPath(
@@ -25,6 +29,9 @@ const configuredRecognizer = fileURLToPath(
     './src/worker/configured-formula-recognizer.texteller.ts',
     import.meta.url,
   ),
+);
+const pdfJsDecoderDirectory = fileURLToPath(
+  new URL('./node_modules/pdfjs-dist/wasm/', import.meta.url),
 );
 
 export function resolveTexTellerDevModelDirectory(
@@ -46,6 +53,53 @@ function formulaRecognizerPlugin(): Plugin {
       return source === 'virtual:wordconvert-formula-recognizer'
         ? configuredRecognizer
         : undefined;
+    },
+  };
+}
+
+function pdfJsDecoderAssetsPlugin(base: string): Plugin {
+  const developmentOrigin = 'http://wordconvert.invalid';
+  const developmentBase = new URL(base, developmentOrigin);
+  return {
+    name: 'wordconvert-pdfjs-decoder-assets',
+    configureServer(server) {
+      for (const file of pdfJsDecoderAssets) {
+        const requestPath = new URL(
+          pdfJsDecoderAssetPath(file),
+          developmentBase,
+        ).pathname;
+        server.middlewares.use(requestPath, (_request, response) => {
+          void readFile(resolve(pdfJsDecoderDirectory, file)).then(
+            (asset) => {
+              response.statusCode = 200;
+              response.setHeader(
+                'Content-Type',
+                file.endsWith('.wasm')
+                  ? 'application/wasm'
+                  : file.endsWith('.js')
+                    ? 'text/javascript; charset=utf-8'
+                    : 'text/plain; charset=utf-8',
+              );
+              response.end(asset);
+            },
+            () => {
+              response.statusCode = 404;
+              response.end();
+            },
+          );
+        });
+      }
+    },
+    async generateBundle() {
+      await Promise.all(
+        pdfJsDecoderAssets.map(async (file) => {
+          this.emitFile({
+            type: 'asset',
+            fileName: pdfJsDecoderAssetPath(file),
+            source: await readFile(resolve(pdfJsDecoderDirectory, file)),
+          });
+        }),
+      );
     },
   };
 }
@@ -148,6 +202,7 @@ export default defineConfig(({ command }) => {
     },
     plugins: [
       formulaRecognizerPlugin(),
+      pdfJsDecoderAssetsPlugin(base),
       {
         name: 'wordconvert-route-fallback',
         apply: 'build',

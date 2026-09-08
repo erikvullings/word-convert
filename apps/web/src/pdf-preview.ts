@@ -7,6 +7,8 @@ import {
 } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import pdfJsWorkerSrc from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 
+import { pdfJsDecoderBaseUrl } from './pdfjs-assets.ts';
+
 GlobalWorkerOptions.workerSrc = pdfJsWorkerSrc;
 
 export interface PdfPagePreviewResult {
@@ -58,7 +60,11 @@ export function createPdfPagePreviewRenderer(): PdfPagePreviewRenderer {
       disableFontFace: false,
       isOffscreenCanvasSupported: false,
       useSystemFonts: true,
-      useWasm: false,
+      useWasm: true,
+      wasmUrl: pdfJsDecoderBaseUrl(
+        __WORDCONVERT_BASE_PATH__,
+        globalThis.location.origin,
+      ),
       verbosity: 0,
     });
     loadingTasks.add(task);

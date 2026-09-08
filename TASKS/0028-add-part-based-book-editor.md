@@ -83,3 +83,7 @@ reset or duplicate that state.
   editor, making the Markdown view editable, folding parts smaller than three
   visible blocks into an adjacent part, rejecting undersized splits, and adding
   confirmed part deletion.
+- 2026-09-08 GitHub Copilot: Fixed blank previews and covers for scanned PDFs
+  that use JPEG 2000 images or JBIG2 masks. PDF.js now loads bundled,
+  same-origin OpenJPEG, JBIG2, and QCMS decoders under the configured
+  application base path, including offline precaching and JavaScript fallbacks.
