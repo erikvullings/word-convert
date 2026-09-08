@@ -322,16 +322,12 @@ function filePicker(
         ondrop,
       },
       [
-        m(
-          'label.file-label[for="document-input"]',
-          'Choose a DOCX or PDF document',
-        ),
-        m('input#document-input', {
+        m('input#document-input.document-file-input', {
           type: 'file',
+          'aria-label': 'Choose a DOCX or PDF document',
           accept: `${DOCX_MEDIA_TYPE},${PDF_MEDIA_TYPE},.docx,.pdf`,
           onchange,
         }),
-        m('p', 'or drag and drop a .docx or .pdf file here'),
       ],
     ),
     m(

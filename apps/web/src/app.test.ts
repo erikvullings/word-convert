@@ -189,6 +189,11 @@ describe('App', () => {
     expect(rendered).toContain('Go to WordConvert home');
     expect(rendered).toContain('All processing stays on this device');
     expect(rendered).toContain('Choose a DOCX or PDF document');
+    expect(rendered).toContain(
+      '"id":"document-input","className":"document-file-input"',
+    );
+    expect(rendered).not.toContain('label.file-label');
+    expect(rendered).not.toContain('or drag and drop');
     expect(rendered).toContain('Open a document from a URL');
     expect(rendered).toContain('browser-default');
     expect(rendered).toContain('Formula recognition. ');

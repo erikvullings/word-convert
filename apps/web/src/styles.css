@@ -370,25 +370,25 @@ h1 {
   text-align: center;
 }
 
-.file-label {
+.document-file-input {
+  width: min(100%, 30rem);
+  color: var(--muted);
+  font: inherit;
+}
+
+.document-file-input::file-selector-button {
+  margin-right: 0.75rem;
   padding: 0.8rem 1.2rem;
+  border: 0;
   border-radius: 0.4rem;
   background: var(--accent);
   color: var(--panel);
   cursor: pointer;
+  font: inherit;
   font-weight: 700;
 }
 
-.drop-zone input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-}
-
-.drop-zone input:focus + p,
-.file-label:focus-within {
+.document-file-input:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 3px;
 }
