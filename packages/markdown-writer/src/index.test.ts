@@ -237,6 +237,34 @@ describe('writeMarkdown', () => {
     );
   });
 
+  it('does not escape an isolated literal asterisk', () => {
+    const markdown = writeMarkdown(
+      model([
+        {
+          type: 'paragraph',
+          children: [{ type: 'text', text: 'A note * marker' }],
+        },
+      ]),
+      { conversionDate: '2026-07-15' },
+    );
+
+    expect(markdown).toBe('A note * marker\n');
+  });
+
+  it('escapes an asterisk that could become a list marker', () => {
+    const markdown = writeMarkdown(
+      model([
+        {
+          type: 'paragraph',
+          children: [{ type: 'text', text: '* Not a list item' }],
+        },
+      ]),
+      { conversionDate: '2026-07-15' },
+    );
+
+    expect(markdown).toBe('\\* Not a list item\n');
+  });
+
   it('coalesces adjacent text runs with identical marks', () => {
     const input = model([
       {

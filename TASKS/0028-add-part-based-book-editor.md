@@ -37,13 +37,13 @@ reset or duplicate that state.
   semantic document model and final EPUB.
 - A part can be deleted after confirmation, except when it is the only
   remaining part.
-- Hard Markdown line breaks in Edit mode become paragraph boundaries rather
-  than inline `<br>` elements.
+- Markdown line breaks remain line breaks in Edit mode instead of becoming
+  separate paragraphs.
 - Book-level metadata and output settings remain unchanged while navigating,
   deleting, and editing parts, and final conversion still uses the complete
   reconstructed book.
 - Focused tests cover practical part derivation, pager navigation,
-  autosave-before-switch, base64 image ingestion, paragraph normalization,
+  autosave-before-switch, base64 image ingestion, line-break preservation,
   deletion, and preservation of book-level state.
 
 ## Implementation Notes
@@ -103,11 +103,14 @@ reset or duplicate that state.
   limits.
 - 2026-09-08 GitHub Copilot: Simplified Edit mode to per-part editing,
   deletion, and a shared first/previous/next/last pager. Removed manual preview,
-  merge, and split controls, normalized hard line breaks to paragraph
-  boundaries, matched editor and PDF viewport heights, and moved PDF.js workers
-  to a stable application-owned URL.
+  merge, and split controls, matched editor and PDF viewport heights, and moved
+  PDF.js workers to a stable application-owned URL.
 - 2026-09-08 GitHub Copilot: Restored complete poem editing by deriving
   practical parts from both level-one book headings and level-two poem
   headings, while continuing to fold sections smaller than three visible
-  blocks into an adjacent part. Full-book Markdown saves now normalize hard
-  line breaks before semantic reconstruction and part derivation.
+  lines into an adjacent part.
+- 2026-09-08 GitHub Copilot: Corrected line-break handling so two-space
+  Markdown breaks remain editable line breaks instead of becoming paragraphs.
+  Aligned the original PDF and part-editor viewports, rendered CommonMark
+  punctuation escapes without visible slashes, and removed isolated OCR
+  backslash noise at PDF page boundaries.

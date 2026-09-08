@@ -64,7 +64,6 @@ import {
   contentPartModel,
   contentPartSummaries,
   createPracticalContentPartState,
-  normalizeContentPartMarkdown,
 } from './content-editor.ts';
 
 const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
@@ -1604,7 +1603,7 @@ function epubPartEditor(controller: AppController, source: string): m.Vnode {
     m('.book-part-editor-content', [
       m(MarkdownEditor, {
         key: `epub-part-${partState.activeIndex}-${state.epubEditorRevision}-${theme}`,
-        content: renderMarkdown(normalizeContentPartMarkdown(source)),
+        content: renderMarkdown(source),
         mode: 'wysiwyg',
         onContentChange: (newContent: string) => {
           state.epubContentEdit = newContent;
@@ -1644,7 +1643,14 @@ function outputPreviewWorkspace(
   const pageCount = state.pdfAnalysis?.pageCount ?? 1;
   return m(
     '.preview-comparison',
-    { class: visible ? 'preview-comparison--visible' : '' },
+    {
+      class: [
+        visible ? 'preview-comparison--visible' : '',
+        state.previewMode === 'edit' ? 'preview-comparison--edit' : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
+    },
     [
       visible
         ? m('section.preview-pane.preview-pane--original', [

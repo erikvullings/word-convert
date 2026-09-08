@@ -1242,8 +1242,15 @@ async function linesToBlocks(
       taggedRoleForLine(rolesByMarkedContentId, firstLine) === undefined &&
       previousBlock.styleId === styleId(firstLine) &&
       canMergeAcrossPage(previousLine, firstLine);
-    if (contentPages++ > 0 && !continuesPreviousParagraph)
+    if (contentPages++ > 0 && !continuesPreviousParagraph) {
+      const trailingBlock = blocks.at(-1);
+      if (
+        trailingBlock?.type === 'paragraph' &&
+        inlineText(trailingBlock.children).trim() === '\\'
+      )
+        blocks.pop();
       blocks.push({ type: 'pageBreak' });
+    }
     const previousPageLine = previousLine;
     previousLine = undefined;
     const paragraphCandidates: Array<{

@@ -461,7 +461,7 @@ function renderText(
 ): string {
   const content = marks.some((mark) => mark.type === 'code')
     ? inlineCode(value)
-    : escapeText(value, escapeBrackets);
+    : escapeText(value, escapeBrackets, marks.length > 0);
   return applyMarks(content, marks, context);
 }
 
@@ -481,8 +481,20 @@ function longestRun(value: string, character: string): number {
   return longest;
 }
 
-function escapeText(value: string, escapeBrackets = false): string {
-  return value.replace(escapeBrackets ? /[\\`*_[\]<>]/g : /[\\`*_<>]/g, '\\$&');
+function escapeText(
+  value: string,
+  escapeBrackets = false,
+  forceAsteriskEscape = false,
+): string {
+  const escaped = value.replace(
+    escapeBrackets ? /[\\`_[\]<>]/g : /[\\`_<>]/g,
+    '\\$&',
+  );
+  const asterisks = value.match(/\*/g)?.length ?? 0;
+  const listMarker = /(?:^|\n)[ \t]{0,3}\*(?=[ \t]|$)/.test(value);
+  return forceAsteriskEscape || asterisks > 1 || listMarker
+    ? escaped.replaceAll('*', '\\*')
+    : escaped;
 }
 
 function escapeDestination(value: string): string {

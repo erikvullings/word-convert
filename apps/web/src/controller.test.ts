@@ -452,7 +452,7 @@ describe('browser controller', () => {
     ]);
   });
 
-  it('normalizes full-book paragraphs before deriving poem parts', () => {
+  it('preserves full-book line breaks before deriving poem parts', () => {
     const worker = new WorkerStub();
     stubWorkers(worker);
     vi.stubGlobal('localStorage', {
@@ -488,13 +488,12 @@ describe('browser controller', () => {
     controller.setEpubPreviewMode?.('edit');
 
     expect(controller.state.epubParts).toEqual({
-      starts: [0, 3, 7],
+      starts: [0, 3, 5],
       activeIndex: 0,
     });
     expect(contentEditorSource(controller.state.model)).toContain(
-      'First line.\n\nSecond line.\n\nThird line.',
+      'First line.  \nSecond line.  \nThird line.',
     );
-    expect(contentEditorSource(controller.state.model)).not.toContain('  \n');
   });
 
   it('deletes the active part after confirmation', () => {

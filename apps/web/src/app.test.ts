@@ -913,6 +913,7 @@ describe('App', () => {
     state.stage = 2;
     state.status = 'complete';
     state.sourceFormat = 'pdf';
+    state.pdfOriginalVisible = true;
     state.preferences.outputFormat = 'epub';
     state.previewMode = 'edit';
     state.selectedEpubFile = 'EPUB/styles.css';
@@ -945,6 +946,7 @@ describe('App', () => {
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
     expect(rendered).toContain('epub-preview-tabs');
+    expect(rendered).toContain('preview-comparison--edit');
     expect(rendered).toContain('"role":"tablist"');
     expect(rendered).toContain('"role":"tab"');
     expect(rendered).toContain('"aria-selected":"true"');
@@ -955,7 +957,7 @@ describe('App', () => {
     expect(rendered).not.toContain('Full text');
     expect(rendered).toContain('EPUB files');
     expect(rendered).toContain('Editable EPUB content');
-    expect(rendered).toContain('Show original');
+    expect(rendered).toContain('Hide original');
     expect(rendered).toContain('Part 1 of 1');
     expect(rendered).toContain('First part');
     expect(rendered).toContain('Previous part');
@@ -976,7 +978,7 @@ describe('App', () => {
     expect(rendered).not.toContain('Split at heading');
   });
 
-  it('renders EPUB hard line breaks as separate editable paragraphs', () => {
+  it('renders EPUB line breaks without turning them into paragraphs', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 2;
     state.status = 'complete';
@@ -987,10 +989,7 @@ describe('App', () => {
 
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
-    expect(rendered).toContain(
-      '<p>\\nFirst line.\\n</p>\\n\\n<p>\\nSecond line.\\n</p>',
-    );
-    expect(rendered).not.toContain('<br>');
+    expect(rendered).toContain('<p>\\nFirst line.<br>Second line.\\n</p>');
   });
 
   it('renders Markdown as an editable full-book source with block spacing', () => {

@@ -87,21 +87,19 @@ describe('EPUB content editor', () => {
         '',
         '## Poem one',
         '',
-        'First.',
-        '',
+        'First.  ',
         'Second.',
         '',
         '## Poem two',
         '',
-        'Third.',
-        '',
+        'Third.  ',
         'Fourth.',
       ].join('\n'),
       document,
     );
 
     expect(createPracticalContentPartState(document)).toEqual({
-      starts: [0, 3, 6],
+      starts: [0, 3, 5],
       activeIndex: 0,
     });
   });
@@ -176,7 +174,7 @@ describe('EPUB content editor', () => {
     });
   });
 
-  it('saves hard line breaks in a part as separate paragraphs', () => {
+  it('saves Markdown line breaks within the same paragraph', () => {
     const document = model();
     document.blocks = markdownToBlocks(
       '# One\n\nOriginal.\n\nMore text.',
@@ -191,8 +189,14 @@ describe('EPUB content editor', () => {
 
     expect(saved.model.blocks).toMatchObject([
       { type: 'heading', children: [{ text: 'One' }] },
-      { type: 'paragraph', children: [{ text: 'First line.' }] },
-      { type: 'paragraph', children: [{ text: 'Second line.' }] },
+      {
+        type: 'paragraph',
+        children: [
+          { text: 'First line.' },
+          { type: 'lineBreak' },
+          { text: 'Second line.' },
+        ],
+      },
       { type: 'paragraph', children: [{ text: 'More text.' }] },
     ]);
   });

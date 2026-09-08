@@ -1039,6 +1039,60 @@ h1 {
   max-height: none;
 }
 
+@media (min-width: 56.01rem) {
+  .preview-comparison--visible.preview-comparison--edit {
+    grid-template-rows: auto minmax(0, auto) auto auto;
+    row-gap: 0;
+  }
+
+  .preview-comparison--edit
+    :is(
+      .preview-pane,
+      .preview-pane--original .pdf-preview-workspace,
+      .preview-pane--converted .book-part-editor
+    ) {
+    display: contents;
+  }
+
+  .preview-comparison--edit .preview-pane--original > h3,
+  .preview-comparison--edit .book-part-heading {
+    grid-row: 1;
+    margin-bottom: 1rem;
+  }
+
+  .preview-comparison--edit .preview-pane--original > h3,
+  .preview-comparison--edit .pdf-page-preview,
+  .preview-comparison--edit .pdf-preview-scale,
+  .preview-comparison--edit .preview-pane--original .datatable-pagination {
+    grid-column: 1;
+  }
+
+  .preview-comparison--edit .book-part-heading,
+  .preview-comparison--edit .book-part-editor-content,
+  .preview-comparison--edit .book-part-editor > [role='status'],
+  .preview-comparison--edit .book-part-editor > .datatable-pagination {
+    grid-column: 2;
+  }
+
+  .preview-comparison--edit .pdf-page-preview,
+  .preview-comparison--edit .book-part-editor-content {
+    grid-row: 2;
+  }
+
+  .preview-comparison--edit .pdf-preview-scale,
+  .preview-comparison--edit .book-part-editor > [role='status'] {
+    grid-row: 3;
+  }
+
+  .preview-comparison--edit
+    :is(
+      .preview-pane--original .datatable-pagination,
+      .book-part-editor > .datatable-pagination
+    ) {
+    grid-row: 4;
+  }
+}
+
 .document-preview,
 .markdown-source,
 .html-source-editor,

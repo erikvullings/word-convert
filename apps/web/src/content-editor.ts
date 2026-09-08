@@ -411,7 +411,7 @@ export function saveContentPart(
   const original = model.blocks.slice(start, end);
   const replacement = restoreBlockSemantics(
     original,
-    markdownToBlocks(normalizeContentPartMarkdown(markdown), model),
+    markdownToBlocks(markdown, model),
   );
   const delta = replacement.length - (end - start);
   return {
@@ -430,41 +430,6 @@ export function saveContentPart(
       ),
     },
   };
-}
-
-export function normalizeContentPartMarkdown(markdown: string): string {
-  const segments = markdown.split(/(\r?\n)/);
-  let fence: { marker: '`' | '~'; length: number } | undefined;
-  for (let index = 0; index < segments.length; index += 2) {
-    const line = segments[index] ?? '';
-    const content = line.replace(/^(?: {0,3}> ?)+/, '');
-    const opening = /^ {0,3}(`{3,}|~{3,})/.exec(content)?.[1];
-    if (fence) {
-      const closing = new RegExp(
-        `^ {0,3}\\${fence.marker}{${fence.length},}[ \\t]*$`,
-      );
-      if (closing.test(content)) fence = undefined;
-      continue;
-    }
-    if (opening) {
-      fence = {
-        marker: opening[0] as '`' | '~',
-        length: opening.length,
-      };
-      continue;
-    }
-    const nextLine = segments[index + 2];
-    if (
-      nextLine !== undefined &&
-      nextLine.trim().length > 0 &&
-      !/^(?: {4}|\t)/.test(content) &&
-      /[ \t]{2,}$/.test(line)
-    )
-      segments[index] = line.replace(/[ \t]{2,}$/, '');
-    else continue;
-    segments[index + 1] = `${segments[index + 1] ?? '\n'}\n`;
-  }
-  return segments.join('');
 }
 
 export function mergeContentPart(
@@ -542,7 +507,14 @@ export function splitContentPart(
 }
 
 function visibleBlockCount(blocks: readonly BlockNode[]): number {
-  return blocks.filter((block) => block.type !== 'pageBreak').length;
+  return blocks.reduce((count, block) => {
+    if (block.type === 'pageBreak') return count;
+    const lineBreaks =
+      block.type === 'heading' || block.type === 'paragraph'
+        ? block.children.filter((child) => child.type === 'lineBreak').length
+        : 0;
+    return count + 1 + lineBreaks;
+  }, 0);
 }
 
 export function contentPartSplitHeadings(
