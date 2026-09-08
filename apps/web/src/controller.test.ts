@@ -9,7 +9,11 @@ import {
 import { applyDocumentTheme, createBrowserController } from './controller.ts';
 import type { WorkerResponse } from './worker/protocol.ts';
 import type { PdfFormulaCandidate } from '@wordconvert/pdf-reader';
-import { markdownToBlocks } from './content-editor.ts';
+import {
+  contentEditorSource,
+  createContentPartState,
+  markdownToBlocks,
+} from './content-editor.ts';
 
 vi.mock('./pdf-preview.ts', () => ({
   createPdfPagePreviewRenderer: () => ({
@@ -448,6 +452,51 @@ describe('browser controller', () => {
     ]);
   });
 
+  it('normalizes full-book paragraphs before deriving poem parts', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.state.model = model();
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.previewMode = 'source';
+    controller.setEpubFullContent?.(
+      [
+        '# Book',
+        '',
+        'Introduction.',
+        '',
+        'More introduction.',
+        '',
+        '## 1',
+        '',
+        'First line.  ',
+        'Second line.  ',
+        'Third line.',
+        '',
+        '## 2',
+        '',
+        'Fourth line.  ',
+        'Fifth line.  ',
+        'Sixth line.',
+      ].join('\n'),
+    );
+
+    controller.setEpubPreviewMode?.('edit');
+
+    expect(controller.state.epubParts).toEqual({
+      starts: [0, 3, 7],
+      activeIndex: 0,
+    });
+    expect(contentEditorSource(controller.state.model)).toContain(
+      'First line.\n\nSecond line.\n\nThird line.',
+    );
+    expect(contentEditorSource(controller.state.model)).not.toContain('  \n');
+  });
+
   it('deletes the active part after confirmation', () => {
     const worker = new WorkerStub();
     stubWorkers(worker);
@@ -542,6 +591,7 @@ describe('browser controller', () => {
       document,
     );
     controller.state.model = document;
+    controller.state.epubParts = createContentPartState(document);
     controller.state.preferences.outputFormat = 'epub';
     controller.setEpubContent?.(
       [
@@ -619,6 +669,7 @@ describe('browser controller', () => {
       },
     ];
     controller.state.model = document;
+    controller.state.epubParts = createContentPartState(document);
     controller.state.preferences.outputFormat = 'epub';
     controller.setEpubContent?.(
       '# One\n\nOpening.\n\nContext.\n\n## Section\n\nDetails.\n\nMore details.',

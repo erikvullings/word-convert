@@ -106,3 +106,8 @@ reset or duplicate that state.
   merge, and split controls, normalized hard line breaks to paragraph
   boundaries, matched editor and PDF viewport heights, and moved PDF.js workers
   to a stable application-owned URL.
+- 2026-09-08 GitHub Copilot: Restored complete poem editing by deriving
+  practical parts from both level-one book headings and level-two poem
+  headings, while continuing to fold sections smaller than three visible
+  blocks into an adjacent part. Full-book Markdown saves now normalize hard
+  line breaks before semantic reconstruction and part derivation.

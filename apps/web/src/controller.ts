@@ -43,6 +43,7 @@ import {
   deleteContentPart,
   importContentDataImages,
   mergeContentPart,
+  normalizeContentPartMarkdown,
   normalizeContentPartState,
   saveContentPart,
   splitContentPart,
@@ -215,7 +216,7 @@ export function createBrowserController(): AppController {
     }
     state.model = withMarkdownContent(
       importedImages.model,
-      importedImages.markdown,
+      normalizeContentPartMarkdown(importedImages.markdown),
     );
     state.epubParts = createPracticalContentPartState(state.model);
     if (clearDraft) {

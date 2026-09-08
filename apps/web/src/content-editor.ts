@@ -69,10 +69,19 @@ const MINIMUM_PART_BLOCKS = 3;
 export function createContentPartState(
   model: Pick<DocumentModel, 'blocks'>,
 ): ContentPartState {
+  return createHeadingContentPartState(model, 1);
+}
+
+function createHeadingContentPartState(
+  model: Pick<DocumentModel, 'blocks'>,
+  maximumLevel: number,
+): ContentPartState {
   const starts = [
     0,
     ...model.blocks.flatMap((block, index) =>
-      index > 0 && block.type === 'heading' && block.level === 1 ? [index] : [],
+      index > 0 && block.type === 'heading' && block.level <= maximumLevel
+        ? [index]
+        : [],
     ),
   ];
   return { starts, activeIndex: 0 };
@@ -81,7 +90,10 @@ export function createContentPartState(
 export function createPracticalContentPartState(
   model: Pick<DocumentModel, 'blocks'>,
 ): ContentPartState {
-  return normalizeContentPartState(model, createContentPartState(model));
+  return normalizeContentPartState(
+    model,
+    createHeadingContentPartState(model, 2),
+  );
 }
 
 export function normalizeContentPartState(

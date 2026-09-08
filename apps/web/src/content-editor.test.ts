@@ -75,6 +75,37 @@ describe('EPUB content editor', () => {
     ]);
   });
 
+  it('derives practical editor parts from level-two poem headings', () => {
+    const document = model();
+    document.blocks = markdownToBlocks(
+      [
+        '# Book',
+        '',
+        'Introduction.',
+        '',
+        'More introduction.',
+        '',
+        '## Poem one',
+        '',
+        'First.',
+        '',
+        'Second.',
+        '',
+        '## Poem two',
+        '',
+        'Third.',
+        '',
+        'Fourth.',
+      ].join('\n'),
+      document,
+    );
+
+    expect(createPracticalContentPartState(document)).toEqual({
+      starts: [0, 3, 6],
+      activeIndex: 0,
+    });
+  });
+
   it('merges automatically derived parts that contain fewer than three visible blocks', () => {
     const document = model();
     document.blocks = markdownToBlocks(
