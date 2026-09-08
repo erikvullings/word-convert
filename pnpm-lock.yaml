@@ -108,8 +108,8 @@ importers:
         specifier: ^0.4.0
         version: 0.4.0(mithril@2.3.8)
       mithril-materialized:
-        specifier: ^3.17.9
-        version: 3.17.9
+        specifier: ^3.17.11
+        version: 3.17.11
       onnxruntime-web:
         specifier: ^1.29.0
         version: 1.29.0
@@ -1187,8 +1187,8 @@ packages:
     peerDependencies:
       mithril: ^2.3.8
 
-  mithril-materialized@3.17.9:
-    resolution: {integrity: sha512-nvE4/vty+Ju2xkT+9q3ww9vo0x2zonFU6A6gf335kl5XiRwkAnlE/MmGHCRwVsyE2mDnqcBCEkyVNb8p2pZkog==}
+  mithril-materialized@3.17.11:
+    resolution: {integrity: sha512-kAkXAJD/5H2dNNoTUqqDbrW264t30NhYWhGn9I3nfnwoxxNpcs/mCqdeyQ2FHN0PqDez3EXdvWalIQy2yrXXmA==}
 
   mithril@2.3.8:
     resolution: {integrity: sha512-za/Yo7qXEckjm5syrSfaaI9Utf4tCUT3T1IOIYqH6Lrj7G0OZuYYLAY9SV4ygoaAf0+CNqU92MBt+7pmo53JVQ==}
@@ -2374,7 +2374,7 @@ snapshots:
       mithril: 2.3.8
       slimdown-js: 1.5.4
 
-  mithril-materialized@3.17.9:
+  mithril-materialized@3.17.11:
     dependencies:
       mithril: 2.3.8
 

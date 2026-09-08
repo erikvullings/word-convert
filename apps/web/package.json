@@ -30,7 +30,7 @@
     "marked": "^18.0.11",
     "mithril": "^2.3.8",
     "mithril-markdown-wysiwyg": "^0.4.0",
-    "mithril-materialized": "^3.17.9",
+    "mithril-materialized": "^3.17.11",
     "onnxruntime-web": "^1.29.0",
     "pdfjs-dist": "6.3.289",
     "slimdown-js": "^1.5.4",

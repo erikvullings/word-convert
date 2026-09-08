@@ -105,7 +105,13 @@ export interface AppState {
   pdfPreview?: PdfPagePreviewState;
   pdfPreviewLoading?: boolean;
   pdfPreviewError?: string;
+  pdfImageSelectionOpen?: boolean;
+  pdfImageSelectionBounds?: PdfBounds;
+  pdfImageSelectionAlt?: string;
+  pdfImageInsertionLoading?: boolean;
+  pdfImageInsertionError?: string;
   output?: DownloadOutput;
+  outputFilename?: string;
   outputSaved?: boolean;
   selectedEpubFile?: string;
   markdownEdit?: string;

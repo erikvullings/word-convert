@@ -14,6 +14,7 @@ import {
   createPracticalContentPartState,
   deleteContentPart,
   importContentDataImages,
+  insertImageIntoContentPart,
   markdownToBlocks,
   mergeContentPart,
   saveContentPart,
@@ -54,6 +55,34 @@ function model(): DocumentModel {
 }
 
 describe('EPUB content editor', () => {
+  it('inserts a source-page image before the active part trailing page break', () => {
+    const document = model();
+    document.blocks = [
+      { type: 'heading', level: 1, children: [{ type: 'text', text: 'One' }] },
+      { type: 'paragraph', children: [{ type: 'text', text: 'Body' }] },
+      { type: 'pageBreak' },
+      { type: 'heading', level: 1, children: [{ type: 'text', text: 'Two' }] },
+    ];
+    const state = { starts: [0, 3], activeIndex: 0 };
+
+    const inserted = insertImageIntoContentPart(document, state, {
+      id: 'editor-image-0001',
+      mediaType: 'image/png',
+      data: new Uint8Array([1, 2, 3]),
+      filename: 'editor-image-0001.png',
+    });
+
+    expect(inserted.model.blocks.map(({ type }) => type)).toEqual([
+      'heading',
+      'paragraph',
+      'imageBlock',
+      'pageBreak',
+      'heading',
+    ]);
+    expect(inserted.model.assets['editor-image-0001']).toBeDefined();
+    expect(inserted.state).toEqual({ starts: [0, 4], activeIndex: 0 });
+  });
+
   it('derives ordered editor parts from top-level chapter headings', () => {
     const document = model();
     document.blocks = markdownToBlocks(

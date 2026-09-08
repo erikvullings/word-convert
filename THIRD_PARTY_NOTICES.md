@@ -15,7 +15,7 @@ distributed in its browser bundle.
 | Marked | 18.0.11 | MIT and BSD-3-Clause | Copyright (c) 2018+ MarkedJS; Copyright (c) 2011–2018 Christopher Jeffrey; Markdown copyright © 2004 John Gruber | <https://github.com/markedjs/marked> |
 | Mithril | 2.3.8 | MIT | Copyright (c) 2017 Leo Horie | <https://github.com/MithrilJS/mithril.js> |
 | mithril-markdown-wysiwyg | 0.4.0 | MIT | Copyright (c) 2024 Erik Vullings | <https://github.com/erikvullings/mithril-markdown-wysiwyg> |
-| mithril-materialized | 3.17.9 | MIT | Erik Vullings and contributors | <https://github.com/erikvullings/mithril-materialized> |
+| mithril-materialized | 3.17.11 | MIT | Erik Vullings and contributors | <https://github.com/erikvullings/mithril-materialized> |
 | ONNX Runtime Web and Common | 1.29.0 | MIT | Microsoft Corporation and contributors | <https://github.com/microsoft/onnxruntime> |
 | FlatBuffers | 25.9.23 | Apache-2.0 | Google LLC and contributors | <https://github.com/google/flatbuffers> |
 | guid-typescript | 1.0.9 | ISC | Kevin Le and contributors | <https://github.com/snico-dev/guid-typescript> |

@@ -13,6 +13,7 @@ import {
   InputCheckbox,
   LinearProgress,
   NumberInput,
+  PaginationControls,
   RadioButtons,
   Select,
   TextInput,
@@ -54,7 +55,10 @@ import { previewSanitizeConfig, warningDestination } from './preview/index.ts';
 import type { HtmlOutputMode, MarkdownOutputMode } from './output.ts';
 import type { PdfFormulaDecision } from '@wordconvert/pdf-reader';
 import type { PdfBounds } from '@wordconvert/pdf-reader';
-import type { FormulaSelectionPoint } from './formula-selection.ts';
+import {
+  pointInPreview,
+  type FormulaSelectionPoint,
+} from './formula-selection.ts';
 import { formulaReviewEditor } from './formula-review.ts';
 import { renderMarkdownPreview as renderMarkdown } from './markdown-preview.ts';
 import { HtmlSourceEditor } from './html-source-editor.ts';
@@ -137,6 +141,14 @@ export interface AppController {
   retryPdfPreview?(): void;
   setPdfPreviewScale?(scale: number): void;
   setPdfOriginalVisible?(visible: boolean): void;
+  openPdfImageSelection?(): void;
+  cancelPdfImageSelection?(): void;
+  beginPdfImageSelection?(point: FormulaSelectionPoint): void;
+  updatePdfImageSelection?(point: FormulaSelectionPoint): void;
+  endPdfImageSelection?(point: FormulaSelectionPoint): void;
+  setPdfImageSelectionBounds?(bounds: PdfBounds): void;
+  setPdfImageSelectionAlt?(alt: string): void;
+  insertPdfImageSelection?(): void;
   setPdfSamplePageCount?(pageCount: number): void;
   setPdfEnhancedFigureDetection?(enabled: boolean): void;
   rescanPdfSample?(): void;
@@ -849,33 +861,22 @@ function paginationControls(
   total: number,
   select: (target: number) => void,
 ): m.Vnode {
-  const button = (
-    label: string,
-    symbol: string,
-    target: number,
-    disabled: boolean,
-  ) =>
-    m(
-      'button.btn-flat',
-      {
-        type: 'button',
-        disabled,
-        title: label,
-        'aria-label': label,
-        onclick: () => select(target),
-      },
-      symbol,
-    );
   const name = `${item[0]?.toUpperCase()}${item.slice(1)}`;
-  return m('.datatable-pagination.pdf-pagination', [
-    m('.pagination-controls', [
-      button(`First ${item}`, '⏮', 1, current <= 1),
-      button(`Previous ${item}`, '◀', current - 1, current <= 1),
-      m('span.page-info', `${name} ${current} of ${total}`),
-      button(`Next ${item}`, '▶', current + 1, current >= total),
-      button(`Last ${item}`, '⏭', total, current >= total),
-    ]),
-  ]);
+  return m(
+    '.pdf-pagination',
+    m(PaginationControls, {
+      pagination: { page: current - 1, pageSize: 1, total },
+      allowPageInput: true,
+      i18n: {
+        page: name,
+        showing: '',
+        to: '',
+        of: 'of',
+        entries: item === 'page' ? 'pages' : 'parts',
+      },
+      onPaginationChange: ({ page }) => select(page + 1),
+    }),
+  );
 }
 
 function cropControl(
@@ -1691,6 +1692,7 @@ function epubPartEditor(controller: AppController, source: string): m.Vnode {
         theme,
         toolbar: true,
         showTabs: true,
+        hideBase64Images: true,
       }),
     ]),
     paginationControls(
@@ -1716,32 +1718,146 @@ function outputPreviewWorkspace(
   if (state.sourceFormat !== 'pdf') return converted;
   const visible = state.pdfOriginalVisible === true;
   const pageCount = state.pdfAnalysis?.pageCount ?? 1;
-  return m(
-    '.preview-comparison',
-    {
-      class: [
-        visible ? 'preview-comparison--visible' : '',
-        state.previewMode === 'edit' ? 'preview-comparison--edit' : '',
-      ]
-        .filter(Boolean)
-        .join(' '),
-    },
-    [
-      visible
-        ? m('section.preview-pane.preview-pane--original', [
-            m('h3', 'Original PDF'),
-            pdfSourcePreview(controller, 0, 0, pageCount, {
-              paginationPosition: 'after',
-              showCleanupNote: false,
-              showScaleControl: true,
-            }),
-          ])
-        : null,
-      m('section.preview-pane.preview-pane--converted', [
-        visible && state.previewMode !== 'edit'
-          ? m('h3', 'Converted document')
+  return m('.preview-workspace-stack', [
+    m(
+      '.preview-comparison',
+      {
+        class: [
+          visible ? 'preview-comparison--visible' : '',
+          state.previewMode === 'edit' ? 'preview-comparison--edit' : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+      },
+      [
+        visible
+          ? m('section.preview-pane.preview-pane--original', [
+              m('h3', 'Original PDF'),
+              pdfSourcePreview(controller, 0, 0, pageCount, {
+                paginationPosition: 'after',
+                showCleanupNote: false,
+                showScaleControl: true,
+              }),
+            ])
           : null,
-        converted,
+        m('section.preview-pane.preview-pane--converted', [
+          visible && state.previewMode !== 'edit'
+            ? m('h3', 'Converted document')
+            : null,
+          converted,
+        ]),
+      ],
+    ),
+    visible && state.previewMode === 'edit'
+      ? pdfImageInsertionControls(controller)
+      : null,
+  ]);
+}
+
+function pdfImageInsertionControls(controller: AppController): m.Vnode {
+  const { state } = controller;
+  if (!state.pdfImageSelectionOpen)
+    return m(
+      'section.pdf-image-insertion[aria-label="Insert image from original PDF"]',
+      m(FlatButton, {
+        label: 'Insert image from original page',
+        disabled: !state.pdfPreview,
+        onclick: () => controller.openPdfImageSelection?.(),
+      }),
+    );
+  const preview = state.pdfPreview;
+  const bounds = state.pdfImageSelectionBounds;
+  const pointer = (event: PointerEvent) =>
+    pointInPreview(
+      event.clientX,
+      event.clientY,
+      (event.currentTarget as HTMLElement).getBoundingClientRect(),
+    );
+  return m(
+    'section.pdf-image-insertion.pdf-image-insertion--open[aria-label="Insert image from original PDF"]',
+    [
+      m('header', [
+        m('div', [
+          m('h3', `Insert image from PDF page ${state.pdfPreviewPage}`),
+          m(
+            'p.help',
+            'Drag over the source page to choose the image area. The selected PNG is added to the end of this part.',
+          ),
+        ]),
+        m(FlatButton, {
+          label: 'Cancel',
+          onclick: () => controller.cancelPdfImageSelection?.(),
+        }),
+      ]),
+      preview
+        ? m(
+            '.pdf-image-selection-surface',
+            m(
+              '.pdf-image-selection-page',
+              {
+                tabindex: 0,
+                role: 'group',
+                'aria-label': `Select an image region on PDF page ${preview.pageNumber}`,
+                onpointerdown: (event: PointerEvent) => {
+                  (event.currentTarget as HTMLElement).setPointerCapture(
+                    event.pointerId,
+                  );
+                  controller.beginPdfImageSelection?.(pointer(event));
+                },
+                onpointermove: (event: PointerEvent) => {
+                  if (event.buttons === 1)
+                    controller.updatePdfImageSelection?.(pointer(event));
+                },
+                onpointerup: (event: PointerEvent) =>
+                  controller.endPdfImageSelection?.(pointer(event)),
+              },
+              [
+                m('img', {
+                  src: preview.url,
+                  width: preview.width,
+                  height: preview.height,
+                  alt: `PDF page ${preview.pageNumber} for image selection`,
+                }),
+                bounds
+                  ? m('.pdf-image-selection-box', {
+                      style: {
+                        left: `${bounds.x * 100}%`,
+                        top: `${bounds.top * 100}%`,
+                        width: `${bounds.width * 100}%`,
+                        height: `${bounds.height * 100}%`,
+                      },
+                    })
+                  : null,
+              ],
+            ),
+          )
+        : m('p[role="status"]', 'Loading the current PDF page for selection.'),
+      m(TextInput, {
+        label: 'Image description',
+        value: state.pdfImageSelectionAlt ?? '',
+        oninput: (value) => controller.setPdfImageSelectionAlt?.(value),
+      }),
+      state.pdfImageInsertionError
+        ? m('p.error[role="alert"]', state.pdfImageInsertionError)
+        : null,
+      m('.pdf-image-insertion-actions', [
+        m(FlatButton, {
+          label: 'Use full page',
+          onclick: () =>
+            controller.setPdfImageSelectionBounds?.({
+              x: 0,
+              top: 0,
+              width: 1,
+              height: 1,
+            }),
+        }),
+        m(Button, {
+          label: state.pdfImageInsertionLoading
+            ? 'Inserting image…'
+            : 'Insert selected image',
+          disabled: !bounds || state.pdfImageInsertionLoading,
+          onclick: () => controller.insertPdfImageSelection?.(),
+        }),
       ]),
     ],
   );
@@ -2130,11 +2246,12 @@ function mailDocumentButton(controller: AppController): m.Vnode | null {
 
 function outputFilenameField(controller: AppController): m.Vnode | null {
   const output = controller.state.output;
-  if (!output) return null;
+  const filename = controller.state.outputFilename ?? output?.filename;
+  if (!filename) return null;
   return m(TextInput, {
     className: 'output-filename',
     label: 'Output filename',
-    value: outputBasename(output.filename),
+    value: outputBasename(filename),
     autocomplete: 'off',
     oninput: (value) => controller.setOutputFilename(value),
   });

@@ -13,7 +13,10 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
   GlobalWorkerOptions: globalWorkerOptions,
 }));
 
-import { createPdfPagePreviewRenderer } from './pdf-preview.ts';
+import {
+  createPdfPagePreviewRenderer,
+  normalizedCropPixels,
+} from './pdf-preview.ts';
 
 describe('PDF page preview renderer', () => {
   beforeEach(() => {
@@ -45,5 +48,22 @@ describe('PDF page preview renderer', () => {
     expect(globalWorkerOptions.workerSrc).toBe(
       'http://localhost:3000/pdfjs/pdf.worker.mjs',
     );
+  });
+
+  it('clamps normalized crop bounds to rendered page pixels', () => {
+    expect(
+      normalizedCropPixels(
+        { x: 0.25, top: 0.1, width: 0.5, height: 0.4 },
+        1_200,
+        1_600,
+      ),
+    ).toEqual({ x: 300, y: 160, width: 600, height: 640 });
+    expect(
+      normalizedCropPixels(
+        { x: -0.1, top: 0.9, width: 1.5, height: 0.5 },
+        1_200,
+        1_600,
+      ),
+    ).toEqual({ x: 0, y: 1440, width: 1_200, height: 160 });
   });
 });

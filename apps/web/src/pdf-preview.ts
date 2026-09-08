@@ -5,6 +5,7 @@ import {
   type PDFDocumentProxy,
   type RenderTask,
 } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import type { PdfBounds } from '@wordconvert/pdf-reader';
 
 import { pdfJsDecoderBaseUrl, pdfJsWorkerUrl } from './pdfjs-assets.ts';
 
@@ -21,7 +22,11 @@ export interface PdfPagePreviewResult {
 }
 
 export interface PdfPagePreviewRenderer {
-  render(input: ArrayBuffer, pageNumber: number): Promise<PdfPagePreviewResult>;
+  render(
+    input: ArrayBuffer,
+    pageNumber: number,
+    crop?: PdfBounds,
+  ): Promise<PdfPagePreviewResult>;
   cancel(): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -30,6 +35,25 @@ const MAX_INPUT_BYTES = 50 * 1024 * 1024;
 const MAX_PAGES = 2_000;
 const MAX_WIDTH = 1_200;
 const MAX_PIXELS = 4_000_000;
+
+export function normalizedCropPixels(
+  bounds: PdfBounds,
+  width: number,
+  height: number,
+): { x: number; y: number; width: number; height: number } {
+  const left = Math.max(0, Math.min(1, bounds.x));
+  const top = Math.max(0, Math.min(1, bounds.top));
+  const right = Math.max(left, Math.min(1, bounds.x + bounds.width));
+  const bottom = Math.max(top, Math.min(1, bounds.top + bounds.height));
+  const x = Math.round(left * width);
+  const y = Math.round(top * height);
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.round(right * width) - x),
+    height: Math.max(1, Math.round(bottom * height) - y),
+  };
+}
 
 export function createPdfPagePreviewRenderer(): PdfPagePreviewRenderer {
   const loadingTasks = new Set<PDFDocumentLoadingTask>();
@@ -86,7 +110,7 @@ export function createPdfPagePreviewRenderer(): PdfPagePreviewRenderer {
     async dispose() {
       await dispose();
     },
-    async render(input, pageNumber) {
+    async render(input, pageNumber, crop) {
       await cancel();
       const loaded = await load(input);
       try {
@@ -106,7 +130,8 @@ export function createPdfPagePreviewRenderer(): PdfPagePreviewRenderer {
           const viewport = page.getViewport({ scale });
           const width = Math.max(1, Math.round(viewport.width));
           const height = Math.max(1, Math.round(viewport.height));
-          const canvas = documentOwner().createElement('canvas');
+          const owner = documentOwner();
+          const canvas = owner.createElement('canvas');
           canvas.width = width;
           canvas.height = height;
           const renderTask = page.render({
@@ -117,11 +142,32 @@ export function createPdfPagePreviewRenderer(): PdfPagePreviewRenderer {
           renderTasks.add(renderTask);
           try {
             await renderTask.promise;
+            let outputCanvas = canvas;
+            if (crop) {
+              const pixels = normalizedCropPixels(crop, width, height);
+              outputCanvas = owner.createElement('canvas');
+              outputCanvas.width = pixels.width;
+              outputCanvas.height = pixels.height;
+              const context = outputCanvas.getContext('2d');
+              if (!context)
+                throw new Error('The PDF image crop could not be created.');
+              context.drawImage(
+                canvas,
+                pixels.x,
+                pixels.y,
+                pixels.width,
+                pixels.height,
+                0,
+                0,
+                pixels.width,
+                pixels.height,
+              );
+            }
             return {
               pageNumber,
-              width,
-              height,
-              blob: await canvasBlob(canvas),
+              width: outputCanvas.width,
+              height: outputCanvas.height,
+              blob: await canvasBlob(outputCanvas),
             };
           } finally {
             renderTasks.delete(renderTask);

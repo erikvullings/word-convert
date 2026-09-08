@@ -542,17 +542,24 @@ h1 {
 }
 
 .pdf-pagination {
-  justify-content: center;
   margin-top: 0.35rem;
+}
+
+.pdf-pagination > .datatable-pagination {
+  justify-content: center;
   border-top: 0;
   background: transparent;
+}
+
+.pdf-pagination .pagination-info {
+  display: none;
 }
 
 .pdf-pagination .pagination-controls {
   margin-inline: auto;
 }
 
-.preview-pane--original .pdf-page-preview + .datatable-pagination {
+.preview-pane--original .pdf-page-preview + .pdf-pagination {
   margin-top: 0.75rem;
   margin-bottom: 0;
 }
@@ -983,6 +990,11 @@ h1 {
   min-width: 0;
 }
 
+.preview-workspace-stack {
+  display: grid;
+  gap: 1rem;
+}
+
 .preview-comparison--visible {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1066,14 +1078,14 @@ h1 {
   .preview-comparison--edit .preview-pane--original > h3,
   .preview-comparison--edit .pdf-page-preview,
   .preview-comparison--edit .pdf-preview-scale,
-  .preview-comparison--edit .preview-pane--original .datatable-pagination {
+  .preview-comparison--edit .preview-pane--original .pdf-pagination {
     grid-column: 1;
   }
 
   .preview-comparison--edit .book-part-heading,
   .preview-comparison--edit .book-part-editor-content,
   .preview-comparison--edit .book-part-editor > [role='status'],
-  .preview-comparison--edit .book-part-editor > .datatable-pagination {
+  .preview-comparison--edit .book-part-editor > .pdf-pagination {
     grid-column: 2;
   }
 
@@ -1089,11 +1101,75 @@ h1 {
 
   .preview-comparison--edit
     :is(
-      .preview-pane--original .datatable-pagination,
-      .book-part-editor > .datatable-pagination
+      .preview-pane--original .pdf-pagination,
+      .book-part-editor > .pdf-pagination
     ) {
     grid-row: 4;
   }
+}
+
+.pdf-image-insertion {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--panel);
+}
+
+.pdf-image-insertion > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.pdf-image-insertion > header :is(h3, p) {
+  margin: 0;
+}
+
+.pdf-image-insertion > header p {
+  margin-top: 0.25rem;
+}
+
+.pdf-image-selection-surface {
+  width: min(100%, 56rem);
+  max-height: 36rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.pdf-image-selection-page {
+  position: relative;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.pdf-image-selection-page:focus-visible {
+  outline: 0.2rem solid var(--accent);
+  outline-offset: -0.2rem;
+}
+
+.pdf-image-selection-page img {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+  pointer-events: none;
+}
+
+.pdf-image-selection-box {
+  position: absolute;
+  background: rgb(15 118 110 / 16%);
+  border: 0.18rem solid var(--accent);
+  pointer-events: none;
+}
+
+.pdf-image-insertion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
 }
 
 .document-preview,

@@ -1365,7 +1365,13 @@ async function linesToBlocks(
           );
           if (candidate) {
             candidate.block.children.push(
-              { type: 'text', text: ' ' },
+              continuesPreviousParagraph &&
+                index === 0 &&
+                candidate.lastLine === previousPageLine
+                ? { type: 'text', text: ' ' }
+                : lineContinuesAtTextEdge(candidate.lastLine, line, pageLines)
+                  ? { type: 'text', text: ' ' }
+                  : { type: 'lineBreak' },
               ...children,
             );
             candidate.lastLine = line;
@@ -1588,6 +1594,76 @@ function canMergeLines(previous: PdfLine, current: PdfLine): boolean {
   return (
     gap >= -0.002 && gap <= Math.max(previous.height, current.height) * 0.8
   );
+}
+
+function lineContinuesAtTextEdge(
+  line: PdfLine,
+  nextLine: PdfLine,
+  pageLines: readonly PdfLine[],
+): boolean {
+  const right = line.x + line.width;
+  if (right >= 0.82 && line.width >= 0.5) return true;
+  if (line.x >= 0.5) {
+    const hasLeftColumn = pageLines.some(
+      (candidate) =>
+        candidate.page === line.page &&
+        candidate.x < 0.5 &&
+        candidate.x + candidate.width <= 0.58,
+    );
+    if (!hasLeftColumn) return false;
+    const rightColumnEdges = pageLines
+      .filter(
+        (candidate) =>
+          candidate.page === line.page &&
+          candidate.x >= 0.5 &&
+          Math.abs(candidate.x - line.x) <= 0.04,
+      )
+      .map((candidate) => candidate.x + candidate.width);
+    const columnRight = Math.max(...rightColumnEdges, 0);
+    if (columnRight >= 0.82 && right >= columnRight - 0.04) return true;
+    const hasParallelLeftLine = (target: PdfLine): boolean =>
+      pageLines.some(
+        (candidate) =>
+          candidate.page === target.page &&
+          candidate.x < 0.5 &&
+          candidate.x + candidate.width <= 0.58 &&
+          Math.abs(candidate.top - target.top) <=
+            Math.max(candidate.height, target.height),
+      );
+    return hasParallelLeftLine(line) && hasParallelLeftLine(nextLine);
+  }
+
+  const hasRightColumn = pageLines.some(
+    (candidate) =>
+      candidate.page === line.page &&
+      candidate.x >= 0.5 &&
+      candidate.width >= 0.15,
+  );
+  if (!hasRightColumn) {
+    const sameStyleColumnEdges = pageLines
+      .filter(
+        (candidate) =>
+          candidate.page === line.page &&
+          styleId(candidate) === styleId(line) &&
+          Math.abs(candidate.x - line.x) <= 0.04 &&
+          candidate.width >= 0.5,
+      )
+      .map((candidate) => candidate.x + candidate.width);
+    if (sameStyleColumnEdges.length === 0 || line.width < 0.5) return false;
+    const columnRight = Math.max(...sameStyleColumnEdges);
+    return right >= columnRight - 0.04;
+  }
+  const leftColumnEdges = pageLines
+    .filter(
+      (candidate) =>
+        candidate.page === line.page &&
+        candidate.x < 0.5 &&
+        candidate.x + candidate.width < 0.68 &&
+        Math.abs(candidate.x - line.x) <= 0.04,
+    )
+    .map((candidate) => candidate.x + candidate.width);
+  const columnRight = Math.max(...leftColumnEdges, 0);
+  return columnRight >= 0.35 && right >= columnRight - 0.04;
 }
 
 function canMergeAcrossPage(previous: PdfLine, current: PdfLine): boolean {

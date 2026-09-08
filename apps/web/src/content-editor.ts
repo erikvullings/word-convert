@@ -1,5 +1,6 @@
 import type {
   BlockNode,
+  DocumentAsset,
   DocumentModel,
   InlineNode,
   TextMark,
@@ -150,6 +151,44 @@ export function contentPartModel(
   return { ...model, blocks: model.blocks.slice(start, end) };
 }
 
+export function insertImageIntoContentPart(
+  model: DocumentModel,
+  state: ContentPartState,
+  asset: DocumentAsset,
+  width?: number,
+  alt = 'Image from source page',
+): { model: DocumentModel; state: ContentPartState } {
+  const start = state.starts[state.activeIndex] ?? 0;
+  const end = state.starts[state.activeIndex + 1] ?? model.blocks.length;
+  let insertionIndex = end;
+  while (
+    insertionIndex > start &&
+    model.blocks[insertionIndex - 1]?.type === 'pageBreak'
+  )
+    insertionIndex -= 1;
+  const blocks = [...model.blocks];
+  blocks.splice(insertionIndex, 0, {
+    type: 'imageBlock',
+    assetId: asset.id,
+    alt,
+    ...(width === undefined ? {} : { width }),
+    alignment: 'center',
+  });
+  return {
+    model: {
+      ...model,
+      blocks,
+      assets: { ...model.assets, [asset.id]: asset },
+    },
+    state: {
+      starts: state.starts.map((partStart, index) =>
+        index > state.activeIndex ? partStart + 1 : partStart,
+      ),
+      activeIndex: state.activeIndex,
+    },
+  };
+}
+
 export function contentEditorSource(model: DocumentModel): string {
   const metadata = { ...model.metadata };
   delete metadata.title;
@@ -229,7 +268,6 @@ export function importContentDataImages(
   let totalBytes = Object.values(assets)
     .filter((asset) => asset.id.startsWith('editor-image-'))
     .reduce((total, asset) => total + asset.data.byteLength, 0);
-  let nextImageNumber = 1;
 
   for (const source of new Set(collectImageSources(Lexer.lex(markdown)))) {
     if (
@@ -254,11 +292,7 @@ export function importContentDataImages(
         reason: 'images-too-large',
         message: 'Images inserted from Markdown exceed the total size limit.',
       };
-    let id = `editor-image-${String(nextImageNumber).padStart(4, '0')}`;
-    while (assets[id]) {
-      nextImageNumber += 1;
-      id = `editor-image-${String(nextImageNumber).padStart(4, '0')}`;
-    }
+    const id = nextContentImageId({ ...model, assets });
     const extension = CONTENT_IMAGE_MEDIA_EXTENSIONS.get(parsed.mediaType);
     assets[id] = {
       id,
@@ -269,7 +303,6 @@ export function importContentDataImages(
     assetsByUrl.set(canonicalSource, id);
     imageCount += 1;
     totalBytes += parsed.data.byteLength;
-    nextImageNumber += 1;
   }
 
   const normalizedMarkdown = [...replacements].reduce(
@@ -284,6 +317,16 @@ export function importContentDataImages(
         : { ...model, assets },
     markdown: normalizedMarkdown,
   };
+}
+
+export function nextContentImageId(model: DocumentModel): string {
+  let imageNumber = 1;
+  let id = `editor-image-${String(imageNumber).padStart(4, '0')}`;
+  while (model.assets[id]) {
+    imageNumber += 1;
+    id = `editor-image-${String(imageNumber).padStart(4, '0')}`;
+  }
+  return id;
 }
 
 function parseContentImageDataUri(

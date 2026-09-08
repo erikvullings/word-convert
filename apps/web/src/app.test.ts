@@ -170,6 +170,21 @@ describe('App', () => {
     expect(rendered).toContain('Mail document');
   });
 
+  it('keeps the output filename visible while EPUB edits regenerate output', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'converting';
+    state.preferences.outputFormat = 'epub';
+    state.previewMode = 'edit';
+    state.model = editorModel();
+    state.outputFilename = 'tao-multilingual.epub';
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('Output filename');
+    expect(rendered).toContain('"value":"tao-multilingual"');
+  });
+
   it('does not offer mail delivery for non-EPUB output', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 3;
@@ -283,8 +298,10 @@ describe('App', () => {
     expect(rendered).not.toContain('Load source-page preview');
     expect(rendered).not.toContain('Source-page preview (optional)');
     expect(rendered).toContain('PDF page 3 preview');
-    expect(rendered).toContain('Page 3 of 12');
-    expect(rendered).not.toContain('Showing 3 to 3 of 12 pages');
+    expect(rendered).toContain(
+      '"pagination":{"page":2,"pageSize":1,"total":12}',
+    );
+    expect(rendered).toContain('"allowPageInput":true');
     expect(rendered).toContain('Pages to sample');
     expect(rendered).toContain('"label":"Pages to sample"');
     expect(rendered).toContain('Currently scanned: 1, 4, 8, 12');
@@ -303,7 +320,7 @@ describe('App', () => {
       rendered.indexOf('pdf-crop-sliders'),
     );
     expect(rendered.indexOf('pdf-crop-sliders')).toBeLessThan(
-      rendered.indexOf('Page 3 of 12'),
+      rendered.indexOf('"pagination":{"page":2,"pageSize":1,"total":12}'),
     );
     expect(rendered).toContain(
       'Remove from output · header · odd pages · high confidence',
@@ -418,7 +435,7 @@ describe('App', () => {
       visible.indexOf('pdf-preview-scale'),
     );
     expect(visible.indexOf('pdf-preview-scale')).toBeLessThan(
-      visible.indexOf('Page 1 of 6'),
+      visible.indexOf('"pagination":{"page":0,"pageSize":1,"total":6}'),
     );
     expect(visible).not.toContain('Showing 1 to 1 of 6 pages');
   });
@@ -498,7 +515,9 @@ describe('App', () => {
     expect(rendered).not.toContain(
       'Automatically remove high-confidence repeated content',
     );
-    expect(rendered).toContain('Page 1 of 44');
+    expect(rendered).toContain(
+      '"pagination":{"page":0,"pageSize":1,"total":44}',
+    );
   });
 
   it('shows the document title quietly and uses radio buttons for Markdown preview mode', () => {
@@ -994,25 +1013,43 @@ describe('App', () => {
     expect(rendered).toContain('EPUB files');
     expect(rendered).toContain('Editable EPUB content');
     expect(rendered).toContain('Hide original');
-    expect(rendered).toContain('Part 1 of 1');
-    expect(rendered).toContain('First part');
-    expect(rendered).toContain('Previous part');
-    expect(rendered).toContain('Next part');
-    expect(rendered).toContain('Last part');
-    expect(rendered).toContain(
-      '"disabled":true,"title":"Previous part","aria-label":"Previous part"',
-    );
-    expect(rendered).toContain(
-      '"disabled":true,"title":"Next part","aria-label":"Next part"',
-    );
+    expect(rendered).toContain('"allowPageInput":true');
+    expect(rendered).toContain('"page":"Part"');
     expect(rendered).toContain('"mode":"wysiwyg"');
     expect(rendered).toContain('"showTabs":true');
+    expect(rendered).toContain('"hideBase64Images":true');
     expect(rendered).toContain('Delete part');
+    expect(rendered).toContain('Insert image from original page');
     expect(rendered).not.toContain('Preview this part');
     expect(rendered).not.toContain('Preview entire book');
     expect(rendered).not.toContain('Merge with previous');
     expect(rendered).not.toContain('Merge with next');
     expect(rendered).not.toContain('Split at heading');
+  });
+
+  it('shows source image insertion only beside a visible original in Edit mode', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.preferences.outputFormat = 'epub';
+    state.previewMode = 'edit';
+    state.sourceFormat = 'pdf';
+    state.model = editorModel();
+    state.pdfOriginalVisible = false;
+
+    expect(JSON.stringify(renderApp(controllerFor(state)))).not.toContain(
+      'Insert image from original page',
+    );
+
+    state.pdfOriginalVisible = true;
+    expect(JSON.stringify(renderApp(controllerFor(state)))).toContain(
+      'Insert image from original page',
+    );
+
+    state.previewMode = 'source';
+    expect(JSON.stringify(renderApp(controllerFor(state)))).not.toContain(
+      'Insert image from original page',
+    );
   });
 
   it('renders EPUB line breaks without turning them into paragraphs', () => {

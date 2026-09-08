@@ -24,7 +24,8 @@ reset or duplicate that state.
   identifies the current part and its position in the book.
 - The part editor uses the same first/previous/next/last pager pattern as the
   PDF preview. Navigation saves the current part before switching, is keyboard
-  accessible, and is disabled at the corresponding book boundary.
+  accessible, is disabled at the corresponding book boundary, and allows the
+  current page or part number to be entered directly.
 - The original PDF and active-part editor remain side by side at equal viewport
   heights, with independent scrolling and aligned pagination.
 - Edit mode stays focused on one practical part at a time. It does not expose
@@ -35,17 +36,22 @@ reset or duplicate that state.
   editor with Markdown/WYSIWYG switching, and masks base64 image payloads
   without discarding their underlying data.
 - Markdown images inserted as validated base64 raster data are retained in the
-  semantic document model and final EPUB.
+  semantic document model and final EPUB. Base64 payloads are masked in both
+  the full-book and active-part Markdown editors.
+- When the original PDF is visible beside Edit mode, a bounded region of the
+  current source page can be inserted as a passive PNG image in the active part.
 - A part can be deleted after confirmation, except when it is the only
   remaining part.
 - Markdown line breaks remain line breaks in Edit mode instead of becoming
-  separate paragraphs.
+  separate paragraphs. PDF lines that reach the page or detected column edge
+  are joined as prose, while shorter adjacent lines become soft line breaks.
 - Internal page-break markers remain semantic and editable within a part; only
   trailing page breaks at the end of that part are hidden. Isolated OCR
   punctuation at page boundaries is discarded.
 - Book-level metadata and output settings remain unchanged while navigating,
   deleting, and editing parts, and final conversion still uses the complete
-  reconstructed book.
+  reconstructed book. Editing content does not hide or reset the output
+  filename while EPUB output regenerates.
 - Focused tests cover practical part derivation, pager navigation,
   autosave-before-switch, base64 image ingestion, line-break preservation,
   deletion, and preservation of book-level state.
@@ -128,3 +134,9 @@ reset or duplicate that state.
 - 2026-09-08 GitHub Copilot: Preserved internal page breaks in editable part
   Markdown (including breaks between prose and images) while hiding only
   trailing page-break markers at the end of the active part.
+- 2026-09-08 GitHub Copilot: Preserved short PDF lines as Markdown soft breaks
+  while continuing prose lines at page or column edges, upgraded
+  `mithril-materialized` to 3.17.11 for directly selectable page and part
+  numbers, masked base64 images in the part editor, and added bounded
+  source-page image insertion below the side-by-side Edit workspace. Output
+  filenames now remain stable during automatic EPUB regeneration.

@@ -128,6 +128,7 @@ function formulaCandidate(id = 'pdf-equation-p2-001'): PdfFormulaCandidate {
 
 describe('browser controller', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -1202,6 +1203,76 @@ describe('browser controller', () => {
     expect(controller.state.output.filename).toBe('Final handbook.epub');
   });
 
+  it('keeps a custom output filename while EPUB edits regenerate output', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.metadata.title = {
+      value: 'Report',
+      provenance: {
+        source: 'test',
+        method: 'user',
+        confidence: 'certain',
+      },
+    };
+    document.metadata.language = {
+      value: 'en',
+      provenance: {
+        source: 'test',
+        method: 'user',
+        confidence: 'certain',
+      },
+    };
+    document.metadata.identifier = {
+      value: 'urn:test:report',
+      provenance: {
+        source: 'test',
+        method: 'user',
+        confidence: 'certain',
+      },
+    };
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.epubParts = createContentPartState(document);
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.stage = 2;
+    controller.state.status = 'complete';
+    controller.state.output = {
+      filename: 'report.epub',
+      mediaType: 'application/epub+zip',
+      data: new ArrayBuffer(1),
+    };
+    controller.state.outputFilename = 'report.epub';
+    controller.setOutputFilename('My book.epub');
+
+    controller.setEpubContent?.('# One\n\nRevised.');
+
+    expect(controller.state.output).toBeUndefined();
+    expect(controller.state.outputFilename).toBe('My book.epub');
+
+    await vi.advanceTimersByTimeAsync(300);
+    const request = worker.postMessage.mock.calls.at(-1)?.[0] as {
+      operationId: string;
+    };
+    worker.emit({
+      type: 'output',
+      operationId: request.operationId,
+      filename: 'report.epub',
+      mediaType: 'application/epub+zip',
+      data: new ArrayBuffer(1),
+    });
+
+    expect(controller.state.output?.filename).toBe('My book.epub');
+    expect(controller.state.outputFilename).toBe('My book.epub');
+  });
+
   it('mails the ready EPUB using its document metadata title', async () => {
     const worker = new WorkerStub();
     stubWorkers(worker);
@@ -1581,6 +1652,127 @@ describe('browser controller', () => {
       manualFormulaRegions: [],
       formulaDecisions: {},
     });
+  });
+
+  it('inserts a selected PDF page region into the active EPUB part', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([new Uint8Array([1])], 'illustrated.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.epubParts = createContentPartState(document);
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.stage = 2;
+    controller.state.pdfPreviewPage = 2;
+    controller.openPdfImageSelection?.();
+    controller.setPdfImageSelectionBounds?.({
+      x: 0.1,
+      top: 0.2,
+      width: 0.5,
+      height: 0.3,
+    });
+    controller.setPdfImageSelectionAlt?.('A source illustration');
+
+    controller.insertPdfImageSelection?.();
+
+    await vi.waitFor(() =>
+      expect(controller.state.model?.assets['editor-image-0001']).toBeDefined(),
+    );
+    expect(controller.state.model?.blocks.at(-1)).toMatchObject({
+      type: 'imageBlock',
+      assetId: 'editor-image-0001',
+      alt: 'A source illustration',
+      alignment: 'center',
+    });
+    expect(controller.state.epubEditorNotice).toContain(
+      'Inserted image from PDF page 2',
+    );
+  });
+
+  it('does not insert a PDF image after the selection is cancelled', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([new Uint8Array([1])], 'illustrated.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.epubParts = createContentPartState(document);
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.stage = 2;
+    controller.openPdfImageSelection?.();
+
+    controller.insertPdfImageSelection?.();
+    controller.cancelPdfImageSelection?.();
+
+    await vi.waitFor(() =>
+      expect(controller.state.pdfImageInsertionLoading).toBeFalsy(),
+    );
+    expect(controller.state.model?.assets).toEqual({});
+    expect(controller.state.epubEditorNotice).toBeUndefined();
+  });
+
+  it('does not insert a stale PDF image after navigating to another page', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([new Uint8Array([1])], 'illustrated.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.epubParts = createContentPartState(document);
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.stage = 2;
+    controller.state.pdfAnalysis = {
+      pageCount: 3,
+      analysedPages: [1, 2, 3],
+      crop: { top: 0, bottom: 0 },
+      scannedPages: [],
+      candidates: [],
+    };
+    controller.state.pdfPreviewPage = 2;
+    controller.openPdfImageSelection?.();
+
+    controller.insertPdfImageSelection?.();
+    controller.setPdfPreviewPage?.(3);
+
+    await vi.waitFor(() =>
+      expect(controller.state.pdfImageInsertionLoading).toBeFalsy(),
+    );
+    expect(controller.state.model?.assets).toEqual({});
+    expect(controller.state.pdfImageSelectionAlt).toBe('Image from PDF page 3');
   });
 
   it('keeps a detected image or promotes it to TexTeller recognition', async () => {
