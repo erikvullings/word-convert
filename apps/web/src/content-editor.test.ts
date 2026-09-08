@@ -249,6 +249,37 @@ describe('EPUB content editor', () => {
     ]);
   });
 
+  it('shows internal page breaks but omits a break at the end of a part', () => {
+    const document = model();
+    document.blocks = [
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Before the image.' }],
+      },
+      { type: 'pageBreak' },
+      {
+        type: 'imageBlock',
+        assetId: 'diagram',
+        alt: 'Diagram',
+      },
+      { type: 'pageBreak' },
+    ];
+
+    const source = contentEditorSource(document);
+
+    expect(source).toContain(
+      'Before the image.\n\n<!-- markdown:page-break -->\n\n![Diagram]',
+    );
+    expect(source.match(/<!-- markdown:page-break -->/g)).toHaveLength(1);
+    expect(source.trimEnd().endsWith('<!-- markdown:page-break -->')).toBe(
+      false,
+    );
+    expect(
+      saveContentPart(document, createContentPartState(document), source).model
+        .blocks,
+    ).toEqual(document.blocks);
+  });
+
   it('merges only adjacent part boundaries without changing document content', () => {
     const document = model();
     document.blocks = markdownToBlocks(

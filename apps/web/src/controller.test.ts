@@ -671,11 +671,11 @@ describe('browser controller', () => {
     controller.state.epubParts = createContentPartState(document);
     controller.state.preferences.outputFormat = 'epub';
     controller.setEpubContent?.(
-      '# One\n\nOpening.\n\nContext.\n\n## Section\n\nDetails.\n\nMore details.',
+      '# One\n\n<!-- markdown:page-break -->\n\nOpening.\n\nContext.\n\n## Section\n\nDetails.\n\nMore details.',
     );
     controller.setEpubSplitHeading?.(4);
     controller.setEpubContent?.(
-      '# One\n\nOpening.\n\nContext.\n\nInserted.\n\n## Section\n\nDetails.\n\nMore details.',
+      '# One\n\n<!-- markdown:page-break -->\n\nOpening.\n\nContext.\n\nInserted.\n\n## Section\n\nDetails.\n\nMore details.',
     );
     expect(controller.state.epubSplitBlockOffset).toBeUndefined();
     controller.setEpubSplitHeading?.(5);

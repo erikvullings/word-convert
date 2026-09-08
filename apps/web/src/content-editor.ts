@@ -153,12 +153,15 @@ export function contentPartModel(
 export function contentEditorSource(model: DocumentModel): string {
   const metadata = { ...model.metadata };
   delete metadata.title;
+  const blocks = model.blocks.slice();
+  while (blocks.at(-1)?.type === 'pageBreak') blocks.pop();
   return annotateEquationReferences(
     writeMarkdown(
-      { ...model, metadata },
+      { ...model, metadata, blocks },
       {
         conversionDate: model.metadata.conversionDate.value,
         formulaMode: 'source',
+        includePageBreaks: true,
       },
     ),
     model,
@@ -1043,7 +1046,12 @@ function restoreBlockSemantics(
     const parsedBlock = parsed[parsedIndex];
     if (!originalBlock || !parsedBlock) break;
     if (originalBlock.type === 'pageBreak') {
-      restored.push(originalBlock);
+      if (parsedBlock.type === 'pageBreak') {
+        restored.push(originalBlock);
+        parsedIndex += 1;
+      } else if (originalIndex === original.length - 1) {
+        restored.push(originalBlock);
+      }
       originalIndex += 1;
       continue;
     }

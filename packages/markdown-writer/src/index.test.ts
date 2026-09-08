@@ -342,6 +342,21 @@ describe('writeMarkdown', () => {
     expect(markdown).not.toContain('page break');
   });
 
+  it('can include semantic page-break markers for editable Markdown', () => {
+    const markdown = writeMarkdown(
+      model([
+        { type: 'paragraph', children: [{ type: 'text', text: 'Before.' }] },
+        { type: 'pageBreak' },
+        { type: 'paragraph', children: [{ type: 'text', text: 'After.' }] },
+      ]),
+      { conversionDate: '2026-07-15', includePageBreaks: true },
+    );
+
+    expect(markdown).toContain(
+      'Before.\n\n<!-- markdown:page-break -->\n\nAfter.',
+    );
+  });
+
   it('writes ordered and unordered nested lists and GFM tables', () => {
     const markdown = writeMarkdown(
       model([

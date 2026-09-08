@@ -40,9 +40,9 @@ reset or duplicate that state.
   remaining part.
 - Markdown line breaks remain line breaks in Edit mode instead of becoming
   separate paragraphs.
-- Page-break markers remain semantic during editing without displaying their
-  Markdown comments in part view, and isolated OCR punctuation at page
-  boundaries is discarded.
+- Internal page-break markers remain semantic and editable within a part; only
+  trailing page breaks at the end of that part are hidden. Isolated OCR
+  punctuation at page boundaries is discarded.
 - Book-level metadata and output settings remain unchanged while navigating,
   deleting, and editing parts, and final conversion still uses the complete
   reconstructed book.
@@ -125,3 +125,6 @@ reset or duplicate that state.
 - 2026-09-08 GitHub Copilot: Restored the same Markdown/WYSIWYG mode tabs in
   the active-part Edit editor; the earlier repair had only restored them in the
   full-book Markdown tab.
+- 2026-09-08 GitHub Copilot: Preserved internal page breaks in editable part
+  Markdown (including breaks between prose and images) while hiding only
+  trailing page-break markers at the end of the active part.
