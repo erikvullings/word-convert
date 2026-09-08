@@ -29,7 +29,8 @@ reset or duplicate that state.
   heights, with independent scrolling and aligned pagination.
 - Edit mode stays focused on one practical part at a time. It does not expose
   separate preview, manual merge, or manual split controls; undersized parts are
-  folded into an adjacent part automatically.
+  folded into an adjacent part automatically. The active-part editor can switch
+  between WYSIWYG and Markdown modes.
 - The full-book Markdown tab remains editable, uses the regular Markdown
   editor with Markdown/WYSIWYG switching, and masks base64 image payloads
   without discarding their underlying data.
@@ -121,3 +122,6 @@ reset or duplicate that state.
   full-book editor, increased the aligned PDF and part-editor viewports, kept
   page-break markers semantic but invisible in part prose, and removed isolated
   `**` OCR artifacts immediately before page boundaries.
+- 2026-09-08 GitHub Copilot: Restored the same Markdown/WYSIWYG mode tabs in
+  the active-part Edit editor; the earlier repair had only restored them in the
+  full-book Markdown tab.

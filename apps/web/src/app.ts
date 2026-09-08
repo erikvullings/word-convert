@@ -1614,11 +1614,10 @@ function epubPartEditor(controller: AppController, source: string): m.Vnode {
         },
         htmlToMarkdown: epubEditorHtmlToMarkdown,
         markdownToHtml: renderMarkdown,
-        onModeChange: () => undefined,
         placeholder: 'Edit document content…',
         theme,
         toolbar: true,
-        showTabs: false,
+        showTabs: true,
       }),
     ]),
     paginationControls(

@@ -974,7 +974,8 @@ describe('App', () => {
     expect(rendered).toContain(
       '"disabled":true,"title":"Next part","aria-label":"Next part"',
     );
-    expect(rendered).toContain('"showTabs":false');
+    expect(rendered).toContain('"mode":"wysiwyg"');
+    expect(rendered).toContain('"showTabs":true');
     expect(rendered).toContain('Delete part');
     expect(rendered).not.toContain('Preview this part');
     expect(rendered).not.toContain('Preview entire book');
