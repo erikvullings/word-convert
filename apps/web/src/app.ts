@@ -138,6 +138,7 @@ export interface AppController {
   setPdfPreviewScale?(scale: number): void;
   setPdfOriginalVisible?(visible: boolean): void;
   setPdfSamplePageCount?(pageCount: number): void;
+  setPdfEnhancedFigureDetection?(enabled: boolean): void;
   rescanPdfSample?(): void;
   setPdfCandidateRemoval?(candidateId: string, remove: boolean): void;
   setFormulaDecision?(decision: PdfFormulaDecision): void;
@@ -538,6 +539,18 @@ function pdfImportEditor(controller: AppController): m.Vnode {
       }),
       m('small', `Currently scanned: ${analysedPages.join(', ') || 'none'}`),
     ]),
+    m(InputCheckbox, {
+      checked: state.pdfImport.enhancedFigureDetection,
+      onchange: (enabled) =>
+        controller.setPdfEnhancedFigureDetection?.(enabled),
+      label: 'Use enhanced figure and table detection (slower)',
+    }),
+    m(
+      'small.pdf-import-option-help',
+      state.pdfImport.enhancedFigureDetection
+        ? 'The local layout model will classify every page during full processing.'
+        : 'Embedded images and deterministic PDF graphics are still preserved.',
+    ),
     state.pdfPreviewRequested
       ? m('.pdf-crop-layout', [
           m('.pdf-preview-slot', [

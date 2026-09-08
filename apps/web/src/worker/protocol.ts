@@ -17,6 +17,7 @@ import type {
 
 export interface PdfWorkerOptions {
   formulaRecognitionEnabled?: boolean;
+  layoutDetectionEnabled?: boolean;
   samplePageCount?: number;
   crop?: Partial<PdfCropOptions>;
   removeDetectedFurniture?: boolean;

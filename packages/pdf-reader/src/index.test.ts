@@ -1310,6 +1310,31 @@ describe('PDF layout analysis', () => {
         }),
       ).rejects.toMatchObject({ code: 'cancelled' });
     });
+
+    it('uses the browser task scheduler for responsive analysis checkpoints', async () => {
+      const yieldTask = vi.fn(async () => undefined);
+      vi.stubGlobal('scheduler', { yield: yieldTask });
+      try {
+        await analysePdf(
+          rawDocument([
+            {
+              number: 1,
+              width: 600,
+              height: 800,
+              rotation: 0,
+              spans: [span('Body text', 0.1, 0.2)],
+              links: [],
+              images: [],
+            },
+          ]),
+          { conversionDate: '2026-09-08' },
+        );
+      } finally {
+        vi.unstubAllGlobals();
+      }
+
+      expect(yieldTask).toHaveBeenCalled();
+    });
   });
 
   it('applies page-relative crop regions but keeps the boundary and short-document content', async () => {

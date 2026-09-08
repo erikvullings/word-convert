@@ -61,13 +61,23 @@ PDF source-page previews are loaded only on request and rasterized on an HTML ca
 
 Initial PDF cleanup analysis reads five deterministic representative pages by default, without extracting images. The user can increase and rescan that sample before the first full-document pass. Output choices remain unavailable until cleanup is applied to the complete document. Crop bands omit text only; images are retained even when they overlap a configured band.
 
+A manual Chromium 146 benchmark on 8 September 2026 used a 160-page,
+3.1 MiB OCR-layer book. The five-page cleanup sample became usable in 0.13
+seconds and the default full pass completed in 4.34 seconds with warm local
+formula assets. Before cached line reuse, scheduler-based checkpoints, and
+opt-in learned layout detection, the same pass took 20.05 seconds. The
+representative browser budget is under 1 second for the cleanup sample and
+under 10 seconds for the default full pass on the reference machine.
+
 During the full-document pass, connected clusters of PDF vector paths and substantial embedded images seed bounded figure regions that PDF.js renders to passive PNG assets inside the conversion worker. Image-seeded renders preserve the effective source-image resolution up to the configured pixel budget, include overlaid PDF labels or drawing commands, and suppress duplicate text inside the rendered region. Tiny icons remain independent assets. Figure surfaces are capped by the existing per-image and aggregate pixel budgets and are released immediately after PNG encoding. This deliberately favors ebook fidelity and passive output over exporting active SVG or fragmented text assembled from untrusted PDF drawing commands.
 
-Full PDF conversion also renders each page to a fixed 640×640 RGBA surface and
-runs the bundled Docling Heron model through ONNX Runtime Web in the conversion
-worker. WebGPU is preferred when available, with a single-threaded WASM fallback.
-Picture and table predictions with at least 0.6 confidence seed figure
-composition; coordinates are clipped to the page and remain subject to the
+The SPA offers enhanced figure and table detection as an explicit, per-document
+option because its document-wide model pass is expensive for long text-first
+books. When enabled, full PDF conversion renders each page to a fixed 640×640
+RGBA surface and runs the bundled Docling Heron model through ONNX Runtime Web
+in the conversion worker. WebGPU is preferred when available, with a
+single-threaded WASM fallback. Picture and table predictions with at least 0.6
+confidence seed figure composition; coordinates are clipped to the page and remain subject to the
 existing image and pixel budgets. Confidence-ordered overlap suppression keeps
 the strongest learned proposal where picture and table predictions duplicate
 the same visual region. Learned regions take precedence over overlapping
@@ -130,15 +140,16 @@ learned picture/table proposals; learned proposals enclosing sentence-like
 prose are rejected so paragraphs are not duplicated as image strips.
 
 The FP16 model is approximately 82.5 MiB and the emitted ONNX WASM runtime is
-approximately 25 MiB. Both are same-origin, content-hashed build assets. After
-the initial PDF cleanup sample, the application prepares the model and runtime
-in the background while the user reviews crop settings. The service worker
-caches them after that request rather than downloading approximately 108 MiB
-during installation. Model inference therefore makes no third-party request and
-remains available offline after its first successful use; users who do not open
-PDFs avoid the model download entirely. Preparation removes the one-time download
-and session setup from the subsequent full-document wait, but full processing
-still classifies every page locally. Per-page inference remains the dominant cost
+approximately 25 MiB. Both are same-origin, content-hashed build assets. When
+the user enables enhanced detection after the initial PDF cleanup sample, the
+application prepares the model and runtime in the background while the user
+reviews crop settings. The service worker caches them after that request rather
+than downloading approximately 108 MiB during installation. Model inference
+therefore makes no third-party request and remains available offline after its
+first successful use; users who leave enhanced detection off avoid the model
+download entirely. Preparation removes the one-time download and session setup
+from the subsequent full-document wait, but full processing still classifies
+every page locally when enabled. Per-page inference remains the dominant cost
 for long PDFs and should not be presented as part of the one-time setup. This
 runtime and cache budget should be re-measured when the model or ONNX Runtime
 version changes.

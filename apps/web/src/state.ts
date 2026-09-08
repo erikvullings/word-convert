@@ -41,6 +41,7 @@ export interface PdfImportSettings {
   cropTop: number;
   cropBottom: number;
   samplePageCount: number;
+  enhancedFigureDetection: boolean;
   removeDetectedFurniture: boolean;
   removedCandidateIds: string[];
   retainedCandidateIds: string[];
@@ -192,6 +193,7 @@ export function createInitialState(
       cropTop: 0,
       cropBottom: 0,
       samplePageCount: 5,
+      enhancedFigureDetection: false,
       removeDetectedFurniture: true,
       removedCandidateIds: [],
       retainedCandidateIds: [],

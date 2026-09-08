@@ -247,6 +247,12 @@ describe('App', () => {
     expect(rendered).toContain('Pages to sample');
     expect(rendered).toContain('"label":"Pages to sample"');
     expect(rendered).toContain('Currently scanned: 1, 4, 8, 12');
+    expect(rendered).toContain(
+      'Use enhanced figure and table detection (slower)',
+    );
+    expect(rendered).toContain(
+      'Embedded images and deterministic PDF graphics are still preserved.',
+    );
     expect(rendered).toContain('Top crop: 8%');
     expect(rendered).toContain('Bottom crop: 6%');
     expect(rendered).toContain('Original scale: 100%');

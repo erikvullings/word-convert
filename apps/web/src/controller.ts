@@ -521,6 +521,7 @@ export function createBrowserController(): AppController {
       event.data.pdfAnalysis &&
       event.data.pdfAnalysis.analysedPages.length <
         event.data.pdfAnalysis.pageCount &&
+      state.pdfImport.enhancedFigureDetection &&
       !pdfLayoutOperationId &&
       state.pdfLayoutStatus !== 'ready'
     ) {
@@ -666,6 +667,7 @@ export function createBrowserController(): AppController {
       delete state.formulaExtractionId;
       delete state.formulaExtractionMessage;
       delete state.pdfLayoutStatus;
+      state.pdfImport.enhancedFigureDetection = false;
       disposePdfPreview();
       state.pdfPreviewPage = 1;
       state.pdfPreviewScale = 1;
@@ -1322,6 +1324,34 @@ export function createBrowserController(): AppController {
         maximum,
         Math.max(minimum, Math.round(pageCount)),
       );
+    },
+    setPdfEnhancedFigureDetection(enabled) {
+      state.pdfImport.enhancedFigureDetection = enabled;
+      state.outputSaved = false;
+      if (!enabled) {
+        if (pdfLayoutOperationId)
+          worker.postMessage({
+            type: 'cancel',
+            operationId: pdfLayoutOperationId,
+          } satisfies WorkerRequest);
+        pdfLayoutOperationId = undefined;
+        delete state.pdfLayoutStatus;
+        return;
+      }
+      if (
+        state.sourceFormat !== 'pdf' ||
+        !state.pdfAnalysis ||
+        state.pdfAnalysis.analysedPages.length >= state.pdfAnalysis.pageCount ||
+        pdfLayoutOperationId ||
+        state.pdfLayoutStatus === 'ready'
+      )
+        return;
+      pdfLayoutOperationId = operationId('prepare-pdf-layout');
+      state.pdfLayoutStatus = 'loading';
+      worker.postMessage({
+        type: 'prepare-pdf-layout',
+        operationId: pdfLayoutOperationId,
+      } satisfies WorkerRequest);
     },
     setPdfCandidateRemoval(candidateId, remove) {
       state.pdfImport.removedCandidateIds =
@@ -2005,6 +2035,7 @@ function pdfWorkerOptions(
     if (candidate.removed) removedCandidateIds.add(candidate.id);
   return {
     formulaRecognitionEnabled: state.preferences.formulaRecognitionEnabled,
+    layoutDetectionEnabled: state.pdfImport.enhancedFigureDetection,
     ...(samplePageCount !== undefined ? { samplePageCount } : {}),
     crop: {
       top: state.pdfImport.cropTop,

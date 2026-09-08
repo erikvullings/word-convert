@@ -87,9 +87,11 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
             request.pdfOptions?.samplePageCount === undefined
               ? createPdfFigureRasterizer()
               : undefined;
-          const detector = figureRasterizer
-            ? await (layoutDetector ??= loadHeronLayoutDetector())
-            : undefined;
+          const detector =
+            figureRasterizer &&
+            request.pdfOptions?.layoutDetectionEnabled !== false
+              ? await (layoutDetector ??= loadHeronLayoutDetector())
+              : undefined;
           if (signal.cancelled) throw cancelledError();
           const pdfResult =
             request.sourceFormat === 'pdf'

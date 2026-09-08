@@ -386,7 +386,16 @@ export async function analysePdf(
       message: `Ordering PDF page ${page.number}.`,
     });
     await analysisCheckpoint(options);
-    lines.push(...(await readingOrder(page, options)));
+    lines.push(
+      ...(await readingOrder(
+        page,
+        retainGroupedLines(
+          linesByPage.get(page.number) ?? [],
+          new Set(page.spans.map(({ id }) => id)),
+        ),
+        options,
+      )),
+    );
   }
   options.onProgress?.({
     phase: 'analyse',
@@ -630,9 +639,10 @@ function validateCrop(
 
 async function readingOrder(
   page: RawPdfPage,
+  groupedLines: readonly PdfLine[],
   options: PdfAnalysisOptions,
 ): Promise<PdfLine[]> {
-  const lines = await groupLines(page, options);
+  const lines = [...groupedLines];
   const ordered: PdfLine[] = [];
   let section: PdfLine[] = [];
   const flush = (): void => {
@@ -759,43 +769,74 @@ async function groupLines(
   for (let index = 0; index < logicalLines.length; index++) {
     if (index % 1_000 === 0) await analysisCheckpoint(options);
     const spans = logicalLines[index]!;
-    spans.sort((left, right) => left.x - right.x);
-    const first = spans[0];
-    if (!first) continue;
-    let x = first.x;
-    let right = first.x + first.width;
-    let top = first.top;
-    let height = first.height;
-    let fontSize = first.fontSize;
-    let bold = first.bold;
-    let italic = first.italic;
-    for (const span of spans) {
-      x = Math.min(x, span.x);
-      right = Math.max(right, span.x + span.width);
-      top = Math.min(top, span.top);
-      height = Math.max(height, span.height);
-      fontSize = Math.max(fontSize, span.fontSize);
-      bold ||= span.bold;
-      italic ||= span.italic;
-    }
-    const text = joinSpans(spans);
-    if (!text) continue;
-    output.push({
-      page: page.number,
-      spans,
-      text,
-      x,
-      top,
-      width: right - x,
-      height,
-      fontSize,
-      fontId: first.fontId,
-      ...(first.fontFamily ? { fontFamily: first.fontFamily } : {}),
-      bold,
-      italic,
-    });
+    const line = createPdfLine(page.number, spans);
+    if (line) output.push(line);
   }
   return output;
+}
+
+function retainGroupedLines(
+  lines: readonly PdfLine[],
+  retainedSpanIds: ReadonlySet<string>,
+): PdfLine[] {
+  const output: PdfLine[] = [];
+  for (const line of lines) {
+    const retained = line.spans.filter(({ id }) => retainedSpanIds.has(id));
+    let segment: RawPdfTextSpan[] = [];
+    const flush = (): void => {
+      const rebuilt = createPdfLine(line.page, segment);
+      if (rebuilt) output.push(rebuilt);
+      segment = [];
+    };
+    for (const span of retained) {
+      const previous = segment.at(-1);
+      if (previous && span.x - (previous.x + previous.width) > 0.08) flush();
+      segment.push(span);
+    }
+    flush();
+  }
+  return output;
+}
+
+function createPdfLine(
+  page: number,
+  sourceSpans: readonly RawPdfTextSpan[],
+): PdfLine | undefined {
+  const spans = [...sourceSpans].sort((left, right) => left.x - right.x);
+  const first = spans[0];
+  if (!first) return undefined;
+  let x = first.x;
+  let right = first.x + first.width;
+  let top = first.top;
+  let height = first.height;
+  let fontSize = first.fontSize;
+  let bold = first.bold;
+  let italic = first.italic;
+  for (const span of spans) {
+    x = Math.min(x, span.x);
+    right = Math.max(right, span.x + span.width);
+    top = Math.min(top, span.top);
+    height = Math.max(height, span.height);
+    fontSize = Math.max(fontSize, span.fontSize);
+    bold ||= span.bold;
+    italic ||= span.italic;
+  }
+  const text = joinSpans(spans);
+  if (!text) return undefined;
+  return {
+    page,
+    spans,
+    text,
+    x,
+    top,
+    width: right - x,
+    height,
+    fontSize,
+    fontId: first.fontId,
+    ...(first.fontFamily ? { fontFamily: first.fontFamily } : {}),
+    bold,
+    italic,
+  };
 }
 
 function joinSpans(spans: RawPdfTextSpan[]): string {
@@ -1728,7 +1769,18 @@ function furnitureId(key: string): string {
 }
 
 async function analysisCheckpoint(options: PdfAnalysisOptions): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  if (options.cancellation?.cancelled)
+    throw new PdfReadError('cancelled', 'The operation was cancelled.', {
+      phase: 'analyse',
+      recoverable: true,
+    });
+  const scheduler = (
+    globalThis as typeof globalThis & {
+      scheduler?: { yield?: () => Promise<void> };
+    }
+  ).scheduler;
+  if (scheduler?.yield) await scheduler.yield();
+  else await new Promise<void>((resolve) => setTimeout(resolve, 0));
   if (options.cancellation?.cancelled)
     throw new PdfReadError('cancelled', 'The operation was cancelled.', {
       phase: 'analyse',

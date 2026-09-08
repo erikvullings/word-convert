@@ -965,6 +965,9 @@ describe('browser controller', () => {
         candidates: [],
       },
     });
+    expect(controller.state.pdfLayoutStatus).toBeUndefined();
+
+    controller.setPdfEnhancedFigureDetection?.(true);
     expect(controller.state.pdfLayoutStatus).toBe('loading');
 
     controller.selectFiles([secondFile]);
@@ -1214,6 +1217,7 @@ describe('browser controller', () => {
       expect.objectContaining({
         type: 'analyse',
         pdfOptions: expect.objectContaining({
+          layoutDetectionEnabled: false,
           formulaDecisions: {
             'pdf-equation-p2-001': {
               equationId: 'pdf-equation-p2-001',
