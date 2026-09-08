@@ -11,7 +11,10 @@ const extensions = [
 ];
 
 export function renderMarkdownPreview(markdown: string): string {
-  return render(resolveMarkdownEscapes(markdown), { extensions });
+  return render(resolveMarkdownEscapes(markdown), {
+    extensions,
+    pageBreaks: true,
+  });
 }
 
 function resolveMarkdownEscapes(markdown: string): string {

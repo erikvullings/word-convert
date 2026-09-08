@@ -2046,40 +2046,43 @@ describe('PDF layout analysis', () => {
     ]);
   });
 
-  it('drops an isolated OCR backslash immediately before a page break', async () => {
-    const result = await analysePdf(
-      rawDocument([
-        {
-          number: 1,
-          width: 600,
-          height: 800,
-          rotation: 0,
-          spans: [
-            span('Last paragraph.', 0.1, 0.7, { width: 0.5 }),
-            span('\\', 0.02, 0.82, { width: 0.01 }),
-          ],
-          links: [],
-          images: [],
-        },
-        {
-          number: 2,
-          width: 600,
-          height: 800,
-          rotation: 0,
-          spans: [span('Next paragraph.', 0.1, 0.1, { width: 0.5 })],
-          links: [],
-          images: [],
-        },
-      ]),
-      { conversionDate: '2026-08-29' },
-    );
+  it.each(['\\', '**'])(
+    'drops isolated OCR punctuation %s immediately before a page break',
+    async (punctuation) => {
+      const result = await analysePdf(
+        rawDocument([
+          {
+            number: 1,
+            width: 600,
+            height: 800,
+            rotation: 0,
+            spans: [
+              span('Last paragraph.', 0.1, 0.7, { width: 0.5 }),
+              span(punctuation, 0.02, 0.82, { width: 0.01 }),
+            ],
+            links: [],
+            images: [],
+          },
+          {
+            number: 2,
+            width: 600,
+            height: 800,
+            rotation: 0,
+            spans: [span('Next paragraph.', 0.1, 0.1, { width: 0.5 })],
+            links: [],
+            images: [],
+          },
+        ]),
+        { conversionDate: '2026-08-29' },
+      );
 
-    expect(result.model.blocks).toMatchObject([
-      { type: 'paragraph', children: [{ text: 'Last paragraph.' }] },
-      { type: 'pageBreak' },
-      { type: 'paragraph', children: [{ text: 'Next paragraph.' }] },
-    ]);
-  });
+      expect(result.model.blocks).toMatchObject([
+        { type: 'paragraph', children: [{ text: 'Last paragraph.' }] },
+        { type: 'pageBreak' },
+        { type: 'paragraph', children: [{ text: 'Next paragraph.' }] },
+      ]);
+    },
+  );
 
   it('uses tagged structure order ahead of geometric order', async () => {
     const result = await analysePdf(

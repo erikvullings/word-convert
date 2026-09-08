@@ -545,10 +545,21 @@ export function markdownToBlocks(
   const editable = extractHeadingAnchors(
     replaceEquationSpans(withoutNoteDefinitions(markdown, model)),
   );
-  return applyHeadingAnchors(
-    blockTokens(Lexer.lex(editable.markdown, { gfm: true }), assets, model),
-    editable.ids,
+  return removePageBoundaryNoise(
+    applyHeadingAnchors(
+      blockTokens(Lexer.lex(editable.markdown, { gfm: true }), assets, model),
+      editable.ids,
+    ),
   );
+}
+
+function removePageBoundaryNoise(blocks: readonly BlockNode[]): BlockNode[] {
+  return blocks.filter((block, index) => {
+    if (block.type !== 'paragraph' || blocks[index + 1]?.type !== 'pageBreak')
+      return true;
+    const text = inlineText(block.children).trim();
+    return text !== '\\' && text !== '**';
+  });
 }
 
 function annotateEquationReferences(
@@ -752,17 +763,18 @@ function blockTokens(
         ];
       }
       case 'html': {
-        const image = htmlImage((token as Tokens.HTML).text, assets);
+        const html = (token as Tokens.HTML).text;
+        if (html.trim() === '<!-- markdown:page-break -->')
+          return [{ type: 'pageBreak' }];
+        const image = htmlImage(html, assets);
         return image
           ? [{ type: 'paragraph', children: [image] }]
-          : htmlAnchor((token as Tokens.HTML).text)
+          : htmlAnchor(html)
             ? []
             : [
                 {
                   type: 'paragraph',
-                  children: [
-                    { type: 'text', text: (token as Tokens.HTML).text },
-                  ],
+                  children: [{ type: 'text', text: html }],
                 },
               ];
       }

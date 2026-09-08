@@ -48,4 +48,14 @@ describe('Markdown preview rendering', () => {
     expect(html).toContain('<pre><code class="language-txt">\\*');
     expect(html).toContain('<mfrac>');
   });
+
+  it('renders page-break markers as semantic dividers instead of text', () => {
+    const html = renderMarkdownPreview(
+      'Before.\n\n<!-- markdown:page-break -->\n\nAfter.',
+    );
+
+    expect(html).toContain('class="md-page-break"');
+    expect(html).toContain('role="doc-pagebreak"');
+    expect(html).not.toContain('<!-- markdown:page-break -->');
+  });
 });

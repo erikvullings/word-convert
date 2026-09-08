@@ -944,7 +944,7 @@ h1 {
 
 .book-part-editor-content .md-wysiwyg-editor-wrapper {
   display: flex;
-  height: min(65vh, 50rem);
+  height: min(75vh, 60rem);
   flex-direction: column;
 }
 
@@ -996,6 +996,11 @@ h1 {
 .preview-comparison--visible .document-preview {
   height: min(65vh, 50rem);
   max-height: min(65vh, 50rem);
+}
+
+.preview-comparison--visible.preview-comparison--edit .pdf-page-preview {
+  height: min(75vh, 60rem);
+  max-height: min(75vh, 60rem);
 }
 
 .preview-pane {

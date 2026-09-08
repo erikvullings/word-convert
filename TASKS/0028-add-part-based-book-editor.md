@@ -31,14 +31,17 @@ reset or duplicate that state.
   separate preview, manual merge, or manual split controls; undersized parts are
   folded into an adjacent part automatically.
 - The full-book Markdown tab remains editable, uses the regular Markdown
-  editor, and masks base64 image payloads without discarding their underlying
-  data.
+  editor with Markdown/WYSIWYG switching, and masks base64 image payloads
+  without discarding their underlying data.
 - Markdown images inserted as validated base64 raster data are retained in the
   semantic document model and final EPUB.
 - A part can be deleted after confirmation, except when it is the only
   remaining part.
 - Markdown line breaks remain line breaks in Edit mode instead of becoming
   separate paragraphs.
+- Page-break markers remain semantic during editing without displaying their
+  Markdown comments in part view, and isolated OCR punctuation at page
+  boundaries is discarded.
 - Book-level metadata and output settings remain unchanged while navigating,
   deleting, and editing parts, and final conversion still uses the complete
   reconstructed book.
@@ -114,3 +117,7 @@ reset or duplicate that state.
   Aligned the original PDF and part-editor viewports, rendered CommonMark
   punctuation escapes without visible slashes, and removed isolated OCR
   backslash noise at PDF page boundaries.
+- 2026-09-08 GitHub Copilot: Restored Markdown/WYSIWYG switching in the
+  full-book editor, increased the aligned PDF and part-editor viewports, kept
+  page-break markers semantic but invisible in part prose, and removed isolated
+  `**` OCR artifacts immediately before page boundaries.

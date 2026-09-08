@@ -18,7 +18,7 @@ import {
   TextInput,
 } from 'mithril-materialized';
 import {
-  htmlToMarkdown as editorHtmlToMarkdown,
+  builtinHtmlToMarkdown as editorHtmlToMarkdown,
   MarkdownEditor,
 } from 'mithril-markdown-wysiwyg';
 import DOMPurify from 'dompurify';
@@ -1487,14 +1487,13 @@ function epubMarkdownEditor(
       mode: 'markdown',
       onContentChange: (newContent: string) =>
         controller.setEpubFullContent?.(newContent),
-      htmlToMarkdown: (content: string) => content,
+      htmlToMarkdown: epubEditorHtmlToMarkdown,
       markdownToHtml: renderMarkdown,
       hideBase64Images: true,
-      onModeChange: () => undefined,
       placeholder: 'Edit the full book…',
       theme,
       toolbar: true,
-      showTabs: false,
+      showTabs: true,
     }),
   ]);
 }
@@ -1536,6 +1535,10 @@ export function epubEditorHtmlToMarkdown(html: string): string {
   }
   for (const element of container.querySelectorAll('.footnotes'))
     element.remove();
+  for (const element of container.querySelectorAll(
+    '[data-markdown-page-break="true"], .md-page-break',
+  ))
+    preserve(element, '\n\n<!-- markdown:page-break -->\n\n');
   for (const element of container.querySelectorAll('a[id]')) {
     if (!element.textContent?.trim())
       preserve(element, `<a id="${escapeHtmlAttribute(element.id)}"></a>`);

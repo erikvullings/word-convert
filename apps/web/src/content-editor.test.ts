@@ -223,6 +223,32 @@ describe('EPUB content editor', () => {
     ]);
   });
 
+  it('preserves page breaks without showing their Markdown marker or adjacent OCR stars', () => {
+    const document = model();
+
+    const blocks = markdownToBlocks(
+      [
+        '*Sam Hamill*',
+        '',
+        '\\*\\*',
+        '',
+        '<!-- markdown:page-break -->',
+        '',
+        'Next page.',
+      ].join('\n'),
+      document,
+    );
+
+    expect(blocks).toMatchObject([
+      {
+        type: 'paragraph',
+        children: [{ text: 'Sam Hamill', marks: [{ type: 'italic' }] }],
+      },
+      { type: 'pageBreak' },
+      { type: 'paragraph', children: [{ text: 'Next page.' }] },
+    ]);
+  });
+
   it('merges only adjacent part boundaries without changing document content', () => {
     const document = model();
     document.blocks = markdownToBlocks(

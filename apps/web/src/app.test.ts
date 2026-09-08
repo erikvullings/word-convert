@@ -43,7 +43,9 @@ describe('App', () => {
   it('preserves semantic inline content from the WYSIWYG editor', () => {
     const dom = new JSDOM();
     vi.stubGlobal('document', dom.window.document);
+    vi.stubGlobal('Node', dom.window.Node);
     const markdown = epubEditorHtmlToMarkdown(`
+      <h1>Heading</h1>
       <p>
         <a id="section"></a>
         <u><strong>underlined</strong></u><br>
@@ -58,11 +60,14 @@ describe('App', () => {
         </span>
         <sup id="fnref:note-1"><a href="#fn:note-1">[note-1]</a></sup>
       </p>
+      <div class="md-page-break" data-markdown-page-break="true" role="doc-pagebreak"></div>
       <pre><code class="language-ts">const x = 1;
   return x;</code></pre>
       <div class="footnotes"><ol><li id="fn:note-1">Note body</li></ol></div>
     `);
+    vi.unstubAllGlobals();
 
+    expect(markdown).toContain('# Heading');
     expect(markdown).toContain('<a id="section"></a>');
     expect(markdown).toContain('<u>**underlined**</u>');
     expect(markdown).toContain('  \n');
@@ -70,11 +75,11 @@ describe('App', () => {
     expect(markdown).toContain('[wordconvert-equation:second]');
     expect(markdown).toContain('$x$');
     expect(markdown).toContain('[^note-1]');
+    expect(markdown).toMatch(/<!-- markdown:page-break -->\s+```ts/);
     expect(markdown).toContain(
       ['```ts', 'const x = 1;', '  return x;', '```'].join('\n'),
     );
     expect(markdown).not.toContain('Note body');
-    vi.unstubAllGlobals();
   });
 
   it('resolves the editor theme from the system preference', () => {
@@ -1014,7 +1019,7 @@ describe('App', () => {
     expect(rendered).toContain('Full book Markdown editor');
     expect(rendered).toContain('"mode":"markdown"');
     expect(rendered).toContain('"hideBase64Images":true');
-    expect(rendered).toContain('"showTabs":false');
+    expect(rendered).toContain('"showTabs":true');
     expect(rendered).toContain('# First\\n\\nOne.');
     expect(rendered).toContain('# Second\\n\\nTwo.');
   });

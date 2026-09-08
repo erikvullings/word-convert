@@ -1244,11 +1244,10 @@ async function linesToBlocks(
       canMergeAcrossPage(previousLine, firstLine);
     if (contentPages++ > 0 && !continuesPreviousParagraph) {
       const trailingBlock = blocks.at(-1);
-      if (
-        trailingBlock?.type === 'paragraph' &&
-        inlineText(trailingBlock.children).trim() === '\\'
-      )
-        blocks.pop();
+      if (trailingBlock?.type === 'paragraph') {
+        const trailingText = inlineText(trailingBlock.children).trim();
+        if (trailingText === '\\' || trailingText === '**') blocks.pop();
+      }
       blocks.push({ type: 'pageBreak' });
     }
     const previousPageLine = previousLine;
