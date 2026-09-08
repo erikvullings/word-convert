@@ -795,7 +795,7 @@ describe('App', () => {
     expect(epub).not.toContain('Include internal document links');
   });
 
-  it('shows EPUB configuration in preview stage and explains metadata issues', () => {
+  it('shows EPUB guidance after the workspace and explains metadata issues', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 2;
     state.status = 'ready';
@@ -822,11 +822,14 @@ describe('App', () => {
     const controller = controllerFor(state);
 
     const epub = JSON.stringify(renderApp(controller));
-    expect(epub).toContain('EPUB configuration');
+    expect(epub).not.toContain('EPUB configuration');
     expect(epub).toContain('Front cover');
     expect(epub).toContain('language must be a BCP 47 tag');
     expect(epub).toContain('identifier is missing');
     expect(epub).not.toContain('Create EPUB preview');
+    expect(epub.indexOf('EPUB files')).toBeLessThan(
+      epub.indexOf('The title, language, identifier, and authors'),
+    );
   });
 
   it('renders all cover controls and a live deterministic preview', () => {
@@ -941,11 +944,15 @@ describe('App', () => {
 
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
-    expect(rendered).toContain('epub-preview-mode');
+    expect(rendered).toContain('epub-preview-tabs');
+    expect(rendered).toContain('"role":"tablist"');
+    expect(rendered).toContain('"role":"tab"');
+    expect(rendered).toContain('"aria-selected":"true"');
+    expect(rendered).toContain('"aria-selected":"false"');
     expect(rendered).toContain('Rendered');
     expect(rendered).toContain('Markdown');
     expect(rendered).toContain('Edit');
-    expect(rendered).toContain('Full text');
+    expect(rendered).not.toContain('Full text');
     expect(rendered).toContain('EPUB files');
     expect(rendered).toContain('Editable EPUB content');
     expect(rendered).toContain('Show original');
@@ -962,36 +969,50 @@ describe('App', () => {
     expect(rendered).toContain('Split at heading');
   });
 
-  it.each([
-    ['source' as const, 'markdown'],
-    ['full-edit' as const, 'wysiwyg'],
-  ])(
-    'renders the %s tab as an editable full-book editor',
-    (mode, editorMode) => {
-      const state = createInitialState('2026-07-15');
-      state.stage = 2;
-      state.status = 'complete';
-      state.preferences.outputFormat = 'epub';
-      state.previewMode = mode;
-      state.epubPreviewScope = 'part';
-      state.model = editorModel();
-      state.model.blocks = markdownToBlocks(
-        '# First\n\nOne.\n\nMore one.\n\n# Second\n\nTwo.\n\nMore two.',
-        state.model,
-      );
-      state.epubParts = {
-        ...createContentPartState(state.model),
-        activeIndex: 1,
-      };
+  it('renders Markdown as an editable full-book source with block spacing', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.preferences.outputFormat = 'epub';
+    state.previewMode = 'source';
+    state.epubPreviewScope = 'part';
+    state.model = editorModel();
+    state.model.blocks = markdownToBlocks(
+      '# First\n\nOne.\n\nMore one.\n\n# Second\n\nTwo.\n\nMore two.',
+      state.model,
+    );
+    state.epubParts = {
+      ...createContentPartState(state.model),
+      activeIndex: 1,
+    };
 
-      const rendered = JSON.stringify(renderApp(controllerFor(state)));
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
-      expect(rendered).toContain('Full book editor');
-      expect(rendered).toContain(`"mode":"${editorMode}"`);
-      expect(rendered).toContain('First');
-      expect(rendered).toContain('Second');
-    },
-  );
+    expect(rendered).toContain('Full book Markdown editor');
+    expect(rendered).toContain('epub-markdown-editor');
+    expect(rendered).toContain('# First\\n\\nOne.');
+    expect(rendered).toContain('# Second\\n\\nTwo.');
+  });
+
+  it('passes rendered block markup to the part WYSIWYG editor', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.preferences.outputFormat = 'epub';
+    state.previewMode = 'edit';
+    state.model = editorModel();
+    state.model.blocks = markdownToBlocks(
+      '# First\n\nOne with <sup>spacing</sup>.\n\nMore one.',
+      state.model,
+    );
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('"mode":"wysiwyg"');
+    expect(rendered).toContain('"content":"<h1>First</h1>\\n\\n<p>');
+    expect(rendered).toContain('One with <sup>spacing</sup>.');
+    expect(rendered).not.toContain('"content":"# First');
+  });
 
   it('preserves inline equation image presentation in the EPUB preview', () => {
     const state = createInitialState('2026-07-15');

@@ -207,7 +207,7 @@ export function createBrowserController(): AppController {
   ): boolean =>
     mode === 'edit'
       ? saveActiveEpubPart(clearDraft)
-      : mode === 'source' || mode === 'full-edit'
+      : mode === 'source'
         ? saveFullEpubContent(clearDraft)
         : true;
   const savePendingEpubDraft = (clearDraft = true): boolean =>
@@ -949,8 +949,6 @@ export function createBrowserController(): AppController {
       if (state.preferences.outputFormat === 'epub' && !savePendingEpubDraft())
         return;
       state.preferences.outputFormat = format;
-      if (format !== 'epub' && state.previewMode === 'full-edit')
-        state.previewMode = 'rendered';
       persistPreferences(localStorage, state.preferences);
       delete state.output;
       delete state.selectedEpubFile;
@@ -1054,8 +1052,7 @@ export function createBrowserController(): AppController {
     setEpubPreviewMode(mode) {
       if (!state.sourceHtml && !saveEpubDraftForMode()) return;
       state.previewMode = mode;
-      if (mode !== 'edit' && mode !== 'full-edit' && mode !== 'source')
-        refreshEpubPreview();
+      if (mode !== 'edit' && mode !== 'source') refreshEpubPreview();
     },
     navigateEpubPart(direction) {
       if (!saveActiveEpubPart()) return;

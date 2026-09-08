@@ -7,6 +7,7 @@ allowBuilds:
   simple-git-hooks: true
 
 minimumReleaseAgeExclude:
-  - slimdown-js@1.4.1
+  - mithril-markdown-wysiwyg@0.4.0
+  - slimdown-js
 
 onlyBuiltDependencies: []

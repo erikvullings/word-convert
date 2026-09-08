@@ -30,8 +30,7 @@ export const WORKFLOW_STAGES = [
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type OutputFormat = 'html' | 'markdown' | 'epub';
-export type PreviewMode =
-  'cover' | 'rendered' | 'source' | 'edit' | 'full-edit' | 'package';
+export type PreviewMode = 'cover' | 'rendered' | 'source' | 'edit' | 'package';
 export type EpubPreviewScope = 'part' | 'book';
 export type SourceFormat = 'docx' | 'pdf' | 'html' | 'markdown' | 'text';
 export type FormulaReviewFilter =

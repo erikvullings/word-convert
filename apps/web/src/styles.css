@@ -709,8 +709,7 @@ h1 {
 }
 
 .format-card span,
-.secondary-actions,
-.epub-config small {
+.secondary-actions {
   color: var(--muted);
 }
 
@@ -795,23 +794,6 @@ h1 {
   transform: rotate(180deg);
 }
 
-.epub-config {
-  display: block;
-  margin-top: 1.5rem;
-  padding: 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.7rem;
-}
-
-.epub-config > * + * {
-  margin-top: 0.8rem;
-}
-
-.epub-config label {
-  display: grid;
-  gap: 0.4rem;
-}
-
 .cover-editor {
   display: block;
   margin-top: 1rem;
@@ -826,7 +808,6 @@ h1 {
 }
 
 .cover-editor .row,
-.epub-config .row,
 .cover-controls {
   margin-bottom: 0;
 }
@@ -890,6 +871,49 @@ h1 {
   gap: 1rem;
 }
 
+.epub-preview-navigation {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-block: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.epub-preview-tabs {
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.epub-preview-tab {
+  min-height: 2.75rem;
+  padding: 0.65rem 1rem;
+  border: 0;
+  border-bottom: 0.2rem solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.epub-preview-tab:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--ink);
+}
+
+.epub-preview-tab[aria-selected='true'] {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.epub-preview-tab:focus-visible {
+  outline: 0.15rem solid var(--accent);
+  outline-offset: -0.2rem;
+}
+
 .preview-mode {
   min-width: 0;
   flex: 1;
@@ -936,6 +960,44 @@ h1 {
   display: flex;
   justify-content: flex-end;
   flex: 0 0 auto;
+  padding-bottom: 0.25rem;
+}
+
+.epub-guidance {
+  max-width: 75ch;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.epub-guidance > * {
+  margin: 0;
+}
+
+.epub-guidance > * + * {
+  margin-top: 0.5rem;
+}
+
+.epub-markdown-editor {
+  width: 100%;
+  min-height: min(65vh, 50rem);
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 1rem;
+  font-family:
+    ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.95rem;
+  line-height: 1.65;
+  tab-size: 2;
+}
+
+.epub-markdown-editor:focus-visible {
+  outline: 0.15rem solid var(--accent);
+  outline-offset: 0.1rem;
 }
 
 .preview-comparison {
@@ -2073,6 +2135,19 @@ h1 {
     min-height: 0;
     padding: 1rem;
     border-radius: 0.7rem;
+  }
+
+  .epub-preview-navigation {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .epub-preview-tabs {
+    width: 100%;
+  }
+
+  .original-preview-toggle {
+    align-self: flex-end;
   }
 
   .document-preview,

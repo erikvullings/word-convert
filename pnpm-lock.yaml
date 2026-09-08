@@ -105,8 +105,8 @@ importers:
         specifier: ^2.3.8
         version: 2.3.8
       mithril-markdown-wysiwyg:
-        specifier: ^0.2.5
-        version: 0.2.5(mithril@2.3.8)
+        specifier: ^0.4.0
+        version: 0.4.0(mithril@2.3.8)
       mithril-materialized:
         specifier: ^3.17.9
         version: 3.17.9
@@ -117,11 +117,11 @@ importers:
         specifier: 6.3.289
         version: 6.3.289
       slimdown-js:
-        specifier: ^1.5.0
-        version: 1.5.0
+        specifier: ^1.5.4
+        version: 1.5.4
       slimdown-katex:
         specifier: ^0.2.1
-        version: 0.2.1(katex@0.18.5)(slimdown-js@1.5.0)
+        version: 0.2.1(katex@0.18.5)(slimdown-js@1.5.4)
     devDependencies:
       '@types/css-tree':
         specifier: ^3.2.0
@@ -1182,8 +1182,8 @@ packages:
   mdn-data@2.27.1:
     resolution: {integrity: sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==}
 
-  mithril-markdown-wysiwyg@0.2.5:
-    resolution: {integrity: sha512-Ljj2INLAQ9a6/8RnEILzVRCJlf7xlvMYGtAX63Av2LwEmJpq3++eQzcXySKBtZy+AgoZlBHgTx9GDkY7XOpckA==}
+  mithril-markdown-wysiwyg@0.4.0:
+    resolution: {integrity: sha512-RPeCMX6Dx6Wo+WvZv5vp9vrNEDFJOe+SZOSp3qk06G7+VRVwSY2HamBxEd6S9s6yftJOteh82mFDwN0CuAqRXA==}
     peerDependencies:
       mithril: ^2.3.8
 
@@ -1307,8 +1307,8 @@ packages:
     resolution: {integrity: sha512-kkTORPAuxQz2g1QUuN0J8yGWT28tjGBfPOdJ4xT7Vbeu30veKUZQIoID2qGgCDAakaQn59UeZJJ4cFGB8PVP2A==}
     hasBin: true
 
-  slimdown-js@1.5.0:
-    resolution: {integrity: sha512-D/MfWv0+MPeYm2sNrw8A7hG39s22Q903VBjD8gG/LNuEm+JtPlx4TeueElqAZ3Hbp2/8dPr5O7hRin7+jJE7/A==}
+  slimdown-js@1.5.4:
+    resolution: {integrity: sha512-XEC5/VN+X8dsHNgDCyxhSr+JhzWKVH1EbjbJTe69E5ilReJfEdu4pZzsV4ww1AykH8Z4+SxzbsbohEBpZPrX0A==}
     engines: {node: '>=16'}
 
   slimdown-katex@0.2.1:
@@ -2369,10 +2369,10 @@ snapshots:
 
   mdn-data@2.27.1: {}
 
-  mithril-markdown-wysiwyg@0.2.5(mithril@2.3.8):
+  mithril-markdown-wysiwyg@0.4.0(mithril@2.3.8):
     dependencies:
       mithril: 2.3.8
-      slimdown-js: 1.5.0
+      slimdown-js: 1.5.4
 
   mithril-materialized@3.17.9:
     dependencies:
@@ -2522,12 +2522,12 @@ snapshots:
 
   simple-git-hooks@2.14.0: {}
 
-  slimdown-js@1.5.0: {}
+  slimdown-js@1.5.4: {}
 
-  slimdown-katex@0.2.1(katex@0.18.5)(slimdown-js@1.5.0):
+  slimdown-katex@0.2.1(katex@0.18.5)(slimdown-js@1.5.4):
     dependencies:
       katex: 0.18.5
-      slimdown-js: 1.5.0
+      slimdown-js: 1.5.4
 
   source-map-js@1.2.1: {}
 

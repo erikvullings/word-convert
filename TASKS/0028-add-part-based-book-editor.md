@@ -87,3 +87,9 @@ reset or duplicate that state.
   that use JPEG 2000 images or JBIG2 masks. PDF.js now loads bundled,
   same-origin OpenJPEG, JBIG2, and QCMS decoders under the configured
   application base path, including offline precaching and JavaScript fallbacks.
+- 2026-09-08 GitHub Copilot: Repaired EPUB editing for semantic Markdown that
+  contains inline HTML by passing rendered block markup to the part WYSIWYG
+  editor and keeping the full-book Markdown view as a literal editable source.
+  Replaced the mode radios with accessible tabs, removed the duplicate full-text
+  mode, moved EPUB guidance below the workspace, and upgraded the Markdown
+  dependencies.

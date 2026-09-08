@@ -82,8 +82,9 @@ const previewModeOptionsWithEdit = [
 ];
 const epubPreviewModeOptions = [
   { id: 'cover' as const, label: 'Front cover' },
-  ...previewModeOptionsWithEdit,
-  { id: 'full-edit' as const, label: 'Full text' },
+  { id: 'rendered' as const, label: 'Rendered' },
+  { id: 'edit' as const, label: 'Edit' },
+  { id: 'source' as const, label: 'Markdown' },
   { id: 'package' as const, label: 'EPUB files' },
 ];
 
@@ -859,11 +860,10 @@ function epubPackaging(): m.Vnode {
   ]);
 }
 
-function epubConfiguration(controller: AppController): m.Vnode {
+function epubGuidance(controller: AppController): m.Vnode {
   const metadata = controller.state.model?.metadata;
   const issues = epubMetadataIssues(metadata);
-  return m('section.epub-config', [
-    m('h3', 'EPUB configuration'),
+  return m('footer.epub-guidance', [
     m(
       'p',
       'The title, language, identifier, and authors come from the analysed document metadata.',
@@ -887,6 +887,57 @@ function epubConfiguration(controller: AppController): m.Vnode {
             : 'EPUB preview updates automatically when metadata changes.',
         ),
   ]);
+}
+
+function epubPreviewOptions(
+  state: AppState,
+): readonly { id: PreviewMode; label: string }[] {
+  return state.sourceHtml
+    ? epubPreviewModeOptions.map((option) =>
+        option.id === 'source' ? { ...option, label: 'HTML' } : option,
+      )
+    : epubPreviewModeOptions;
+}
+
+function epubPreviewTabs(controller: AppController): m.Vnode {
+  const { state } = controller;
+  const options = epubPreviewOptions(state);
+  const select = (mode: PreviewMode): void => {
+    controller.setEpubPreviewMode?.(mode);
+  };
+  const onkeydown = (event: KeyboardEvent, index: number): void => {
+    let nextIndex: number | undefined;
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % options.length;
+    else if (event.key === 'ArrowLeft')
+      nextIndex = (index - 1 + options.length) % options.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = options.length - 1;
+    if (nextIndex === undefined) return;
+    event.preventDefault();
+    const option = options[nextIndex];
+    if (!option) return;
+    select(option.id);
+    document.getElementById(`epub-preview-mode-${option.id}`)?.focus();
+  };
+  return m(
+    '.epub-preview-tabs[role="tablist"][aria-label="EPUB preview views"]',
+    options.map((option, index) =>
+      m(
+        'button.epub-preview-tab',
+        {
+          id: `epub-preview-mode-${option.id}`,
+          type: 'button',
+          role: 'tab',
+          'aria-controls': 'epub-preview-content',
+          'aria-selected': state.previewMode === option.id ? 'true' : 'false',
+          tabindex: state.previewMode === option.id ? 0 : -1,
+          onclick: () => select(option.id),
+          onkeydown: (event: KeyboardEvent) => onkeydown(event, index),
+        },
+        option.label,
+      ),
+    ),
+  );
 }
 
 function epubCoverPanel(controller: AppController): m.Vnode {
@@ -1217,55 +1268,39 @@ function preview(controller: AppController): m.Vnode {
                 ]),
               ])
             : epubPartEditor(controller, source)
-          : state.previewMode === 'full-edit'
-            ? epubFullEditor(controller, source, 'wysiwyg')
-            : state.previewMode === 'source'
-              ? state.sourceHtml
-                ? m('pre.markdown-source', source)
-                : epubFullEditor(controller, source, 'markdown')
-              : state.previewMode === 'package'
-                ? epubLayoutPreview(controller)
-                : state.sourceHtml
-                  ? sourceHtmlPreview(state, source)
-                  : m(
-                      'article.document-preview',
-                      m.trust(
-                        DOMPurify.sanitize(
-                          epubRenderedPreview(state, source),
-                          previewSanitizeConfig(),
-                        ),
+          : state.previewMode === 'source'
+            ? state.sourceHtml
+              ? m('pre.markdown-source', source)
+              : epubMarkdownEditor(controller, source)
+            : state.previewMode === 'package'
+              ? epubLayoutPreview(controller)
+              : state.sourceHtml
+                ? sourceHtmlPreview(state, source)
+                : m(
+                    'article.document-preview',
+                    m.trust(
+                      DOMPurify.sanitize(
+                        epubRenderedPreview(state, source),
+                        previewSanitizeConfig(),
                       ),
-                    );
+                    ),
+                  );
     return m('.preview-panel', [
       previewActions(controller),
-      epubConfiguration(controller),
-      m('.preview-display-controls', [
-        m(
-          '.preview-mode',
-          m(RadioButtons<PreviewMode>, {
-            id: 'epub-preview-mode',
-            options: state.sourceHtml
-              ? epubPreviewModeOptions
-                  .filter((option) => option.id !== 'full-edit')
-                  .map((option) =>
-                    option.id === 'source'
-                      ? { ...option, label: 'HTML' }
-                      : option,
-                  )
-              : epubPreviewModeOptions,
-            checkedId: state.previewMode,
-            className: 'row',
-            checkboxClass: 'col s12 m4 l2',
-            onchange: (mode) => {
-              controller.setEpubPreviewMode?.(mode);
-            },
-          }),
-        ),
+      m('.epub-preview-navigation', [
+        epubPreviewTabs(controller),
         state.sourceFormat === 'pdf' ? originalPreviewToggle(controller) : null,
       ]),
-      outputPreviewWorkspace(controller, converted),
+      m(
+        '#epub-preview-content[role="tabpanel"]',
+        {
+          'aria-labelledby': `epub-preview-mode-${state.previewMode}`,
+        },
+        outputPreviewWorkspace(controller, converted),
+      ),
       warningPanel(controller),
       previewActions(controller),
+      epubGuidance(controller),
     ]);
   }
 
@@ -1407,10 +1442,7 @@ function epubContentSource(state: AppState): string {
   if (state.sourceHtml) return state.epubSourceEdit ?? state.sourceHtml.xhtml;
   if (state.previewMode === 'edit' && state.epubContentEdit !== undefined)
     return state.epubContentEdit;
-  if (
-    (state.previewMode === 'full-edit' || state.previewMode === 'source') &&
-    state.epubFullContentEdit !== undefined
-  )
+  if (state.previewMode === 'source' && state.epubFullContentEdit !== undefined)
     return state.epubFullContentEdit;
   if (!state.model) return '';
   const partState =
@@ -1423,13 +1455,11 @@ function epubContentSource(state: AppState): string {
   return contentEditorSource(contentModel);
 }
 
-function epubFullEditor(
+function epubMarkdownEditor(
   controller: AppController,
   source: string,
-  mode: 'wysiwyg' | 'markdown',
 ): m.Vnode {
-  const theme = editorTheme(controller.state.preferences.theme);
-  return m('section.book-full-editor[aria-label="Full book editor"]', [
+  return m('section.book-full-editor[aria-label="Full book Markdown editor"]', [
     ...(controller.state.epubEditorNotice
       ? [
           m(
@@ -1439,18 +1469,16 @@ function epubFullEditor(
           ),
         ]
       : []),
-    m(MarkdownEditor, {
-      key: `epub-full-${mode}-${controller.state.epubEditorRevision}-${theme}`,
-      content: source,
-      mode,
-      onContentChange: (newContent: string) =>
-        controller.setEpubFullContent?.(newContent),
-      htmlToMarkdown: epubEditorHtmlToMarkdown,
-      markdownToHtml: renderMarkdown,
+    m('textarea.epub-markdown-editor', {
+      key: `epub-full-markdown-${controller.state.epubEditorRevision}`,
+      value: source,
+      'aria-label': 'Full book Markdown',
+      oninput: (event: InputEvent) =>
+        controller.setEpubFullContent?.(
+          (event.currentTarget as HTMLTextAreaElement).value,
+        ),
+      spellcheck: false,
       placeholder: 'Edit the full book…',
-      theme,
-      toolbar: mode === 'wysiwyg',
-      showTabs: false,
     }),
   ]);
 }
@@ -1632,7 +1660,7 @@ function epubPartEditor(controller: AppController, source: string): m.Vnode {
     m('.book-part-editor-content', [
       m(MarkdownEditor, {
         key: `epub-part-${partState.activeIndex}-${state.epubEditorRevision}-${theme}`,
-        content: source,
+        content: renderMarkdown(source),
         mode: 'wysiwyg',
         onContentChange: (newContent: string) => {
           state.epubContentEdit = newContent;
@@ -1683,7 +1711,7 @@ function originalPreviewToggle(controller: AppController): m.Vnode {
   const visible = controller.state.pdfOriginalVisible === true;
   return m(
     '.original-preview-toggle',
-    m(Button, {
+    m(FlatButton, {
       label: visible ? 'Hide original' : 'Show original',
       onclick: () => controller.setPdfOriginalVisible?.(!visible),
     }),
