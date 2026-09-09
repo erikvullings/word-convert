@@ -42,13 +42,16 @@ import {
   shareEpub,
 } from './download/index.ts';
 import {
+  contentEditorSource,
+  contentImageDataUri,
   contentPartModel,
   contentPartSplitHeadings,
   contentPartSummaries,
   createPracticalContentPartState,
   deleteContentPart,
   importContentDataImages,
-  insertImageIntoContentPart,
+  insertContentImageMarkdown,
+  mapDisplayedMarkdownSelection,
   mergeContentPart,
   nextContentImageId,
   normalizeContentPartState,
@@ -128,6 +131,7 @@ export function createBrowserController(): AppController {
   let pdfPreviewRendering = false;
   let pdfImageSelectionAnchor: FormulaSelectionPoint | undefined;
   let pdfImageInsertionOperation = 0;
+  let pdfImageMarkdownSelection: { start: number; end: number } | undefined;
   let formulaSelectionAdjustment:
     | {
         bounds: import('@wordconvert/pdf-reader').PdfBounds;
@@ -139,6 +143,7 @@ export function createBrowserController(): AppController {
   let disposed = false;
   const resetEpubPartState = (): void => {
     delete state.epubContentEdit;
+    delete state.epubPartEditorMode;
     delete state.epubFullContentEdit;
     delete state.epubEditorNotice;
     delete state.epubParts;
@@ -315,7 +320,8 @@ export function createBrowserController(): AppController {
     if (state.pdfImageSelectionOpen) {
       pdfImageInsertionOperation += 1;
       delete state.pdfImageInsertionLoading;
-      state.pdfImageSelectionBounds = { x: 0, top: 0, width: 1, height: 1 };
+      delete state.pdfImageRegionSelectionActive;
+      delete state.pdfImageSelectionBounds;
       state.pdfImageSelectionAlt = `Image from PDF page ${pageNumber}`;
       delete state.pdfImageInsertionError;
       pdfImageSelectionAnchor = undefined;
@@ -689,11 +695,13 @@ export function createBrowserController(): AppController {
       delete state.output;
       delete state.outputFilename;
       delete state.pdfImageSelectionOpen;
+      delete state.pdfImageRegionSelectionActive;
       delete state.pdfImageSelectionBounds;
       delete state.pdfImageSelectionAlt;
       delete state.pdfImageInsertionLoading;
       delete state.pdfImageInsertionError;
       pdfImageSelectionAnchor = undefined;
+      pdfImageMarkdownSelection = undefined;
       pdfImageInsertionOperation += 1;
       state.outputSaved = false;
       delete state.selectedEpubFile;
@@ -1448,11 +1456,13 @@ export function createBrowserController(): AppController {
       state.pdfOriginalVisible = visible;
       if (!visible) {
         delete state.pdfImageSelectionOpen;
+        delete state.pdfImageRegionSelectionActive;
         delete state.pdfImageSelectionBounds;
         delete state.pdfImageSelectionAlt;
         delete state.pdfImageInsertionLoading;
         delete state.pdfImageInsertionError;
         pdfImageSelectionAnchor = undefined;
+        pdfImageMarkdownSelection = undefined;
         pdfImageInsertionOperation += 1;
       }
       if (
@@ -1463,22 +1473,56 @@ export function createBrowserController(): AppController {
       )
         requestPdfPage(state.pdfPreviewPage);
     },
-    openPdfImageSelection() {
+    openPdfImageSelection(selection, displayedMarkdown) {
       pdfImageInsertionOperation += 1;
       state.pdfImageSelectionOpen = true;
-      state.pdfImageSelectionBounds = { x: 0, top: 0, width: 1, height: 1 };
+      delete state.pdfImageRegionSelectionActive;
+      delete state.pdfImageSelectionBounds;
       state.pdfImageSelectionAlt = `Image from PDF page ${state.pdfPreviewPage}`;
       delete state.pdfImageInsertionError;
       pdfImageSelectionAnchor = undefined;
+      ensureEpubParts();
+      const part =
+        state.model && state.epubParts
+          ? contentPartModel(state.model, state.epubParts)
+          : undefined;
+      const markdown =
+        state.epubContentEdit ?? (part ? contentEditorSource(part) : '');
+      const fallback = { start: markdown.length, end: markdown.length };
+      pdfImageMarkdownSelection =
+        selection && displayedMarkdown !== undefined
+          ? mapDisplayedMarkdownSelection(
+              displayedMarkdown,
+              markdown,
+              selection,
+            )
+          : (selection ?? fallback);
+    },
+    startPdfImageRegionSelection() {
+      if (!state.pdfImageSelectionOpen || state.pdfImageInsertionLoading)
+        return;
+      state.pdfImageRegionSelectionActive = true;
+      delete state.pdfImageSelectionBounds;
+      delete state.pdfImageInsertionError;
+      pdfImageSelectionAnchor = undefined;
+    },
+    insertPdfFullPageImage() {
+      if (!state.pdfImageSelectionOpen || state.pdfImageInsertionLoading)
+        return;
+      delete state.pdfImageRegionSelectionActive;
+      state.pdfImageSelectionBounds = { x: 0, top: 0, width: 1, height: 1 };
+      controller.insertPdfImageSelection?.();
     },
     cancelPdfImageSelection() {
       pdfImageInsertionOperation += 1;
       delete state.pdfImageSelectionOpen;
+      delete state.pdfImageRegionSelectionActive;
       delete state.pdfImageSelectionBounds;
       delete state.pdfImageSelectionAlt;
       delete state.pdfImageInsertionLoading;
       delete state.pdfImageInsertionError;
       pdfImageSelectionAnchor = undefined;
+      pdfImageMarkdownSelection = undefined;
     },
     beginPdfImageSelection(point) {
       pdfImageSelectionAnchor = point;
@@ -1493,6 +1537,7 @@ export function createBrowserController(): AppController {
     endPdfImageSelection(point) {
       controller.updatePdfImageSelection?.(point);
       pdfImageSelectionAnchor = undefined;
+      if (state.pdfImageSelectionBounds) controller.insertPdfImageSelection?.();
     },
     setPdfImageSelectionBounds(bounds) {
       state.pdfImageSelectionBounds = { ...bounds };
@@ -1506,7 +1551,14 @@ export function createBrowserController(): AppController {
       const page = state.pdfPreview?.pageNumber ?? state.pdfPreviewPage;
       const alt =
         state.pdfImageSelectionAlt?.trim() || `Image from PDF page ${page}`;
-      if (!input || !bounds || !state.model || state.pdfImageInsertionLoading)
+      const selection = pdfImageMarkdownSelection;
+      if (
+        !input ||
+        !bounds ||
+        !selection ||
+        !state.model ||
+        state.pdfImageInsertionLoading
+      )
         return;
       ensureEpubParts();
       const targetPartIndex = state.epubParts?.activeIndex;
@@ -1534,44 +1586,46 @@ export function createBrowserController(): AppController {
             throw new Error(
               'The active part changed before insertion finished.',
             );
-          if (!saveActiveEpubPart()) return;
+          if (preview.blob.size > 10 * 1024 * 1024)
+            throw new Error('The selected image exceeds the 10 MiB limit.');
           const model = state.model;
           const parts = state.epubParts;
           if (!model || !parts) return;
-          if (preview.blob.size > 10 * 1024 * 1024)
-            throw new Error('The selected image exceeds the 10 MiB limit.');
-          const editorAssets = Object.values(model.assets).filter(({ id }) =>
-            id.startsWith('editor-image-'),
-          );
-          if (editorAssets.length >= 100)
-            throw new Error('A book can contain at most 100 inserted images.');
-          if (
-            editorAssets.reduce(
-              (total, asset) => total + asset.data.byteLength,
-              preview.blob.size,
-            ) >
-            50 * 1024 * 1024
-          )
-            throw new Error(
-              'Inserted images exceed the 50 MiB total size limit.',
-            );
-          const id = nextContentImageId(model);
-          const inserted = insertImageIntoContentPart(
-            model,
-            parts,
-            {
-              id,
-              mediaType: 'image/png',
-              data: new Uint8Array(await preview.blob.arrayBuffer()),
-              filename: `${id}.png`,
-              width: preview.width,
-              height: preview.height,
-            },
-            Math.min(1, Math.max(0.2, bounds.width / 0.8)),
+          const targetId = nextContentImageId(model);
+          const part = contentPartModel(model, parts);
+          const markdown = state.epubContentEdit ?? contentEditorSource(part);
+          const imageData = new Uint8Array(await preview.blob.arrayBuffer());
+          state.epubContentEdit = insertContentImageMarkdown(
+            markdown,
+            selection,
+            contentImageDataUri('image/png', imageData),
             alt,
           );
-          state.model = inserted.model;
-          state.epubParts = inserted.state;
+          if (!saveActiveEpubPart(false, false)) return;
+          if (state.model)
+            state.model = {
+              ...state.model,
+              blocks: state.model.blocks.map((block) => {
+                const inlineImage =
+                  block.type === 'paragraph' &&
+                  block.children.length === 1 &&
+                  block.children[0]?.type === 'image' &&
+                  block.children[0].assetId === targetId
+                    ? block.children[0]
+                    : undefined;
+                if (block.type !== 'imageBlock' && inlineImage === undefined)
+                  return block;
+                if (block.type === 'imageBlock' && block.assetId !== targetId)
+                  return block;
+                return {
+                  type: 'imageBlock',
+                  assetId: targetId,
+                  alt: inlineImage?.alt ?? alt,
+                  width: Math.min(1, Math.max(0.2, bounds.width / 0.8)),
+                  alignment: 'center',
+                };
+              }),
+            };
           state.epubEditorRevision += 1;
           delete state.epubContentEdit;
           state.epubEditorNotice = `Inserted image from PDF page ${page}.`;

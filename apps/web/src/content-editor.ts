@@ -207,6 +207,111 @@ export function contentEditorSource(model: DocumentModel): string {
   );
 }
 
+export interface MarkdownSelection {
+  start: number;
+  end: number;
+}
+
+export function insertContentImageMarkdown(
+  markdown: string,
+  selection: MarkdownSelection,
+  source: string,
+  alt: string,
+): string {
+  const start = Math.min(
+    markdown.length,
+    Math.max(0, Math.min(selection.start, selection.end)),
+  );
+  const end = Math.min(
+    markdown.length,
+    Math.max(start, Math.max(selection.start, selection.end)),
+  );
+  const destination = markdownImageDestinationAt(markdown, start, end);
+  if (destination)
+    return `${markdown.slice(0, destination.start)}${source}${markdown.slice(destination.end)}`;
+
+  const image = `![${escapeMarkdownImageAlt(alt)}](${source})`;
+  const prefix = markdown.slice(0, start);
+  const suffix = markdown.slice(end);
+  const insertion =
+    (start === 0 || prefix.endsWith('\n\n')) &&
+    suffix.length > 0 &&
+    !suffix.startsWith('\n')
+      ? `${image}\n\n`
+      : (end === markdown.length || suffix.startsWith('\n\n')) &&
+          prefix.length > 0 &&
+          !prefix.endsWith('\n')
+        ? `\n\n${image}`
+        : image;
+  return `${prefix}${insertion}${suffix}`;
+}
+
+export function mapDisplayedMarkdownSelection(
+  displayed: string,
+  markdown: string,
+  selection: MarkdownSelection,
+): MarkdownSelection {
+  if (displayed === markdown) return selection;
+  const masked = [
+    ...displayed.matchAll(
+      /data:image\/[a-z0-9.+-]+;base64,(?:\u2026|\{hidden image \d+:[^}\n]+\})/gi,
+    ),
+  ];
+  const actual = [
+    ...markdown.matchAll(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/]+={0,2}/gi),
+  ];
+  if (masked.length !== actual.length)
+    return {
+      start: Math.min(markdown.length, selection.start),
+      end: Math.min(markdown.length, selection.end),
+    };
+  const mapOffset = (offset: number): number => {
+    for (let index = 0; index < masked.length; index += 1) {
+      const hidden = masked[index];
+      const expanded = actual[index];
+      if (
+        !hidden ||
+        !expanded ||
+        hidden.index === undefined ||
+        expanded.index === undefined ||
+        !hidden[0] ||
+        !expanded[0]
+      )
+        continue;
+      if (offset <= hidden.index)
+        return Math.min(
+          markdown.length,
+          expanded.index + (offset - hidden.index),
+        );
+      if (offset <= hidden.index + hidden[0].length)
+        return Math.min(
+          expanded.index + expanded[0].length,
+          expanded.index + (offset - hidden.index),
+        );
+    }
+    const maskedLength = masked.reduce(
+      (total, match) => total + match[0].length,
+      0,
+    );
+    const actualLength = actual.reduce(
+      (total, match) => total + match[0].length,
+      0,
+    );
+    return Math.min(markdown.length, offset + actualLength - maskedLength);
+  };
+  return {
+    start: mapOffset(selection.start),
+    end: mapOffset(selection.end),
+  };
+}
+
+export function contentImageDataUri(
+  mediaType: string,
+  data: Uint8Array,
+): string {
+  return `data:${mediaType.toLowerCase()};base64,${base64(data)}`;
+}
+
 export function unsupportedContentImageSources(
   markdown: string,
   model: DocumentModel,
@@ -1551,10 +1656,33 @@ function inlineText(nodes: readonly InlineNode[]): string {
 function assetUrls(model: DocumentModel): ReadonlyMap<string, string> {
   return new Map(
     Object.values(model.assets).map((asset) => [
-      `data:${asset.mediaType.toLowerCase()};base64,${base64(asset.data)}`,
+      contentImageDataUri(asset.mediaType, asset.data),
       asset.id,
     ]),
   );
+}
+
+function markdownImageDestinationAt(
+  markdown: string,
+  start: number,
+  end: number,
+): { start: number; end: number } | undefined {
+  for (const match of markdown.matchAll(/!\[[^\]\n]*\]\(([^)\n]*)\)/g)) {
+    if (match.index === undefined) continue;
+    const openingParenthesis = match[0].indexOf('(');
+    const destinationStart = match.index + openingParenthesis + 1;
+    const destinationEnd = match.index + match[0].length - 1;
+    if (start >= destinationStart && end <= destinationEnd)
+      return { start: destinationStart, end: destinationEnd };
+  }
+  return undefined;
+}
+
+function escapeMarkdownImageAlt(value: string): string {
+  return value
+    .replaceAll('\\', '\\\\')
+    .replaceAll('[', '\\[')
+    .replaceAll(']', '\\]');
 }
 
 function base64(data: Uint8Array): string {

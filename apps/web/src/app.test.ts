@@ -1070,6 +1070,25 @@ describe('App', () => {
       'Insert image from original page',
     );
 
+    state.pdfImageSelectionOpen = true;
+    state.pdfPreview = {
+      pageNumber: 1,
+      width: 800,
+      height: 1_200,
+      url: 'blob:page',
+    };
+    state.pdfPreviewRequested = true;
+    const choices = JSON.stringify(renderApp(controllerFor(state)));
+    expect(choices).toContain('Full page');
+    expect(choices).toContain('Region');
+    expect(choices).toContain('Cancel');
+    expect(choices).not.toContain('pdf-image-selection-surface');
+
+    state.pdfImageRegionSelectionActive = true;
+    expect(JSON.stringify(renderApp(controllerFor(state)))).toContain(
+      'pdf-page-preview__sheet--selecting',
+    );
+
     state.previewMode = 'source';
     expect(JSON.stringify(renderApp(controllerFor(state)))).not.toContain(
       'Insert image from original page',

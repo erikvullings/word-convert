@@ -1120,44 +1120,18 @@ h1 {
   background: var(--panel);
 }
 
-.pdf-image-insertion > header {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.pdf-image-insertion > header :is(h3, p) {
-  margin: 0;
-}
-
-.pdf-image-insertion > header p {
-  margin-top: 0.25rem;
-}
-
-.pdf-image-selection-surface {
-  width: min(100%, 56rem);
-  max-height: 36rem;
-  overflow: auto;
-  border: 1px solid var(--line);
-  background: #fff;
-}
-
-.pdf-image-selection-page {
+.pdf-page-preview__sheet--selecting {
   position: relative;
   cursor: crosshair;
   touch-action: none;
 }
 
-.pdf-image-selection-page:focus-visible {
+.pdf-page-preview__sheet--selecting:focus-visible {
   outline: 0.2rem solid var(--accent);
   outline-offset: -0.2rem;
 }
 
-.pdf-image-selection-page img {
-  display: block;
-  width: 100%;
-  height: auto;
+.pdf-page-preview__sheet--selecting img {
   user-select: none;
   pointer-events: none;
 }

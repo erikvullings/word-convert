@@ -1712,7 +1712,7 @@ describe('browser controller', () => {
     });
   });
 
-  it('inserts a selected PDF page region into the active EPUB part', async () => {
+  it('inserts a selected PDF page region at the captured Markdown cursor', async () => {
     vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
     const worker = new WorkerStub();
     stubWorkers(worker);
@@ -1728,13 +1728,16 @@ describe('browser controller', () => {
     ]);
     await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
     const document = model();
-    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    const markdown = '# One\n\nBefore.\n\nAfter.';
+    document.blocks = markdownToBlocks(markdown, document);
     controller.state.model = document;
     controller.state.epubParts = createContentPartState(document);
+    controller.state.epubContentEdit = markdown;
     controller.state.preferences.outputFormat = 'epub';
     controller.state.stage = 2;
     controller.state.pdfPreviewPage = 2;
-    controller.openPdfImageSelection?.();
+    const cursor = markdown.indexOf('After.');
+    controller.openPdfImageSelection?.({ start: cursor, end: cursor });
     controller.setPdfImageSelectionBounds?.({
       x: 0.1,
       top: 0.2,
@@ -1748,11 +1751,15 @@ describe('browser controller', () => {
     await vi.waitFor(() =>
       expect(controller.state.model?.assets['editor-image-0001']).toBeDefined(),
     );
-    expect(controller.state.model?.blocks.at(-1)).toMatchObject({
+    expect(controller.state.model?.blocks[2]).toMatchObject({
       type: 'imageBlock',
       assetId: 'editor-image-0001',
       alt: 'A source illustration',
       alignment: 'center',
+    });
+    expect(controller.state.model?.blocks[3]).toMatchObject({
+      type: 'paragraph',
+      children: [expect.objectContaining({ text: 'After.' })],
     });
     expect(controller.state.epubEditorNotice).toContain(
       'Inserted image from PDF page 2',

@@ -14,7 +14,9 @@ import {
   createPracticalContentPartState,
   deleteContentPart,
   importContentDataImages,
+  insertContentImageMarkdown,
   insertImageIntoContentPart,
+  mapDisplayedMarkdownSelection,
   markdownToBlocks,
   mergeContentPart,
   saveContentPart,
@@ -55,6 +57,54 @@ function model(): DocumentModel {
 }
 
 describe('EPUB content editor', () => {
+  it('inserts an image at a captured Markdown cursor', () => {
+    const markdown = '# One\n\nBefore.\n\nAfter.';
+    const cursor = markdown.indexOf('After.');
+
+    expect(
+      insertContentImageMarkdown(
+        markdown,
+        { start: cursor, end: cursor },
+        'data:image/png;base64,AQID',
+        'Source page',
+      ),
+    ).toBe(
+      '# One\n\nBefore.\n\n![Source page](data:image/png;base64,AQID)\n\nAfter.',
+    );
+  });
+
+  it('replaces the destination of the selected Markdown image', () => {
+    const markdown = '# One\n\n![Missing]()\n';
+    const cursor = markdown.indexOf(')');
+
+    expect(
+      insertContentImageMarkdown(
+        markdown,
+        { start: cursor, end: cursor },
+        'data:image/png;base64,AQID',
+        'Source page',
+      ),
+    ).toBe('# One\n\n![Missing](data:image/png;base64,AQID)\n');
+  });
+
+  it('maps a cursor past masked image data to the complete Markdown source', () => {
+    const displayed =
+      '![Stored](data:image/png;base64,{hidden image 1: 8 B})\n\nPlace image here.';
+    const markdown =
+      '![Stored](data:image/png;base64,AQIDBA==)\n\nPlace image here.';
+    const cursor = displayed.indexOf('Place');
+
+    expect(
+      mapDisplayedMarkdownSelection(displayed, markdown, {
+        start: cursor,
+        end: cursor,
+      }),
+    ).toEqual({
+      start: markdown.indexOf('Place'),
+      end: markdown.indexOf('Place'),
+    });
+  });
+
   it('inserts a source-page image before the active part trailing page break', () => {
     const document = model();
     document.blocks = [

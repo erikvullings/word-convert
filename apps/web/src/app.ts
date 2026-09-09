@@ -143,7 +143,12 @@ export interface AppController {
   retryPdfPreview?(): void;
   setPdfPreviewScale?(scale: number): void;
   setPdfOriginalVisible?(visible: boolean): void;
-  openPdfImageSelection?(): void;
+  openPdfImageSelection?(
+    selection?: { start: number; end: number },
+    displayedMarkdown?: string,
+  ): void;
+  startPdfImageRegionSelection?(): void;
+  insertPdfFullPageImage?(): void;
   cancelPdfImageSelection?(): void;
   beginPdfImageSelection?(point: FormulaSelectionPoint): void;
   updatePdfImageSelection?(point: FormulaSelectionPoint): void;
@@ -670,30 +675,84 @@ function pdfSourcePreview(
       : {},
     [
       state.pdfPreview
-        ? m('.pdf-page-preview__sheet', [
-            m('img', {
-              src: state.pdfPreview.url,
-              width: state.pdfPreview.width,
-              height: state.pdfPreview.height,
-              alt: `PDF page ${state.pdfPreview.pageNumber} preview`,
-            }),
-            m(
-              '.pdf-page-preview__crop.pdf-page-preview__crop--top',
-              {
-                style: { height: `${top}%` },
-                'aria-label': `Top ${top}% excluded`,
-              },
-              top ? `Top ${top}% removed` : null,
-            ),
-            m(
-              '.pdf-page-preview__crop.pdf-page-preview__crop--bottom',
-              {
-                style: { height: `${bottom}%` },
-                'aria-label': `Bottom ${bottom}% excluded`,
-              },
-              bottom ? `Bottom ${bottom}% removed` : null,
-            ),
-          ])
+        ? m(
+            '.pdf-page-preview__sheet',
+            state.pdfImageRegionSelectionActive
+              ? {
+                  class: 'pdf-page-preview__sheet--selecting',
+                  tabindex: 0,
+                  role: 'group',
+                  'aria-label': `Select an image region on PDF page ${state.pdfPreview.pageNumber}`,
+                  onpointerdown: (event: PointerEvent) => {
+                    const target = event.currentTarget as HTMLElement;
+                    target.setPointerCapture(event.pointerId);
+                    controller.beginPdfImageSelection?.(
+                      pointInPreview(
+                        event.clientX,
+                        event.clientY,
+                        target.getBoundingClientRect(),
+                      ),
+                    );
+                  },
+                  onpointermove: (event: PointerEvent) => {
+                    if (event.buttons !== 1) return;
+                    const target = event.currentTarget as HTMLElement;
+                    controller.updatePdfImageSelection?.(
+                      pointInPreview(
+                        event.clientX,
+                        event.clientY,
+                        target.getBoundingClientRect(),
+                      ),
+                    );
+                  },
+                  onpointerup: (event: PointerEvent) => {
+                    const target = event.currentTarget as HTMLElement;
+                    controller.endPdfImageSelection?.(
+                      pointInPreview(
+                        event.clientX,
+                        event.clientY,
+                        target.getBoundingClientRect(),
+                      ),
+                    );
+                  },
+                }
+              : {},
+            [
+              m('img', {
+                src: state.pdfPreview.url,
+                width: state.pdfPreview.width,
+                height: state.pdfPreview.height,
+                alt: `PDF page ${state.pdfPreview.pageNumber} preview`,
+              }),
+              m(
+                '.pdf-page-preview__crop.pdf-page-preview__crop--top',
+                {
+                  style: { height: `${top}%` },
+                  'aria-label': `Top ${top}% excluded`,
+                },
+                top ? `Top ${top}% removed` : null,
+              ),
+              m(
+                '.pdf-page-preview__crop.pdf-page-preview__crop--bottom',
+                {
+                  style: { height: `${bottom}%` },
+                  'aria-label': `Bottom ${bottom}% excluded`,
+                },
+                bottom ? `Bottom ${bottom}% removed` : null,
+              ),
+              state.pdfImageRegionSelectionActive &&
+              state.pdfImageSelectionBounds
+                ? m('.pdf-image-selection-box', {
+                    style: {
+                      left: `${state.pdfImageSelectionBounds.x * 100}%`,
+                      top: `${state.pdfImageSelectionBounds.top * 100}%`,
+                      width: `${state.pdfImageSelectionBounds.width * 100}%`,
+                      height: `${state.pdfImageSelectionBounds.height * 100}%`,
+                    },
+                  })
+                : null,
+            ],
+          )
         : null,
       state.pdfPreviewLoading
         ? m('.pdf-page-preview__status', 'Rendering page preview…')
@@ -1635,7 +1694,10 @@ function epubPartEditor(controller: AppController, source: string): m.Vnode {
       m(MarkdownEditor, {
         key: `epub-part-${partState.activeIndex}-${state.epubEditorRevision}-${theme}`,
         content: renderMarkdown(source),
-        mode: 'wysiwyg',
+        mode: state.epubPartEditorMode ?? 'wysiwyg',
+        onModeChange: (mode) => {
+          state.epubPartEditorMode = mode;
+        },
         onContentChange: (newContent: string) => {
           state.epubContentEdit = newContent;
           controller.setEpubContent?.(newContent);
@@ -1716,103 +1778,52 @@ function pdfImageInsertionControls(controller: AppController): m.Vnode {
       m(FlatButton, {
         label: 'Insert image from original page',
         disabled: !state.pdfPreview,
-        onclick: () => controller.openPdfImageSelection?.(),
+        onclick: () => {
+          const textarea = document.querySelector<HTMLTextAreaElement>(
+            '.book-part-editor textarea.md-markdown-area',
+          );
+          controller.openPdfImageSelection?.(
+            textarea
+              ? {
+                  start: textarea.selectionStart,
+                  end: textarea.selectionEnd,
+                }
+              : undefined,
+            textarea?.value,
+          );
+        },
       }),
-    );
-  const preview = state.pdfPreview;
-  const bounds = state.pdfImageSelectionBounds;
-  const pointer = (event: PointerEvent) =>
-    pointInPreview(
-      event.clientX,
-      event.clientY,
-      (event.currentTarget as HTMLElement).getBoundingClientRect(),
     );
   return m(
     'section.pdf-image-insertion.pdf-image-insertion--open[aria-label="Insert image from original PDF"]',
     [
-      m('header', [
-        m('div', [
-          m('h3', `Insert image from PDF page ${state.pdfPreviewPage}`),
-          m(
-            'p.help',
-            'Drag over the source page to choose the image area. The selected PNG is added to the end of this part.',
-          ),
-        ]),
+      m('.pdf-image-insertion-actions', [
+        m(Button, {
+          label: state.pdfImageInsertionLoading
+            ? 'Inserting image…'
+            : 'Full page',
+          disabled: state.pdfImageInsertionLoading,
+          onclick: () => controller.insertPdfFullPageImage?.(),
+        }),
+        m(FlatButton, {
+          label: 'Region',
+          disabled: state.pdfImageInsertionLoading,
+          onclick: () => controller.startPdfImageRegionSelection?.(),
+        }),
         m(FlatButton, {
           label: 'Cancel',
           onclick: () => controller.cancelPdfImageSelection?.(),
         }),
       ]),
-      preview
+      state.pdfImageRegionSelectionActive
         ? m(
-            '.pdf-image-selection-surface',
-            m(
-              '.pdf-image-selection-page',
-              {
-                tabindex: 0,
-                role: 'group',
-                'aria-label': `Select an image region on PDF page ${preview.pageNumber}`,
-                onpointerdown: (event: PointerEvent) => {
-                  (event.currentTarget as HTMLElement).setPointerCapture(
-                    event.pointerId,
-                  );
-                  controller.beginPdfImageSelection?.(pointer(event));
-                },
-                onpointermove: (event: PointerEvent) => {
-                  if (event.buttons === 1)
-                    controller.updatePdfImageSelection?.(pointer(event));
-                },
-                onpointerup: (event: PointerEvent) =>
-                  controller.endPdfImageSelection?.(pointer(event)),
-              },
-              [
-                m('img', {
-                  src: preview.url,
-                  width: preview.width,
-                  height: preview.height,
-                  alt: `PDF page ${preview.pageNumber} for image selection`,
-                }),
-                bounds
-                  ? m('.pdf-image-selection-box', {
-                      style: {
-                        left: `${bounds.x * 100}%`,
-                        top: `${bounds.top * 100}%`,
-                        width: `${bounds.width * 100}%`,
-                        height: `${bounds.height * 100}%`,
-                      },
-                    })
-                  : null,
-              ],
-            ),
+            'p.help',
+            'Drag over the original page to insert the selected region.',
           )
-        : m('p[role="status"]', 'Loading the current PDF page for selection.'),
-      m(TextInput, {
-        label: 'Image description',
-        value: state.pdfImageSelectionAlt ?? '',
-        oninput: (value) => controller.setPdfImageSelectionAlt?.(value),
-      }),
+        : null,
       state.pdfImageInsertionError
         ? m('p.error[role="alert"]', state.pdfImageInsertionError)
         : null,
-      m('.pdf-image-insertion-actions', [
-        m(FlatButton, {
-          label: 'Use full page',
-          onclick: () =>
-            controller.setPdfImageSelectionBounds?.({
-              x: 0,
-              top: 0,
-              width: 1,
-              height: 1,
-            }),
-        }),
-        m(Button, {
-          label: state.pdfImageInsertionLoading
-            ? 'Inserting image…'
-            : 'Insert selected image',
-          disabled: !bounds || state.pdfImageInsertionLoading,
-          onclick: () => controller.insertPdfImageSelection?.(),
-        }),
-      ]),
     ],
   );
 }

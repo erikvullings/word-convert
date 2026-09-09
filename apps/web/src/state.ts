@@ -106,6 +106,7 @@ export interface AppState {
   pdfPreviewLoading?: boolean;
   pdfPreviewError?: string;
   pdfImageSelectionOpen?: boolean;
+  pdfImageRegionSelectionActive?: boolean;
   pdfImageSelectionBounds?: PdfBounds;
   pdfImageSelectionAlt?: string;
   pdfImageInsertionLoading?: boolean;
@@ -116,6 +117,7 @@ export interface AppState {
   selectedEpubFile?: string;
   markdownEdit?: string;
   epubContentEdit?: string;
+  epubPartEditorMode?: 'wysiwyg' | 'markdown';
   epubFullContentEdit?: string;
   epubParts?: ContentPartState;
   epubEditorRevision: number;
