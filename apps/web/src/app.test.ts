@@ -15,10 +15,11 @@ import {
   extractHtmlBody,
   markdownSourcePreview,
   navigateToWarning,
+  openDocumentFileInput,
   outputPreviewSource,
   renderApp,
   scaledPreviewScrollOffset,
-  selectDocumentWithPicker,
+  takeSelectedDocumentFiles,
   type AppController,
 } from './app.ts';
 import { createInitialState } from './state.ts';
@@ -94,32 +95,31 @@ describe('App', () => {
     expect(scaledPreviewScrollOffset(300, 800, 1_600, 2_400)).toBe(650);
   });
 
-  it('selects a document through the File System Access picker', async () => {
-    const state = createInitialState('2026-08-29');
-    const controller = controllerFor(state);
-    const selectFiles = vi.fn();
-    controller.selectFiles = selectFiles;
+  it('reopens the native document input without retaining a stale selection', () => {
+    const click = vi.fn();
+    const input = {
+      value: '/fake/previous.pdf',
+      click,
+    } as unknown as HTMLInputElement;
+
+    openDocumentFileInput(input);
+    openDocumentFileInput(input);
+
+    expect(input.value).toBe('');
+    expect(click).toHaveBeenCalledTimes(2);
+  });
+
+  it('snapshots selected files before clearing the native input', () => {
     const file = new File(['fixture'], 'fixture.pdf', {
       type: 'application/pdf',
     });
-    const showPicker = vi.fn(async () => [{ getFile: async () => file }]);
+    const input = {
+      files: [file],
+      value: '/fake/fixture.pdf',
+    } as unknown as HTMLInputElement;
 
-    await selectDocumentWithPicker(controller, showPicker);
-
-    expect(showPicker).toHaveBeenCalledWith({
-      multiple: false,
-      types: [
-        {
-          description: 'Word and PDF documents',
-          accept: {
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-              ['.docx'],
-            'application/pdf': ['.pdf'],
-          },
-        },
-      ],
-    });
-    expect(selectFiles).toHaveBeenCalledWith([file]);
+    expect(takeSelectedDocumentFiles(input)).toEqual([file]);
+    expect(input.value).toBe('');
   });
 
   it.each([

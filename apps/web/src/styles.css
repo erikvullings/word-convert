@@ -104,6 +104,7 @@
   --ink: #18211d;
   --muted: #5b6761;
   --accent: #006b55;
+  --accent-strong: #005442;
   --accent-ink: #fff;
   --button: #edf2ed;
   --button-hover: #e1e9e2;
@@ -126,6 +127,7 @@
   --ink: #edf3ef;
   --muted: #aab7b0;
   --accent: #74d9bd;
+  --accent-strong: #9be7d2;
   --accent-ink: #10231d;
   --button: #26332c;
   --button-hover: #304239;
@@ -140,6 +142,7 @@
     --ink: #edf3ef;
     --muted: #aab7b0;
     --accent: #74d9bd;
+    --accent-strong: #9be7d2;
     --accent-ink: #10231d;
     --button: #26332c;
     --button-hover: #304239;
@@ -376,7 +379,7 @@ h1 {
   border: 0;
   border-radius: 0.4rem;
   background: var(--accent);
-  color: var(--panel);
+  color: var(--accent-ink);
   cursor: pointer;
   font: inherit;
   font-weight: 700;

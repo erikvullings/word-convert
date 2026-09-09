@@ -200,59 +200,23 @@ export interface AppController {
   selectExtractedCover(assetId: string): void;
 }
 
-interface DocumentFileHandle {
-  getFile(): Promise<File>;
+export function openDocumentFileInput(input: HTMLInputElement | null): void {
+  if (!input) return;
+  input.value = '';
+  input.click();
 }
 
-interface DocumentPickerOptions {
-  multiple: boolean;
-  types: {
-    description: string;
-    accept: Record<string, string[]>;
-  }[];
-}
-
-type ShowDocumentPicker = (
-  options: DocumentPickerOptions,
-) => Promise<readonly DocumentFileHandle[]>;
-
-export async function selectDocumentWithPicker(
-  controller: AppController,
-  showPicker: ShowDocumentPicker,
-): Promise<void> {
-  try {
-    const handles = await showPicker({
-      multiple: false,
-      types: [
-        {
-          description: 'Word and PDF documents',
-          accept: {
-            [DOCX_MEDIA_TYPE]: ['.docx'],
-            [PDF_MEDIA_TYPE]: ['.pdf'],
-          },
-        },
-      ],
-    });
-    controller.selectFiles(
-      await Promise.all(handles.map((handle) => handle.getFile())),
-    );
-  } catch (cause) {
-    if (cause instanceof DOMException && cause.name === 'AbortError') return;
-    controller.state.error = {
-      code: 'invalid-input',
-      message:
-        'The document picker could not be opened. Reload the page and try again.',
-      recoverable: true,
-    };
-    controller.state.status = 'error';
-    m.redraw();
-  }
+export function takeSelectedDocumentFiles(input: HTMLInputElement): File[] {
+  const files = input.files ? Array.from(input.files) : [];
+  input.value = '';
+  return files;
 }
 
 export function App(controller: AppController): Component {
   const select = (event: Event): void => {
     const input = event.currentTarget as HTMLInputElement;
-    if (input.files) controller.selectFiles(input.files);
+    const files = takeSelectedDocumentFiles(input);
+    if (files.length > 0) controller.selectFiles(files);
   };
   const drop = (event: DragEvent): void => {
     event.preventDefault();
@@ -389,22 +353,10 @@ function filePicker(
           'button.document-file-picker',
           {
             type: 'button',
-            onclick: () => {
-              const showPicker = (
-                window as typeof window & {
-                  showOpenFilePicker?: ShowDocumentPicker;
-                }
-              ).showOpenFilePicker;
-              if (showPicker) {
-                void selectDocumentWithPicker(controller, (options) =>
-                  showPicker.call(window, options),
-                );
-                return;
-              }
-              document
-                .querySelector<HTMLInputElement>('#document-input')
-                ?.click();
-            },
+            onclick: () =>
+              openDocumentFileInput(
+                document.querySelector<HTMLInputElement>('#document-input'),
+              ),
           },
           'Choose a DOCX or PDF document',
         ),
