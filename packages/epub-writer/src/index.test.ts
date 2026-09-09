@@ -116,7 +116,7 @@ describe('writeEpub', () => {
     ).toContain('class="katex"');
   });
 
-  it('declares a generated cover image and cover page while retaining the semantic title page', async () => {
+  it('declares a rasterized cover image and cover page while retaining the semantic title page', async () => {
     const cover: CoverComposition = {
       width: 1600,
       height: 2560,
@@ -142,18 +142,26 @@ describe('writeEpub', () => {
         title: 'Covered book',
         language: 'en',
         cover,
+        coverPng: Uint8Array.from([
+          137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+        ]),
       }),
     );
     const opf = strFromU8(files['EPUB/package.opf'] ?? new Uint8Array());
-    expect(opf).toContain('properties="cover-image"');
+    expect(opf).toContain(
+      'href="cover.png" media-type="image/png" properties="cover-image"',
+    );
     expect(opf).toContain('<itemref idref="cover-page"/>');
     expect(opf).toContain('<itemref idref="title-page"/>');
     expect(strFromU8(files['EPUB/cover.xhtml'] ?? new Uint8Array())).toContain(
-      'alt="Cover for Covered book"',
+      'src="cover.png" alt="Cover for Covered book"',
     );
-    expect(strFromU8(files['EPUB/cover.svg'] ?? new Uint8Array())).toContain(
-      '<svg',
+    expect(files['EPUB/cover.png']).toEqual(
+      Uint8Array.from([
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+      ]),
     );
+    expect(files['EPUB/cover.svg']).toBeUndefined();
   });
   it('writes the smallest complete EPUB 3 publication with injectable metadata', async () => {
     const output = await writeEpub(model(), {

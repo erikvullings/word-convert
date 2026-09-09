@@ -24,6 +24,7 @@ export interface EpubWriterOptions extends WriterOptions {
   /** EPUB 3 package modification time, in UTC second precision. */
   modified?: string;
   cover?: CoverComposition;
+  coverPng?: Uint8Array;
   formulaMode?: MathOutputMode;
   sourceXhtml?: string;
   sourceCss?: string;
@@ -143,6 +144,11 @@ export async function writeEpub(
     assets.map(({ asset, path }) => [asset.id, path.replace('EPUB/', '')]),
   );
   const headings = options.sourceXhtml ? [] : collectHeadings(chapters);
+  const coverPath = options.coverPng
+    ? 'cover.png'
+    : options.cover
+      ? 'cover.svg'
+      : undefined;
   const files: Zippable = {};
   files.mimetype = [strToU8('application/epub+zip'), { level: 0 }];
   files['META-INF/container.xml'] = strToU8(containerXml());
@@ -152,7 +158,7 @@ export async function writeEpub(
       model,
       chapters,
       assets,
-      options.cover !== undefined,
+      coverPath,
       options.sourceXhtml?.includes('<math') === true,
     ),
   );
@@ -160,9 +166,11 @@ export async function writeEpub(
   files['EPUB/styles.css'] = strToU8(
     `${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${options.sourceXhtml ? SOURCE_HTML_STYLES + SOURCE_HTML_EQUATION_LAYOUT_STYLES + SOURCE_HTML_PARAGRAPH_TITLE_STYLES : ''}${options.sourceCss ?? ''}`,
   );
-  if (options.cover) {
-    files['EPUB/cover.svg'] = strToU8(createCoverSvg(options.cover));
-    files['EPUB/cover.xhtml'] = strToU8(coverXhtml(metadata));
+  if (coverPath) {
+    if (options.coverPng) files['EPUB/cover.png'] = options.coverPng;
+    else if (options.cover)
+      files['EPUB/cover.svg'] = strToU8(createCoverSvg(options.cover));
+    files['EPUB/cover.xhtml'] = strToU8(coverXhtml(metadata, coverPath));
   }
   files['EPUB/title.xhtml'] = strToU8(titleXhtml(metadata, model));
   for (const chapter of chapters) {
@@ -324,7 +332,7 @@ function packageXml(
   model: DocumentModel,
   chapters: Chapter[],
   assets: AssetEntry[],
-  hasCover: boolean,
+  coverPath: 'cover.png' | 'cover.svg' | undefined,
   hasSourceMathml: boolean,
 ): string {
   const creators = model.metadata.authors
@@ -344,18 +352,21 @@ function packageXml(
     )
     .join('');
   const spine = chapters.map(({ id }) => `<itemref idref="${id}"/>`).join('');
-  const coverItems = hasCover
-    ? '<item id="cover-image" href="cover.svg" media-type="image/svg+xml" properties="cover-image"/><item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>'
+  const coverItems = coverPath
+    ? `<item id="cover-image" href="${coverPath}" media-type="${coverPath === 'cover.png' ? 'image/png' : 'image/svg+xml'}" properties="cover-image"/><item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>`
     : '';
-  const coverSpine = hasCover ? '<itemref idref="cover-page"/>' : '';
+  const coverSpine = coverPath ? '<itemref idref="cover-page"/>' : '';
   return `<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${escapeAttribute(metadata.language)}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${escapeXml(metadata.identifier)}</dc:identifier><dc:title>${escapeXml(metadata.title)}</dc:title><dc:language>${escapeXml(metadata.language)}</dc:language>${creators}<meta property="dcterms:modified">${metadata.modified}</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="styles" href="styles.css" media-type="text/css"/>${coverItems}<item id="title-page" href="title.xhtml" media-type="application/xhtml+xml"/>${chapterItems}${assetItems}</manifest><spine>${coverSpine}<itemref idref="title-page"/>${spine}</spine></package>`;
 }
 
-function coverXhtml(metadata: PublicationMetadata): string {
+function coverXhtml(
+  metadata: PublicationMetadata,
+  coverPath: 'cover.png' | 'cover.svg',
+): string {
   return xhtmlDocument(
     metadata,
     `Cover for ${metadata.title}`,
-    `<section epub:type="cover"><img src="cover.svg" alt="Cover for ${escapeAttribute(metadata.title)}"/></section>`,
+    `<section epub:type="cover"><img src="${coverPath}" alt="Cover for ${escapeAttribute(metadata.title)}"/></section>`,
     ' xmlns:epub="http://www.idpf.org/2007/ops"',
   );
 }

@@ -48,6 +48,7 @@ export type WorkerRequest =
       mode?: ConversionMode;
       conversionDate: string;
       cover?: CoverComposition;
+      coverPng?: Uint8Array;
       formulaMode?: MathOutputMode;
       includeInternalLinks?: boolean;
       sourceHtml?: { html: string; xhtml: string; css: string };

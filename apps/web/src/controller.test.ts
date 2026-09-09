@@ -14,6 +14,7 @@ import {
   createContentPartState,
   markdownToBlocks,
 } from './content-editor.ts';
+import { BrowserPngCoverRasterizer } from './cover-rasterizer.ts';
 
 vi.mock('./pdf-preview.ts', () => ({
   createPdfPagePreviewRenderer: () => ({
@@ -187,6 +188,82 @@ describe('browser controller', () => {
       ),
     );
     controller.dispose?.();
+  });
+
+  it('rasterizes an EPUB cover to PNG before sending it to the worker', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const coverPng = Uint8Array.from([
+      137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+    ]);
+    vi.spyOn(
+      BrowserPngCoverRasterizer.prototype,
+      'rasterize',
+    ).mockResolvedValue(coverPng);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    const provenance = {
+      source: 'test',
+      method: 'user' as const,
+      confidence: 'certain' as const,
+    };
+    document.metadata.title = { value: 'Covered book', provenance };
+    document.metadata.language = { value: 'en', provenance };
+    document.metadata.identifier = { value: 'urn:covered-book', provenance };
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.cover.source = 'generated';
+
+    controller.convert();
+
+    await vi.waitFor(() =>
+      expect(
+        worker.postMessage.mock.calls.find(
+          ([request]) => request.type === 'convert',
+        ),
+      ).toBeDefined(),
+    );
+    const call = worker.postMessage.mock.calls.find(
+      ([request]) => request.type === 'convert',
+    );
+    expect(call?.[0]).toMatchObject({
+      type: 'convert',
+      format: 'epub',
+      coverPng,
+    });
+    expect(call?.[1]).toEqual([coverPng.buffer]);
+  });
+
+  it('does not rasterize a configured EPUB cover for other formats', () => {
+    const rasterize = vi.spyOn(
+      BrowserPngCoverRasterizer.prototype,
+      'rasterize',
+    );
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.state.model = model();
+    controller.state.preferences.outputFormat = 'html';
+    controller.state.cover.source = 'generated';
+
+    controller.convert();
+
+    expect(rasterize).not.toHaveBeenCalled();
+    expect(worker.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'convert',
+        format: 'html',
+      }),
+    );
   });
 
   it('autosaves the active book part before navigating to the next part', () => {

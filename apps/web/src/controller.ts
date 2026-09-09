@@ -32,8 +32,10 @@ import {
 } from './cover.ts';
 import {
   prepareCoverImage,
+  rasterizeCover,
   titleTextWarning,
 } from '@wordconvert/cover-generator';
+import { BrowserPngCoverRasterizer } from './cover-rasterizer.ts';
 import {
   canShareEpub,
   createEpubFile,
@@ -412,7 +414,8 @@ export function createBrowserController(): AppController {
       return;
     state.outputSaved = false;
     state.status = 'converting';
-    state.operationId = operationId('convert');
+    const conversionOperationId = operationId('convert');
+    state.operationId = conversionOperationId;
     const metadata = state.model.metadata;
     const cover = coverComposition(state.cover, {
       title: metadata.title?.value ?? 'Untitled',
@@ -431,9 +434,9 @@ export function createBrowserController(): AppController {
               state.sourceHtml.css,
             )
         : undefined;
-    worker.postMessage({
+    const request = {
       type: 'convert',
-      operationId: state.operationId,
+      operationId: conversionOperationId,
       model: state.model,
       filename: conversionSourceFilename(state, sourceFilename),
       format: state.preferences.outputFormat,
@@ -446,9 +449,39 @@ export function createBrowserController(): AppController {
           : state.preferences.outputFormat === 'markdown'
             ? state.preferences.markdownMode
             : 'epub',
-      ...(cover && state.preferences.epubIncludeCover ? { cover } : {}),
+      ...(state.preferences.outputFormat === 'epub' &&
+      cover &&
+      state.preferences.epubIncludeCover
+        ? { cover }
+        : {}),
       ...(sourceHtml ? { sourceHtml } : {}),
-    } satisfies WorkerRequest);
+    } satisfies WorkerRequest;
+    if (!request.cover) {
+      worker.postMessage(request);
+      return;
+    }
+    void rasterizeCover(request.cover, new BrowserPngCoverRasterizer())
+      .then((coverPng) => {
+        if (disposed || state.operationId !== conversionOperationId) return;
+        const rasterizedRequest = {
+          ...request,
+          coverPng,
+        } satisfies WorkerRequest;
+        worker.postMessage(rasterizedRequest, [coverPng.buffer as ArrayBuffer]);
+      })
+      .catch(() => {
+        if (disposed || state.operationId !== conversionOperationId) return;
+        state.error = {
+          code: 'conversion-failed',
+          message: 'The EPUB cover could not be rendered as a PNG.',
+          phase: 'write',
+          recoverable: true,
+        };
+        state.status = 'error';
+        delete state.operationId;
+        delete state.progress;
+        m.redraw();
+      });
   };
   const refreshEpubPreview = (): void => {
     if (state.preferences.outputFormat !== 'epub') return;
@@ -2140,7 +2173,13 @@ export function createBrowserController(): AppController {
     updateCover(patch: Partial<CoverSettings>) {
       state.cover = { ...state.cover, ...patch };
       state.outputSaved = false;
-      refreshEpubPreview();
+      if (state.preferences.outputFormat !== 'epub' || state.stage !== 2)
+        return;
+      if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
+      epubRefreshTimer = setTimeout(() => {
+        epubRefreshTimer = undefined;
+        refreshEpubPreview();
+      }, 300);
     },
     selectCoverFile(file: File) {
       const error = validateCoverFile(file);

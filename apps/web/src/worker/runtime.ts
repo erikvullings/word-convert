@@ -135,6 +135,7 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                   conversionDate: request.conversionDate,
                   formulaMode: request.formulaMode ?? 'mathml',
                   ...(request.cover ? { cover: request.cover } : {}),
+                  ...(request.coverPng ? { coverPng: request.coverPng } : {}),
                   ...(request.sourceHtml
                     ? {
                         sourceXhtml: request.sourceHtml.xhtml,

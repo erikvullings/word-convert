@@ -450,9 +450,13 @@ describe('worker runtime', () => {
       filename: 'fixture.docx',
       format: 'epub',
       conversionDate: '2026-07-15',
+      coverPng: Uint8Array.from([
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+      ]),
     });
 
-    expect(sent.at(-1)).toMatchObject({
+    const output = sent.at(-1);
+    expect(output).toMatchObject({
       type: 'output',
       filename: 'fixture.epub',
       mediaType: 'application/epub+zip',
@@ -461,8 +465,14 @@ describe('worker runtime', () => {
         'META-INF/container.xml',
         'EPUB/package.opf',
         'EPUB/nav.xhtml',
+        'EPUB/cover.png',
       ]),
     });
+    if (!output || output.type !== 'output') throw new Error('No EPUB output');
+    const files = unzipSync(new Uint8Array(output.data));
+    expect(strFromU8(files['EPUB/package.opf'] ?? new Uint8Array())).toContain(
+      'href="cover.png" media-type="image/png" properties="cover-image"',
+    );
   });
 
   it('returns private structured errors, supports cancellation, and cleans up stale cancellation', async () => {
