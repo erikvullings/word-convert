@@ -64,6 +64,8 @@ export interface PdfExtractionOptions {
   manualFormulaRegions?: readonly PdfManualFormulaRegion[];
 }
 
+type PdfOperatorList = Awaited<ReturnType<PDFPageProxy['getOperatorList']>>;
+
 export interface PdfFigureSurface {
   canvas: unknown;
   readRgba?(): Uint8ClampedArray;
@@ -375,13 +377,14 @@ async function readPage(
   },
 ): Promise<RawPdfPage> {
   const viewport = page.getViewport({ scale: 1 });
-  const [text, annotations, structure] = await Promise.all([
+  const [text, annotations, structure, operators] = await Promise.all([
     page.getTextContent({
       includeMarkedContent: true,
       disableNormalization: false,
     }),
     page.getAnnotations({ intent: 'display' }),
     page.getStructTree(),
+    page.getOperatorList(),
   ]);
   throwIfCancelled(cancellation);
   if (text.items.length > limits.maxTextItemsPerPage)
@@ -414,6 +417,7 @@ async function readPage(
           cancellation,
         )
       : [];
+  let imageBacked = false;
   const images = includeImages
     ? await readImages(
         page,
@@ -424,8 +428,21 @@ async function readPage(
         figureRasterizer,
         spans,
         layoutRegions,
+        {
+          operators,
+          onPageBackdrop: () => {
+            imageBacked = true;
+          },
+        },
       )
     : [];
+  if (!includeImages)
+    imageBacked = await detectPageImageBackdrop(
+      page,
+      viewport.transform as Matrix,
+      operators,
+      cancellation,
+    );
   const figureRegions = images.filter(
     ({ source }) => source === 'rendered-figure',
   );
@@ -466,6 +483,7 @@ async function readPage(
     width: viewport.width,
     height: viewport.height,
     rotation: viewport.rotation,
+    imageBacked,
     spans: spans.filter(
       (span) => !figureRegions.some((region) => intersects(span, region)),
     ),
@@ -474,6 +492,34 @@ async function readPage(
     ...(formulaCandidates.length > 0 ? { formulaCandidates } : {}),
     ...(structure ? { taggedStructure: readStructure(structure) } : {}),
   };
+}
+
+async function detectPageImageBackdrop(
+  page: PDFPageProxy,
+  viewportTransform: Matrix,
+  operators: PdfOperatorList,
+  cancellation?: CancellationSignal,
+): Promise<boolean> {
+  const stack: Matrix[] = [];
+  let transform: Matrix = [1, 0, 0, 1, 0, 0];
+  for (let index = 0; index < operators.fnArray.length; index++) {
+    if (index % 100 === 0) {
+      await yieldToEventLoop();
+      throwIfCancelled(cancellation);
+    }
+    const operation = operators.fnArray[index];
+    const args = operators.argsArray[index] as unknown[] | undefined;
+    if (operation === OPS.save) stack.push([...transform]);
+    else if (operation === OPS.restore) transform = stack.pop() ?? transform;
+    else if (operation === OPS.transform && isNumberArray(args, 6))
+      transform = multiply(transform, args);
+    else if (
+      operation === OPS.paintImageXObject ||
+      operation === OPS.paintInlineImageXObject
+    )
+      if (isPageBackdropPaint(page, transform, viewportTransform)) return true;
+  }
+  return false;
 }
 
 export function readSpans(
@@ -618,8 +664,12 @@ export async function readImages(
   figureRasterizer?: PdfFigureRasterizer,
   spans: readonly RawPdfTextSpan[] = [],
   layoutRegions: readonly PdfLayoutRegion[] = [],
+  scan: {
+    operators?: PdfOperatorList;
+    onPageBackdrop?: () => void;
+  } = {},
 ): Promise<RawPdfImage[]> {
-  const operators = await page.getOperatorList();
+  const operators = scan.operators ?? (await page.getOperatorList());
   throwIfCancelled(cancellation);
   const images: RawPdfImage[] = [];
   const stack: Matrix[] = [];
@@ -657,6 +707,10 @@ export async function readImages(
       operation === OPS.paintImageXObject &&
       typeof args?.[0] === 'string'
     ) {
+      if (isPageBackdropPaint(page, transform, viewportTransform)) {
+        scan.onPageBackdrop?.();
+        if (figureRasterizer) continue;
+      }
       const image = await objectValue<PdfJsImage>(page, args[0]);
       if (image)
         await appendImage(
@@ -673,6 +727,10 @@ export async function readImages(
       operation === OPS.paintInlineImageXObject &&
       isPdfJsImage(args?.[0])
     ) {
+      if (isPageBackdropPaint(page, transform, viewportTransform)) {
+        scan.onPageBackdrop?.();
+        if (figureRasterizer) continue;
+      }
       await appendImage(
         images,
         page,
@@ -789,6 +847,20 @@ export async function readImages(
     );
   }
   return standaloneImages;
+}
+
+function isPageBackdropPaint(
+  page: PDFPageProxy,
+  transform: Matrix,
+  viewportTransform: Matrix,
+): boolean {
+  const viewport = page.getViewport({ scale: 1 });
+  const { width, height } = imageBounds(
+    multiply(viewportTransform, transform),
+    viewport.width,
+    viewport.height,
+  );
+  return width * height >= 0.7;
 }
 
 interface NormalizedBounds {

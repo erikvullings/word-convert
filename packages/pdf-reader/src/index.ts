@@ -94,6 +94,7 @@ export interface RawPdfPage {
   width: number;
   height: number;
   rotation: number;
+  imageBacked?: boolean;
   spans: RawPdfTextSpan[];
   links: RawPdfLink[];
   images: RawPdfImage[];
@@ -168,6 +169,7 @@ export interface PdfAnalysisSummary {
   crop: PdfCropOptions;
   candidates: PdfFurnitureCandidate[];
   scannedPages: number[];
+  imageBackedPages?: number[];
   formulaCandidates?: PdfFormulaCandidate[];
   formulaImageRegions?: PdfFormulaImageRegion[];
 }
@@ -281,6 +283,26 @@ function validateInput(input: Uint8Array): void {
     );
 }
 
+function isNoisyOcrPage(page: RawPdfPage): boolean {
+  if (!page.imageBacked || page.spans.length < 20) return false;
+  const tinyFragments = page.spans.filter(({ height }) => height < 0.01).length;
+  const coherentLines = page.spans.filter(
+    ({ text, width }) =>
+      width >= 0.4 && text.trim().split(/\s+/).filter(Boolean).length >= 4,
+  ).length;
+  const words = page.spans
+    .flatMap(({ text }) => text.match(/\p{L}+/gu) ?? [])
+    .filter(Boolean);
+  const longWordRatio =
+    words.filter((word) => word.length >= 4).length / Math.max(words.length, 1);
+  const tinyFragmentRatio = tinyFragments / page.spans.length;
+  return (
+    tinyFragmentRatio >= 0.1 &&
+    coherentLines <= 1 &&
+    (tinyFragmentRatio >= 0.2 || longWordRatio < 0.4)
+  );
+}
+
 interface PdfLine {
   page: number;
   spans: RawPdfTextSpan[];
@@ -340,6 +362,7 @@ export async function analysePdf(
   const croppedSpanIds = new Set<string>();
   const warnings: ConversionWarning[] = [];
   const scannedPages: number[] = [];
+  const noisyOcrPages: number[] = [];
   const retainedPages: RawPdfPage[] = [];
   for (const page of raw.pages) {
     await analysisCheckpoint(options);
@@ -351,7 +374,11 @@ export async function analysePdf(
       if (cropped) croppedSpanIds.add(span.id);
       return !cropped && !candidateBySpan.has(span.id);
     });
-    retainedPages.push({ ...page, spans });
+    const retainedPage = { ...page, spans };
+    if (isNoisyOcrPage(retainedPage)) {
+      noisyOcrPages.push(page.number);
+      retainedPages.push({ ...retainedPage, spans: [] });
+    } else retainedPages.push(retainedPage);
   }
 
   if (croppedSpanIds.size > 0)
@@ -375,6 +402,14 @@ export async function analysePdf(
       message:
         'One or more PDF pages contain no extractable text. OCR is not supported yet.',
       details: { pages: scannedPages.length },
+    });
+  if (noisyOcrPages.length > 0)
+    warnings.push({
+      code: 'pdf-noisy-ocr-omitted',
+      severity: 'warning',
+      message:
+        'Text from one or more image-backed pages was omitted because it consisted of scattered OCR fragments rather than coherent lines.',
+      details: { pages: noisyOcrPages.length },
     });
 
   const lines: PdfLine[] = [];
@@ -403,7 +438,17 @@ export async function analysePdf(
     total: analysisSteps,
     message: 'Analysing PDF styles.',
   });
-  const styles = await analyseStyles(lines, options.styleMappings, options);
+  const imageBackedPages = new Set(
+    retainedPages
+      .filter(({ imageBacked }) => imageBacked)
+      .map(({ number }) => number),
+  );
+  const styles = await analyseStyles(
+    lines,
+    options.styleMappings,
+    imageBackedPages,
+    options,
+  );
   const formulaLimits = {
     ...DEFAULT_PDF_FORMULA_LIMITS,
     ...options.formulaLimits,
@@ -589,6 +634,13 @@ export async function analysePdf(
       crop,
       candidates,
       scannedPages,
+      imageBackedPages: retainedPages
+        .filter(
+          (page) =>
+            page.imageBacked ||
+            page.images.some(({ width, height }) => width * height >= 0.7),
+        )
+        .map(({ number }) => number),
       formulaCandidates,
       formulaImageRegions,
     },
@@ -862,6 +914,7 @@ function byTop(left: PdfLine, right: PdfLine): number {
 async function analyseStyles(
   lines: readonly PdfLine[],
   mappings: Readonly<Record<string, StyleMapping>> | undefined,
+  imageBackedPages: ReadonlySet<number>,
   options: PdfAnalysisOptions,
 ): Promise<AnalysedStyle[]> {
   const bodySize = bodyFontSize(lines);
@@ -878,7 +931,11 @@ async function analyseStyles(
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([id, group]) => {
       const first = group[0]!;
-      const inferred = inferredMapping(first, bodySize);
+      const inferred = inferredMapping(
+        first,
+        bodySize,
+        imageBackedPages.has(first.page),
+      );
       const explicit = mappings?.[id];
       return {
         id,
@@ -907,8 +964,16 @@ async function analyseStyles(
     });
 }
 
-function inferredMapping(line: PdfLine, bodySize: number): StyleMapping {
-  if (!isLikelyHeadingLine(line)) return 'body';
+function inferredMapping(
+  line: PdfLine,
+  bodySize: number,
+  imageBacked: boolean,
+): StyleMapping {
+  if (
+    !isLikelyHeadingLine(line) ||
+    (imageBacked && !isLikelyOcrHeadingLine(line))
+  )
+    return 'body';
   if (line.fontSize >= bodySize * 1.7) return 'heading1';
   if (line.fontSize >= bodySize * 1.4) return 'heading2';
   if (line.fontSize >= bodySize * 1.2 && line.bold) return 'heading3';
@@ -945,6 +1010,21 @@ function isLikelyHeadingLine(line: PdfLine): boolean {
     text.split(/\s+/).length <= 12 &&
     numberedItems < 2 &&
     numericCells < 4
+  );
+}
+
+function isLikelyOcrHeadingLine(line: PdfLine): boolean {
+  const text = line.text.trim();
+  const numericHeading =
+    /^\d+[.,]?$/.test(text) || /^\d+(?:\.\d+)*\.?\s+\p{Lu}/u.test(text);
+  return (
+    line.width <= 0.7 &&
+    /^[\p{L}\p{N}]/u.test(text) &&
+    !/^\p{Ll}/u.test(text) &&
+    !/^\p{Lu}{1,3}[.,]?$/u.test(text) &&
+    (!/^\d/.test(text) || numericHeading) &&
+    !/^\d{4}\s+\p{Lu}{2}\b/u.test(text) &&
+    !/[\p{L}\p{N}][._—–][\p{L}\p{N}]/u.test(text)
   );
 }
 
@@ -1240,7 +1320,9 @@ async function linesToBlocks(
       !placements.has(0) &&
       (mapping.get(styleId(firstLine)) ?? 'body') === 'body' &&
       taggedRoleForLine(rolesByMarkedContentId, firstLine) === undefined &&
-      previousBlock.styleId === styleId(firstLine) &&
+      (page.imageBacked
+        ? compatibleOcrBodyLines(previousLine, firstLine, mapping)
+        : previousBlock.styleId === styleId(firstLine)) &&
       canMergeAcrossPage(previousLine, firstLine);
     if (contentPages++ > 0 && !continuesPreviousParagraph) {
       const trailingBlock = blocks.at(-1);
@@ -1306,6 +1388,7 @@ async function linesToBlocks(
           page.links,
           equationHosts.get(line) ?? [],
           lineFormulaCandidates,
+          page.imageBacked === true,
         );
         for (const candidate of lineFormulaCandidates)
           placedFormulaIds.add(candidate.id);
@@ -1315,12 +1398,15 @@ async function linesToBlocks(
         const heading =
           taggedHeading ??
           (mappedHeading &&
-          (userMappedStyles.has(id) || isLikelyHeadingLine(line))
+          (userMappedStyles.has(id) ||
+            (isLikelyHeadingLine(line) &&
+              (!page.imageBacked || isLikelyOcrHeadingLine(line))))
             ? mappedHeading
             : null);
         const headingLevel = heading
           ? (Number(heading[1]) as 1 | 2 | 3 | 4 | 5 | 6)
-          : mapped === 'body'
+          : mapped === 'body' &&
+              (!page.imageBacked || isLikelyOcrHeadingLine(line))
             ? semanticHeadingLevel(line)
             : undefined;
         const previousBlock = blocks.at(-1);
@@ -1357,23 +1443,35 @@ async function linesToBlocks(
         } else if (headingLevel === undefined || isContactLine(line.text)) {
           const candidate = paragraphCandidates.findLast(
             ({ block, lastLine }) =>
-              block.styleId === id &&
-              (canMergeLines(lastLine, line) ||
+              (page.imageBacked
+                ? compatibleOcrBodyLines(lastLine, line, mapping)
+                : block.styleId === id) &&
+              ((page.imageBacked
+                ? canMergeOcrLines(lastLine, line)
+                : canMergeLines(lastLine, line)) ||
                 (continuesPreviousParagraph &&
                   index === 0 &&
                   lastLine === previousPageLine)),
           );
           if (candidate) {
-            candidate.block.children.push(
-              continuesPreviousParagraph &&
-                index === 0 &&
-                candidate.lastLine === previousPageLine
-                ? { type: 'text', text: ' ' }
-                : lineContinuesAtTextEdge(candidate.lastLine, line, pageLines)
+            if (page.imageBacked)
+              appendOcrLine(
+                candidate.block.children,
+                children,
+                candidate.lastLine,
+                line,
+              );
+            else
+              candidate.block.children.push(
+                continuesPreviousParagraph &&
+                  index === 0 &&
+                  candidate.lastLine === previousPageLine
                   ? { type: 'text', text: ' ' }
-                  : { type: 'lineBreak' },
-              ...children,
-            );
+                  : lineContinuesAtTextEdge(candidate.lastLine, line, pageLines)
+                    ? { type: 'text', text: ' ' }
+                    : { type: 'lineBreak' },
+                ...children,
+              );
             candidate.lastLine = line;
           } else {
             const paragraph: Extract<BlockNode, { type: 'paragraph' }> = {
@@ -1474,6 +1572,7 @@ function lineInlines(
   links: readonly RawPdfLink[],
   equations: readonly RawPdfImage[] = [],
   formulaCandidates: readonly PdfFormulaCandidate[] = [],
+  imageBacked = false,
 ): InlineNode[] {
   const output: InlineNode[] = [];
   let previous: RawPdfTextSpan | undefined;
@@ -1516,7 +1615,7 @@ function lineInlines(
         Math.max(previous.height * 0.25, 0.003)
     )
       output.push({ type: 'text', text: ' ' });
-    const script = scriptMark(span, line);
+    const script = imageBacked ? undefined : scriptMark(span, line);
     const marks = [
       ...(span.bold ? ([{ type: 'bold' as const }] as const) : []),
       ...(span.italic ? ([{ type: 'italic' as const }] as const) : []),
@@ -1594,6 +1693,124 @@ function canMergeLines(previous: PdfLine, current: PdfLine): boolean {
   return (
     gap >= -0.002 && gap <= Math.max(previous.height, current.height) * 0.8
   );
+}
+
+function canMergeOcrLines(previous: PdfLine, current: PdfLine): boolean {
+  if (previous.page !== current.page) return false;
+  const hyphenContinuation = isSoftOcrHyphenContinuation(previous, current);
+  if (!hyphenContinuation && startsIndentedOcrParagraph(previous, current))
+    return false;
+  const leftAligned = Math.abs(previous.x - current.x) <= 0.04;
+  const rightAligned =
+    previous.width >= 0.65 &&
+    current.width >= 0.65 &&
+    Math.abs(previous.x + previous.width - (current.x + current.width)) <= 0.04;
+  if (!leftAligned && !rightAligned && !hyphenContinuation) return false;
+  const gap = current.top - (previous.top + previous.height);
+  return (
+    gap >= -0.002 &&
+    gap <=
+      Math.max(previous.height, current.height) *
+        (hyphenContinuation ? 1.25 : 0.8)
+  );
+}
+
+function startsIndentedOcrParagraph(
+  previous: PdfLine,
+  current: PdfLine,
+): boolean {
+  const indent = current.x - previous.x;
+  return (
+    indent >= 0.035 &&
+    indent <= 0.12 &&
+    current.width >= 0.6 &&
+    /[.!?][”’"')\]]?$/.test(previous.text.trimEnd())
+  );
+}
+
+function compatibleOcrBodyLines(
+  previous: PdfLine,
+  current: PdfLine,
+  mapping: ReadonlyMap<string, StyleMapping>,
+): boolean {
+  if (
+    (mapping.get(styleId(previous)) ?? 'body') !== 'body' ||
+    (mapping.get(styleId(current)) ?? 'body') !== 'body'
+  )
+    return false;
+  return (
+    previous.fontId === current.fontId &&
+    previous.bold === current.bold &&
+    previous.italic === current.italic &&
+    (isSoftOcrHyphenContinuation(previous, current) ||
+      Math.max(previous.fontSize, current.fontSize) /
+        Math.min(previous.fontSize, current.fontSize) <=
+        1.15)
+  );
+}
+
+function isSoftOcrHyphenContinuation(
+  previous: PdfLine,
+  current: PdfLine,
+): boolean {
+  return (
+    /-\s*[—–]?\s*$/u.test(previous.text) &&
+    /^\p{Ll}/u.test(current.text.trimStart())
+  );
+}
+
+function appendOcrLine(
+  target: InlineNode[],
+  line: InlineNode[],
+  previousLine: PdfLine,
+  currentLine: PdfLine,
+): void {
+  const first = line.find((node) => node.type === 'text');
+  if (first?.type === 'text' && /^\p{Ll}/u.test(first.text)) {
+    const text = target
+      .filter((node) => node.type === 'text')
+      .map(({ text }) => text)
+      .join('');
+    const suffix = /-\s*[—–]?\s*$/u.exec(text)?.[0];
+    if (suffix && removeOcrTextSuffix(target, suffix.length)) {
+      target.push(...line);
+      return;
+    }
+  }
+  target.push(
+    isOcrVerseLineContinuation(previousLine, currentLine)
+      ? { type: 'lineBreak' }
+      : { type: 'text', text: ' ' },
+    ...line,
+  );
+}
+
+function isOcrVerseLineContinuation(
+  previous: PdfLine,
+  current: PdfLine,
+): boolean {
+  return (
+    previous.x >= 0.12 &&
+    previous.x <= 0.25 &&
+    current.x >= 0.12 &&
+    current.x <= 0.25 &&
+    previous.width <= 0.7 &&
+    current.width <= 0.7 &&
+    Math.abs(previous.x - current.x) <= 0.025
+  );
+}
+
+function removeOcrTextSuffix(nodes: InlineNode[], length: number): boolean {
+  let remaining = length;
+  for (let index = nodes.length - 1; index >= 0 && remaining > 0; index--) {
+    const node = nodes[index];
+    if (node?.type !== 'text') return false;
+    const removed = Math.min(remaining, node.text.length);
+    node.text = node.text.slice(0, node.text.length - removed);
+    remaining -= removed;
+    if (!node.text) nodes.splice(index, 1);
+  }
+  return remaining === 0;
 }
 
 function lineContinuesAtTextEdge(

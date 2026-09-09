@@ -868,6 +868,383 @@ describe('PDF layout analysis', () => {
     ]);
   });
 
+  it('reconstructs OCR body paragraphs across font-size drift and drop-cap indentation', async () => {
+    const raw = rawDocument([
+      {
+        number: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        imageBacked: true,
+        spans: [
+          span('e Tao Te Tsjing is een hoeksteen van Chinese', 0.17, 0.45, {
+            width: 0.75,
+            height: 0.017,
+            fontSize: 8.82,
+          }),
+          span('beschaving. De traditionele opvatting is dat het', 0.17, 0.48, {
+            width: 0.75,
+            height: 0.017,
+            fontSize: 9.18,
+          }),
+          span(
+            'geschreven is door Lao-tse, een oudere tijdgenoot van',
+            0.08,
+            0.51,
+            {
+              width: 0.84,
+              height: 0.017,
+              fontSize: 9.36,
+            },
+          ),
+          span('Confucius. Hoewel het al zo lang geleden is ge-', 0.08, 0.54, {
+            width: 0.84,
+            height: 0.017,
+            fontSize: 9.36,
+          }),
+          span('schreven, blijft het belangrijke leesstof.', 0.08, 0.576, {
+            width: 0.7,
+            height: 0.011,
+            fontSize: 5.76,
+          }),
+          span('Een nieuwe alinea begint hier', 0.13, 0.62, {
+            width: 0.79,
+            height: 0.017,
+            fontSize: 9.36,
+          }),
+          span('en loopt door op de volgende regel.', 0.08, 0.65, {
+            width: 0.84,
+            height: 0.017,
+            fontSize: 9.18,
+          }),
+        ],
+        links: [],
+        images: [],
+      },
+    ]);
+
+    const result = await analysePdf(raw, { conversionDate: '2026-09-06' });
+    const paragraphs = result.model.blocks
+      .filter((block) => block.type === 'paragraph')
+      .map((block) =>
+        block.children
+          .map((child) => (child.type === 'text' ? child.text : ''))
+          .join(''),
+      );
+
+    expect(paragraphs).toEqual([
+      'e Tao Te Tsjing is een hoeksteen van Chinese beschaving. De traditionele opvatting is dat het geschreven is door Lao-tse, een oudere tijdgenoot van Confucius. Hoewel het al zo lang geleden is geschreven, blijft het belangrijke leesstof.',
+      'Een nieuwe alinea begint hier en loopt door op de volgende regel.',
+    ]);
+    expect(
+      result.model.blocks
+        .filter((block) => block.type === 'paragraph')
+        .flatMap((block) => block.children)
+        .filter((child) => child.type === 'text')
+        .flatMap((child) => child.marks ?? []),
+    ).not.toContainEqual(
+      expect.objectContaining({ type: expect.stringMatching(/script$/) }),
+    );
+  });
+
+  it('does not infer script marks from image-backed OCR glyph drift', async () => {
+    const raw = rawDocument([
+      {
+        number: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        imageBacked: true,
+        spans: [
+          span('Tao', 0.1, 0.3, {
+            width: 0.12,
+            height: 0.02,
+            fontSize: 10,
+            baseline: 0.318,
+          }),
+          span('Te Tsjing', 0.23, 0.292, {
+            width: 0.3,
+            height: 0.012,
+            fontSize: 5.5,
+            baseline: 0.302,
+          }),
+        ],
+        links: [],
+        images: [],
+      },
+    ]);
+
+    const result = await analysePdf(raw, { conversionDate: '2026-09-06' });
+    const paragraph = result.model.blocks.find(
+      (block) => block.type === 'paragraph',
+    );
+
+    expect(paragraph).toMatchObject({
+      children: [
+        { type: 'text', text: 'Tao' },
+        { type: 'text', text: ' ' },
+        { type: 'text', text: 'Te Tsjing' },
+      ],
+    });
+  });
+
+  it('distinguishes indented OCR paragraph starts from wrapped sentences', async () => {
+    const raw = rawDocument([
+      {
+        number: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        imageBacked: true,
+        spans: [
+          span('De eerste zin loopt door tot aan de', 0.08, 0.2, {
+            width: 0.84,
+            height: 0.017,
+          }),
+          span('volgende regel. Daarna volgt nog tekst.', 0.08, 0.23, {
+            width: 0.745,
+            height: 0.017,
+          }),
+          span('Een nieuwe alinea springt iets in en', 0.125, 0.26, {
+            width: 0.7,
+            height: 0.017,
+          }),
+          span('loopt vervolgens door aan de linkermarge.', 0.08, 0.29, {
+            width: 0.745,
+            height: 0.017,
+          }),
+          span('Deze regel eindigt nog niet en', 0.08, 0.32, {
+            width: 0.84,
+            height: 0.017,
+          }),
+          span('lijkt door OCR ingesprongen.', 0.16, 0.35, {
+            width: 0.76,
+            height: 0.017,
+          }),
+        ],
+        links: [],
+        images: [],
+      },
+    ]);
+
+    const result = await analysePdf(raw, { conversionDate: '2026-09-06' });
+    const paragraphs = result.model.blocks
+      .filter((block) => block.type === 'paragraph')
+      .map((block) =>
+        block.children
+          .map((child) => (child.type === 'text' ? child.text : ''))
+          .join(''),
+      );
+
+    expect(paragraphs).toEqual([
+      'De eerste zin loopt door tot aan de volgende regel. Daarna volgt nog tekst.',
+      'Een nieuwe alinea springt iets in en loopt vervolgens door aan de linkermarge. Deze regel eindigt nog niet en lijkt door OCR ingesprongen.',
+    ]);
+  });
+
+  it('preserves OCR verse lines and stanza gaps without splitting prose lines', async () => {
+    const raw = rawDocument([
+      {
+        number: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        imageBacked: true,
+        spans: [
+          span('Er naar kijkend en het niet ziend,', 0.17, 0.2, {
+            width: 0.55,
+            height: 0.017,
+          }),
+          span('noemen wij het onzichtbaar;', 0.17, 0.23, {
+            width: 0.44,
+            height: 0.017,
+          }),
+          span('er naar luisterend en het niet horend,', 0.17, 0.26, {
+            width: 0.58,
+            height: 0.017,
+          }),
+          span('noemen wij het onhoorbaar.', 0.17, 0.29, {
+            width: 0.43,
+            height: 0.017,
+          }),
+          span('Deze drie aspecten van het ene', 0.17, 0.35, {
+            width: 0.47,
+            height: 0.017,
+          }),
+          span('zijn niet te vatten,', 0.17, 0.38, {
+            width: 0.3,
+            height: 0.017,
+          }),
+        ],
+        links: [],
+        images: [],
+      },
+    ]);
+
+    const result = await analysePdf(raw, { conversionDate: '2026-09-06' });
+    const paragraphs = result.model.blocks.filter(
+      (block) => block.type === 'paragraph',
+    );
+
+    expect(paragraphs).toEqual([
+      expect.objectContaining({
+        children: [
+          { type: 'text', text: 'Er naar kijkend en het niet ziend,' },
+          { type: 'lineBreak' },
+          { type: 'text', text: 'noemen wij het onzichtbaar;' },
+          { type: 'lineBreak' },
+          { type: 'text', text: 'er naar luisterend en het niet horend,' },
+          { type: 'lineBreak' },
+          { type: 'text', text: 'noemen wij het onhoorbaar.' },
+        ],
+      }),
+      expect.objectContaining({
+        children: [
+          { type: 'text', text: 'Deze drie aspecten van het ene' },
+          { type: 'lineBreak' },
+          { type: 'text', text: 'zijn niet te vatten,' },
+        ],
+      }),
+    ]);
+  });
+
+  it('rejects noisy inferred headings on image-backed OCR pages while preserving explicit mappings', async () => {
+    const raw = rawDocument([
+      {
+        number: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        imageBacked: true,
+        spans: [
+          span('Voorwoord', 0.36, 0.16, {
+            width: 0.28,
+            fontSize: 15,
+          }),
+          span('ukahses', 0.38, 0.23, {
+            width: 0.24,
+            fontSize: 15,
+          }),
+          span('| Abee rearpane', 0.27, 0.3, {
+            width: 0.46,
+            fontSize: 25,
+          }),
+          span('Y', 0.48, 0.4, { width: 0.04, fontSize: 37 }),
+          span('1068 EL Amsterdam', 0.35, 0.45, {
+            width: 0.3,
+            fontSize: 11,
+          }),
+          span('B een wandelende voet die gaan betekent. Samen', 0.08, 0.5, {
+            width: 0.84,
+            fontSize: 13,
+          }),
+          span('Dit is gewone tekst in de hoofdtekst.', 0.08, 0.6, {
+            width: 0.7,
+            fontSize: 9,
+          }),
+          span('Nog een gewone regel tekst.', 0.08, 0.63, {
+            width: 0.7,
+            fontSize: 9,
+          }),
+          span('Ook deze regel is gewone tekst.', 0.08, 0.66, {
+            width: 0.7,
+            fontSize: 9,
+          }),
+          span('De hoofdtekst bepaalt de basisgrootte.', 0.08, 0.69, {
+            width: 0.7,
+            fontSize: 9,
+          }),
+          span('Dit voorkomt een vertekende mediaan.', 0.08, 0.72, {
+            width: 0.7,
+            fontSize: 9,
+          }),
+        ],
+        links: [],
+        images: [],
+      },
+    ]);
+
+    const result = await analysePdf(raw, { conversionDate: '2026-09-06' });
+    const headings = result.model.blocks
+      .filter((block) => block.type === 'heading')
+      .map((block) =>
+        block.children
+          .map((child) => (child.type === 'text' ? child.text : ''))
+          .join(''),
+      );
+
+    expect(headings).toEqual(['Voorwoord']);
+
+    const explicitlyMapped = await analysePdf(raw, {
+      conversionDate: '2026-09-06',
+      styleMappings: { 'pdf-body-25-regular-roman': 'heading2' },
+    });
+    expect(
+      explicitlyMapped.model.blocks
+        .filter((block) => block.type === 'heading')
+        .map((block) =>
+          block.children
+            .map((child) => (child.type === 'text' ? child.text : ''))
+            .join(''),
+        ),
+    ).toContain('| Abee rearpane');
+  });
+
+  it('omits scattered OCR fragments from image-backed illustration pages', async () => {
+    const fragments = Array.from({ length: 20 }, (_, index) =>
+      span(index % 2 ? 'ae' : '—', (index % 5) * 0.18, 0.1 + index * 0.035, {
+        width: 0.03,
+        height: index < 4 ? 0.006 : 0.012,
+        fontSize: index < 4 ? 4 : 9,
+      }),
+    );
+    const catalog = Array.from({ length: 20 }, (_, index) =>
+      span(
+        `Published title ${index}`,
+        0.08 + (index % 2) * 0.42,
+        0.1 + index * 0.03,
+        {
+          width: 0.18,
+          height: index < 2 ? 0.006 : 0.012,
+          fontSize: index < 2 ? 4 : 9,
+        },
+      ),
+    );
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          imageBacked: true,
+          spans: fragments,
+          links: [],
+          images: [],
+        },
+        {
+          number: 2,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          imageBacked: true,
+          spans: catalog,
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-09-06' },
+    );
+
+    expect(JSON.stringify(result.model.blocks)).toContain('Published title');
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'pdf-noisy-ocr-omitted',
+        details: { pages: 1 },
+      }),
+    );
+  });
+
   it('keeps heading-styled author and email lines as a byline paragraph', async () => {
     const raw = rawDocument([
       {
@@ -1147,11 +1524,14 @@ describe('PDF layout analysis', () => {
     });
 
     it('preserves links, images, tagged structure, and scanned-page diagnostics', async () => {
-      const [book, tagged, scanned] = await Promise.all([
+      const [book, tagged, scannedRaw, scanned] = await Promise.all([
         pdfJsReader.readRaw(await fixture('one-column-book.pdf'), {
           conversionDate: '2026-08-29',
         }),
         pdfJsReader.readRaw(await fixture('tagged-article.pdf'), {
+          conversionDate: '2026-08-29',
+        }),
+        pdfJsReader.readRaw(await fixture('scanned-page.pdf'), {
           conversionDate: '2026-08-29',
         }),
         pdfJsReader.read(await fixture('scanned-page.pdf'), {
@@ -1163,13 +1543,17 @@ describe('PDF layout analysis', () => {
         link: book.pages[0]?.links[0]?.href,
         tagged: tagged.pages[0]?.taggedStructure?.role,
         markedContent: tagged.pages[0]?.spans[0]?.markedContentId,
+        imageBacked: scannedRaw.pages[0]?.imageBacked,
         images: Object.keys(scanned.model.assets),
+        imageBackedPages: scanned.analysis.imageBackedPages,
         warning: scanned.model.warnings.map(({ code }) => code),
       }).toMatchObject({
         link: 'https://example.com/',
         tagged: 'Root',
         markedContent: expect.any(String),
+        imageBacked: true,
         images: ['pdf-image-1-0'],
+        imageBackedPages: [1],
         warning: ['pdf-ocr-not-supported'],
       });
     });
@@ -2497,6 +2881,51 @@ describe('PDF.js extraction helpers', () => {
       [1, 1],
       [1, 1],
     ]);
+  });
+
+  it('does not expose or resolve a full-page scan backdrop as an image', async () => {
+    const getImage = vi.fn();
+    const operators = {
+      fnArray: [OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore],
+      argsArray: [undefined, [100, 0, 0, 100, 0, 0], ['scan'], undefined],
+    };
+    const getOperatorList = vi.fn().mockResolvedValue(operators);
+    const onPageBackdrop = vi.fn();
+    const page = {
+      pageNumber: 1,
+      getViewport: () => ({ width: 100, height: 100 }),
+      objs: { get: getImage },
+      getOperatorList,
+    };
+
+    const images = await readImages(
+      page as never,
+      [1, 0, 0, -1, 0, 100],
+      {
+        maxInputBytes: 1,
+        maxPages: 1,
+        maxTextItems: 1,
+        maxTextItemsPerPage: 1,
+        maxImages: 1,
+        maxImagePixels: 1,
+        maxTotalImagePixels: 1,
+      },
+      undefined,
+      undefined,
+      {
+        CanvasFactory: class {},
+        FilterFactory: class {},
+        createSurface: vi.fn(),
+      },
+      [],
+      [],
+      { operators: operators as never, onPageBackdrop },
+    );
+
+    expect(images).toEqual([]);
+    expect(onPageBackdrop).toHaveBeenCalledOnce();
+    expect(getOperatorList).not.toHaveBeenCalled();
+    expect(getImage).not.toHaveBeenCalled();
   });
 
   it('rasterizes a dense vector region instead of exposing component images', async () => {
