@@ -19,6 +19,7 @@ import type {
   PdfManualFormulaRegion,
   PdfBounds,
 } from '@wordconvert/pdf-reader';
+import type { ContentPartState } from './content-editor.ts';
 
 export const WORKFLOW_STAGES = [
   'Document',
@@ -29,7 +30,8 @@ export const WORKFLOW_STAGES = [
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type OutputFormat = 'html' | 'markdown' | 'epub';
-export type PreviewMode = 'rendered' | 'source' | 'edit' | 'package';
+export type PreviewMode = 'cover' | 'rendered' | 'source' | 'edit' | 'package';
+export type EpubPreviewScope = 'part' | 'book';
 export type SourceFormat = 'docx' | 'pdf' | 'html' | 'markdown' | 'text';
 export type FormulaReviewFilter =
   'all' | 'needs-review' | 'edited' | 'accepted';
@@ -38,6 +40,7 @@ export interface PdfImportSettings {
   cropTop: number;
   cropBottom: number;
   samplePageCount: number;
+  enhancedFigureDetection: boolean;
   removeDetectedFurniture: boolean;
   removedCandidateIds: string[];
   retainedCandidateIds: string[];
@@ -102,11 +105,24 @@ export interface AppState {
   pdfPreview?: PdfPagePreviewState;
   pdfPreviewLoading?: boolean;
   pdfPreviewError?: string;
+  pdfImageSelectionOpen?: boolean;
+  pdfImageSelectionBounds?: PdfBounds;
+  pdfImageSelectionAlt?: string;
+  pdfImageInsertionLoading?: boolean;
+  pdfImageInsertionError?: string;
   output?: DownloadOutput;
+  outputFilename?: string;
   outputSaved?: boolean;
   selectedEpubFile?: string;
   markdownEdit?: string;
   epubContentEdit?: string;
+  epubFullContentEdit?: string;
+  epubParts?: ContentPartState;
+  epubEditorRevision: number;
+  epubPreviewScope: EpubPreviewScope;
+  epubSplitBlockOffset?: number;
+  epubSplitHeadingIdentity?: { title: string; occurrence: number };
+  epubEditorNotice?: string;
   epubSourceEdit?: string;
   error?: ConversionError;
   styleMappings: Record<string, StyleMapping>;
@@ -175,11 +191,14 @@ export function createInitialState(
     formulaSelectionTex: '',
     formulaCacheStatus: 'checking',
     previewMode: 'rendered',
+    epubEditorRevision: 0,
+    epubPreviewScope: 'book',
     cover: createCoverSettings(),
     pdfImport: {
       cropTop: 0,
       cropBottom: 0,
       samplePageCount: 5,
+      enhancedFigureDetection: false,
       removeDetectedFurniture: true,
       removedCandidateIds: [],
       retainedCandidateIds: [],

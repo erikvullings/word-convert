@@ -10,6 +10,7 @@ const requiredFiles = [
   'manifest.webmanifest',
   'favicon.svg',
   'sw.js',
+  'pdfjs/pdf.worker.mjs',
   'texteller/encoder.onnx',
   'texteller/decoder.onnx',
   'texteller/tokenizer.json',

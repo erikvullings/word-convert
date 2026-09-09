@@ -1310,6 +1310,31 @@ describe('PDF layout analysis', () => {
         }),
       ).rejects.toMatchObject({ code: 'cancelled' });
     });
+
+    it('uses the browser task scheduler for responsive analysis checkpoints', async () => {
+      const yieldTask = vi.fn(async () => undefined);
+      vi.stubGlobal('scheduler', { yield: yieldTask });
+      try {
+        await analysePdf(
+          rawDocument([
+            {
+              number: 1,
+              width: 600,
+              height: 800,
+              rotation: 0,
+              spans: [span('Body text', 0.1, 0.2)],
+              links: [],
+              images: [],
+            },
+          ]),
+          { conversionDate: '2026-09-08' },
+        );
+      } finally {
+        vi.unstubAllGlobals();
+      }
+
+      expect(yieldTask).toHaveBeenCalled();
+    });
   });
 
   it('applies page-relative crop regions but keeps the boundary and short-document content', async () => {
@@ -1846,7 +1871,7 @@ describe('PDF layout analysis', () => {
             span('Tagged heading', 0.1, 0.1, {
               markedContentId: 'mc-heading',
             }),
-            span('Wrapped first line', 0.1, 0.2),
+            span('Wrapped first line', 0.1, 0.2, { width: 0.78 }),
             span('continues here.', 0.1, 0.225),
           ],
           links: [],
@@ -1879,6 +1904,202 @@ describe('PDF layout analysis', () => {
           { text: 'Wrapped first line' },
           { text: ' ' },
           { text: 'continues here.' },
+        ],
+      },
+    ]);
+  });
+
+  it('preserves short adjacent body lines as semantic soft breaks', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('The quiet river', 0.1, 0.2, { width: 0.24 }),
+            span('moves under moonlight', 0.1, 0.225, { width: 0.31 }),
+            span('and carries us home.', 0.1, 0.25, { width: 0.3 }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks).toMatchObject([
+      {
+        type: 'paragraph',
+        children: [
+          { text: 'The quiet river' },
+          { type: 'lineBreak' },
+          { text: 'moves under moonlight' },
+          { type: 'lineBreak' },
+          { text: 'and carries us home.' },
+        ],
+      },
+    ]);
+  });
+
+  it('preserves short adjacent lines in a right column as soft breaks', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Left column prose.', 0.08, 0.1, { width: 0.32 }),
+            span('A short verse line', 0.55, 0.1, { width: 0.15 }),
+            span('another short line', 0.55, 0.125, { width: 0.18 }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+    const verse = result.model.blocks.find(
+      (block) =>
+        block.type === 'paragraph' &&
+        block.children.some(
+          (child) =>
+            child.type === 'text' && child.text === 'A short verse line',
+        ),
+    );
+
+    expect(verse).toMatchObject({
+      type: 'paragraph',
+      children: [
+        { text: 'A short verse line' },
+        { type: 'lineBreak' },
+        { text: 'another short line' },
+      ],
+    });
+  });
+
+  it('merges wrapped body lines that reach the text column edge', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span(
+              'A full prose line reaches the right edge of the page',
+              0.1,
+              0.2,
+              {
+                width: 0.79,
+              },
+            ),
+            span('and continues on the next source line.', 0.1, 0.225, {
+              width: 0.55,
+            }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks).toMatchObject([
+      {
+        type: 'paragraph',
+        children: [
+          { text: 'A full prose line reaches the right edge of the page' },
+          { text: ' ' },
+          { text: 'and continues on the next source line.' },
+        ],
+      },
+    ]);
+  });
+
+  it('merges wrapped body lines at an observed single-column margin', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span(
+              'This is a normal paragraph line that wraps near the margin',
+              0.15,
+              0.2,
+              { width: 0.63 },
+            ),
+            span(
+              'but does not reach the absolute page-edge threshold',
+              0.15,
+              0.225,
+              { width: 0.6 },
+            ),
+            span('and ends on a shorter final line.', 0.15, 0.25, {
+              width: 0.45,
+            }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks).toMatchObject([
+      {
+        type: 'paragraph',
+        children: [
+          {
+            text: 'This is a normal paragraph line that wraps near the margin',
+          },
+          { text: ' ' },
+          { text: 'but does not reach the absolute page-edge threshold' },
+          { text: ' ' },
+          { text: 'and ends on a shorter final line.' },
+        ],
+      },
+    ]);
+  });
+
+  it('merges a lone wide prose line with its short continuation', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span(
+              'A normal sentence reaches the margin and continues',
+              0.12,
+              0.2,
+              { width: 0.6 },
+            ),
+            span('on one final short line.', 0.12, 0.225, { width: 0.3 }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks).toMatchObject([
+      {
+        type: 'paragraph',
+        children: [
+          { text: 'A normal sentence reaches the margin and continues' },
+          { text: ' ' },
+          { text: 'on one final short line.' },
         ],
       },
     ]);
@@ -2020,6 +2241,44 @@ describe('PDF layout analysis', () => {
       'paragraph',
     ]);
   });
+
+  it.each(['\\', '**'])(
+    'drops isolated OCR punctuation %s immediately before a page break',
+    async (punctuation) => {
+      const result = await analysePdf(
+        rawDocument([
+          {
+            number: 1,
+            width: 600,
+            height: 800,
+            rotation: 0,
+            spans: [
+              span('Last paragraph.', 0.1, 0.7, { width: 0.5 }),
+              span(punctuation, 0.02, 0.82, { width: 0.01 }),
+            ],
+            links: [],
+            images: [],
+          },
+          {
+            number: 2,
+            width: 600,
+            height: 800,
+            rotation: 0,
+            spans: [span('Next paragraph.', 0.1, 0.1, { width: 0.5 })],
+            links: [],
+            images: [],
+          },
+        ]),
+        { conversionDate: '2026-08-29' },
+      );
+
+      expect(result.model.blocks).toMatchObject([
+        { type: 'paragraph', children: [{ text: 'Last paragraph.' }] },
+        { type: 'pageBreak' },
+        { type: 'paragraph', children: [{ text: 'Next paragraph.' }] },
+      ]);
+    },
+  );
 
   it('uses tagged structure order ahead of geometric order', async () => {
     const result = await analysePdf(

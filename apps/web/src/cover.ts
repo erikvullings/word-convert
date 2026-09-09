@@ -9,7 +9,8 @@ import {
   type CoverTextColor,
 } from '@wordconvert/cover-generator';
 
-export type CoverSource = 'none' | 'upload' | 'extracted' | 'generated';
+export type CoverSource =
+  'none' | 'upload' | 'extracted' | 'pdf-page' | 'generated';
 
 export interface CoverSettings {
   source: CoverSource;
@@ -68,7 +69,9 @@ export function coverComposition(
 ): CoverComposition | undefined {
   if (settings.source === 'none') return undefined;
   if (
-    (settings.source === 'upload' || settings.source === 'extracted') &&
+    (settings.source === 'upload' ||
+      settings.source === 'extracted' ||
+      settings.source === 'pdf-page') &&
     !settings.image
   )
     return undefined;

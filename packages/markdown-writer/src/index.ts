@@ -16,6 +16,7 @@ export interface MarkdownWriterOptions extends WriterOptions {
   onWarning?: (warning: ConversionWarning) => void;
   formulaMode?: MathOutputMode;
   includeInternalLinks?: boolean;
+  includePageBreaks?: boolean;
 }
 
 interface RenderContext {
@@ -26,6 +27,7 @@ interface RenderContext {
   warn: (warning: ConversionWarning) => void;
   formulaMode: MathOutputMode;
   includeInternalLinks: boolean;
+  includePageBreaks: boolean;
 }
 
 export function writeMarkdown(
@@ -82,6 +84,7 @@ function writeWithAssets(
     warn: (warning) => options.onWarning?.(warning),
     formulaMode: options.formulaMode ?? 'source',
     includeInternalLinks: options.includeInternalLinks ?? true,
+    includePageBreaks: options.includePageBreaks ?? false,
   };
   const body = renderBlocks(model.blocks, context);
   const title = renderDocumentTitle(model);
@@ -183,7 +186,7 @@ function renderBlock(block: BlockNode, context: RenderContext): string {
     case 'thematicBreak':
       return '---';
     case 'pageBreak':
-      return '';
+      return context.includePageBreaks ? '<!-- markdown:page-break -->' : '';
     case 'equationBlock':
       return renderEquation(block.equationId, true, context);
     case 'imageBlock': {
@@ -461,7 +464,7 @@ function renderText(
 ): string {
   const content = marks.some((mark) => mark.type === 'code')
     ? inlineCode(value)
-    : escapeText(value, escapeBrackets);
+    : escapeText(value, escapeBrackets, marks.length > 0);
   return applyMarks(content, marks, context);
 }
 
@@ -481,8 +484,20 @@ function longestRun(value: string, character: string): number {
   return longest;
 }
 
-function escapeText(value: string, escapeBrackets = false): string {
-  return value.replace(escapeBrackets ? /[\\`*_[\]<>]/g : /[\\`*_<>]/g, '\\$&');
+function escapeText(
+  value: string,
+  escapeBrackets = false,
+  forceAsteriskEscape = false,
+): string {
+  const escaped = value.replace(
+    escapeBrackets ? /[\\`_[\]<>]/g : /[\\`_<>]/g,
+    '\\$&',
+  );
+  const asterisks = value.match(/\*/g)?.length ?? 0;
+  const listMarker = /(?:^|\n)[ \t]{0,3}\*(?=[ \t]|$)/.test(value);
+  return forceAsteriskEscape || asterisks > 1 || listMarker
+    ? escaped.replaceAll('*', '\\*')
+    : escaped;
 }
 
 function escapeDestination(value: string): string {

@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { JSDOM } from 'jsdom';
+import { describe, expect, it, vi } from 'vitest';
 import {
   DOCUMENT_MODEL_SCHEMA,
   DOCUMENT_MODEL_VERSION,
@@ -8,6 +9,8 @@ import { strToU8, zipSync } from 'fflate';
 
 import {
   dateInputValue,
+  editorTheme,
+  epubEditorHtmlToMarkdown,
   epubRenderedPreview,
   extractHtmlBody,
   markdownSourcePreview,
@@ -15,9 +18,11 @@ import {
   outputPreviewSource,
   renderApp,
   scaledPreviewScrollOffset,
+  selectDocumentWithPicker,
   type AppController,
 } from './app.ts';
 import { createInitialState } from './state.ts';
+import { createContentPartState, markdownToBlocks } from './content-editor.ts';
 
 describe('App', () => {
   it('formats ISO timestamps for HTML date inputs', () => {
@@ -36,9 +41,85 @@ describe('App', () => {
     );
   });
 
+  it('preserves semantic inline content from the WYSIWYG editor', () => {
+    const dom = new JSDOM();
+    vi.stubGlobal('document', dom.window.document);
+    vi.stubGlobal('Node', dom.window.Node);
+    const markdown = epubEditorHtmlToMarkdown(`
+      <h1>Heading</h1>
+      <p>
+        <a id="section"></a>
+        <u><strong>underlined</strong></u><br>
+        <sub>below</sub>
+        <span data-wordconvert-equation-id="second" data-wordconvert-display="inline">
+          <span class="katex"><math><annotation encoding="application/x-tex">duplicate</annotation></math></span>
+        </span>
+        <span class="katex">
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <semantics><mrow><mi>x</mi></mrow><annotation encoding="application/x-tex">x</annotation></semantics>
+          </math>
+        </span>
+        <sup id="fnref:note-1"><a href="#fn:note-1">[note-1]</a></sup>
+      </p>
+      <div class="md-page-break" data-markdown-page-break="true" role="doc-pagebreak"></div>
+      <pre><code class="language-ts">const x = 1;
+  return x;</code></pre>
+      <div class="footnotes"><ol><li id="fn:note-1">Note body</li></ol></div>
+    `);
+    vi.unstubAllGlobals();
+
+    expect(markdown).toContain('# Heading');
+    expect(markdown).toContain('<a id="section"></a>');
+    expect(markdown).toContain('<u>**underlined**</u>');
+    expect(markdown).toContain('  \n');
+    expect(markdown).toContain('<sub>below</sub>');
+    expect(markdown).toContain('[wordconvert-equation:second]');
+    expect(markdown).toContain('$x$');
+    expect(markdown).toContain('[^note-1]');
+    expect(markdown).toMatch(/<!-- markdown:page-break -->\s+```ts/);
+    expect(markdown).toContain(
+      ['```ts', 'const x = 1;', '  return x;', '```'].join('\n'),
+    );
+    expect(markdown).not.toContain('Note body');
+  });
+
+  it('resolves the editor theme from the system preference', () => {
+    expect(editorTheme('system', () => true)).toBe('dark');
+    expect(editorTheme('system', () => false)).toBe('light');
+    expect(editorTheme('dark', () => false)).toBe('dark');
+  });
+
   it('keeps the original PDF horizontally centred while scaling', () => {
     expect(scaledPreviewScrollOffset(0, 800, 800, 1_200)).toBe(200);
     expect(scaledPreviewScrollOffset(300, 800, 1_600, 2_400)).toBe(650);
+  });
+
+  it('selects a document through the File System Access picker', async () => {
+    const state = createInitialState('2026-08-29');
+    const controller = controllerFor(state);
+    const selectFiles = vi.fn();
+    controller.selectFiles = selectFiles;
+    const file = new File(['fixture'], 'fixture.pdf', {
+      type: 'application/pdf',
+    });
+    const showPicker = vi.fn(async () => [{ getFile: async () => file }]);
+
+    await selectDocumentWithPicker(controller, showPicker);
+
+    expect(showPicker).toHaveBeenCalledWith({
+      multiple: false,
+      types: [
+        {
+          description: 'Word and PDF documents',
+          accept: {
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+              ['.docx'],
+            'application/pdf': ['.pdf'],
+          },
+        },
+      ],
+    });
+    expect(selectFiles).toHaveBeenCalledWith([file]);
   });
 
   it.each([
@@ -112,6 +193,21 @@ describe('App', () => {
     expect(rendered).not.toContain('Share EPUB');
   });
 
+  it('keeps the output filename visible while EPUB edits regenerate output', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'converting';
+    state.preferences.outputFormat = 'epub';
+    state.previewMode = 'edit';
+    state.model = editorModel();
+    state.outputFilename = 'tao-multilingual.epub';
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('Output filename');
+    expect(rendered).toContain('"value":"tao-multilingual"');
+  });
+
   it('does not offer sharing or email for non-EPUB output', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 3;
@@ -166,6 +262,13 @@ describe('App', () => {
     expect(rendered).toContain('Go to WordConvert home');
     expect(rendered).toContain('All processing stays on this device');
     expect(rendered).toContain('Choose a DOCX or PDF document');
+    expect(rendered).toContain('"className":"document-file-picker"');
+    expect(rendered).toContain(
+      '"id":"document-input","className":"document-file-input"',
+    );
+    expect(rendered).toContain('"hidden":true');
+    expect(rendered).not.toContain('label.file-label');
+    expect(rendered).not.toContain('or drag and drop');
     expect(rendered).toContain('Open a document from a URL');
     expect(rendered).toContain('browser-default');
     expect(rendered).toContain('Formula recognition. ');
@@ -219,11 +322,19 @@ describe('App', () => {
     expect(rendered).not.toContain('Load source-page preview');
     expect(rendered).not.toContain('Source-page preview (optional)');
     expect(rendered).toContain('PDF page 3 preview');
-    expect(rendered).toContain('Page 3 of 12');
-    expect(rendered).not.toContain('Showing 3 to 3 of 12 pages');
+    expect(rendered).toContain(
+      '"pagination":{"page":2,"pageSize":1,"total":12}',
+    );
+    expect(rendered).toContain('"allowPageInput":true');
     expect(rendered).toContain('Pages to sample');
     expect(rendered).toContain('"label":"Pages to sample"');
     expect(rendered).toContain('Currently scanned: 1, 4, 8, 12');
+    expect(rendered).toContain(
+      'Use enhanced figure and table detection (slower)',
+    );
+    expect(rendered).toContain(
+      'Embedded images and deterministic PDF graphics are still preserved.',
+    );
     expect(rendered).toContain('Top crop: 8%');
     expect(rendered).toContain('Bottom crop: 6%');
     expect(rendered).toContain('Original scale: 100%');
@@ -233,7 +344,7 @@ describe('App', () => {
       rendered.indexOf('pdf-crop-sliders'),
     );
     expect(rendered.indexOf('pdf-crop-sliders')).toBeLessThan(
-      rendered.indexOf('Page 3 of 12'),
+      rendered.indexOf('"pagination":{"page":2,"pageSize":1,"total":12}'),
     );
     expect(rendered).toContain(
       'Remove from output · header · odd pages · high confidence',
@@ -348,7 +459,7 @@ describe('App', () => {
       visible.indexOf('pdf-preview-scale'),
     );
     expect(visible.indexOf('pdf-preview-scale')).toBeLessThan(
-      visible.indexOf('Page 1 of 6'),
+      visible.indexOf('"pagination":{"page":0,"pageSize":1,"total":6}'),
     );
     expect(visible).not.toContain('Showing 1 to 1 of 6 pages');
   });
@@ -428,7 +539,9 @@ describe('App', () => {
     expect(rendered).not.toContain(
       'Automatically remove high-confidence repeated content',
     );
-    expect(rendered).toContain('Page 1 of 44');
+    expect(rendered).toContain(
+      '"pagination":{"page":0,"pageSize":1,"total":44}',
+    );
   });
 
   it('shows the document title quietly and uses radio buttons for Markdown preview mode', () => {
@@ -761,7 +874,7 @@ describe('App', () => {
     expect(epub).not.toContain('Include internal document links');
   });
 
-  it('shows EPUB configuration in preview stage and explains metadata issues', () => {
+  it('shows EPUB guidance after the workspace and explains metadata issues', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 2;
     state.status = 'ready';
@@ -788,18 +901,21 @@ describe('App', () => {
     const controller = controllerFor(state);
 
     const epub = JSON.stringify(renderApp(controller));
-    expect(epub).toContain('EPUB configuration');
+    expect(epub).not.toContain('EPUB configuration');
     expect(epub).toContain('Front cover');
     expect(epub).toContain('language must be a BCP 47 tag');
     expect(epub).toContain('identifier is missing');
     expect(epub).not.toContain('Create EPUB preview');
+    expect(epub.indexOf('EPUB files')).toBeLessThan(
+      epub.indexOf('The title, language, identifier, and authors'),
+    );
   });
 
   it('renders all cover controls and a live deterministic preview', () => {
     const state = createInitialState('2026-07-16');
     state.stage = 2;
     state.preferences.outputFormat = 'epub';
-    state.previewMode = 'package';
+    state.previewMode = 'cover';
     state.cover.source = 'generated';
     state.model = editorModel();
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
@@ -820,6 +936,11 @@ describe('App', () => {
     ])
       expect(rendered).toContain(label);
     expect(rendered).toContain('semantic XHTML title page is always included');
+
+    state.previewMode = 'package';
+    const packaged = JSON.stringify(renderApp(controllerFor(state)));
+    expect(packaged).not.toContain('Live cover preview');
+    expect(packaged).not.toContain('Text alignment');
   });
 
   it('renders EPUB file list as a selector with a right-side content viewer', () => {
@@ -871,6 +992,7 @@ describe('App', () => {
     state.stage = 2;
     state.status = 'complete';
     state.sourceFormat = 'pdf';
+    state.pdfOriginalVisible = true;
     state.preferences.outputFormat = 'epub';
     state.previewMode = 'edit';
     state.selectedEpubFile = 'EPUB/styles.css';
@@ -902,13 +1024,117 @@ describe('App', () => {
 
     const rendered = JSON.stringify(renderApp(controllerFor(state)));
 
-    expect(rendered).toContain('epub-preview-mode');
+    expect(rendered).toContain('epub-preview-tabs');
+    expect(rendered).toContain('preview-comparison--edit');
+    expect(rendered).toContain('"role":"tablist"');
+    expect(rendered).toContain('"role":"tab"');
+    expect(rendered).toContain('"aria-selected":"true"');
+    expect(rendered).toContain('"aria-selected":"false"');
     expect(rendered).toContain('Rendered');
     expect(rendered).toContain('Markdown');
     expect(rendered).toContain('Edit');
+    expect(rendered).not.toContain('Full text');
     expect(rendered).toContain('EPUB files');
     expect(rendered).toContain('Editable EPUB content');
-    expect(rendered).toContain('Show original');
+    expect(rendered).toContain('Hide original');
+    expect(rendered).toContain('"allowPageInput":true');
+    expect(rendered).toContain('"page":"Part"');
+    expect(rendered).toContain('"mode":"wysiwyg"');
+    expect(rendered).toContain('"showTabs":true');
+    expect(rendered).toContain('"hideBase64Images":true');
+    expect(rendered).toContain('Delete part');
+    expect(rendered).toContain('Insert image from original page');
+    expect(rendered).not.toContain('Preview this part');
+    expect(rendered).not.toContain('Preview entire book');
+    expect(rendered).not.toContain('Merge with previous');
+    expect(rendered).not.toContain('Merge with next');
+    expect(rendered).not.toContain('Split at heading');
+  });
+
+  it('shows source image insertion only beside a visible original in Edit mode', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.preferences.outputFormat = 'epub';
+    state.previewMode = 'edit';
+    state.sourceFormat = 'pdf';
+    state.model = editorModel();
+    state.pdfOriginalVisible = false;
+
+    expect(JSON.stringify(renderApp(controllerFor(state)))).not.toContain(
+      'Insert image from original page',
+    );
+
+    state.pdfOriginalVisible = true;
+    expect(JSON.stringify(renderApp(controllerFor(state)))).toContain(
+      'Insert image from original page',
+    );
+
+    state.previewMode = 'source';
+    expect(JSON.stringify(renderApp(controllerFor(state)))).not.toContain(
+      'Insert image from original page',
+    );
+  });
+
+  it('renders EPUB line breaks without turning them into paragraphs', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.preferences.outputFormat = 'epub';
+    state.previewMode = 'edit';
+    state.model = editorModel();
+    state.epubContentEdit = 'First line.  \nSecond line.';
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('<p>\\nFirst line.<br>Second line.\\n</p>');
+  });
+
+  it('renders Markdown as an editable full-book source with block spacing', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.preferences.outputFormat = 'epub';
+    state.previewMode = 'source';
+    state.epubPreviewScope = 'part';
+    state.model = editorModel();
+    state.model.blocks = markdownToBlocks(
+      '# First\n\nOne.\n\nMore one.\n\n# Second\n\nTwo.\n\nMore two.',
+      state.model,
+    );
+    state.epubParts = {
+      ...createContentPartState(state.model),
+      activeIndex: 1,
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('Full book Markdown editor');
+    expect(rendered).toContain('"mode":"markdown"');
+    expect(rendered).toContain('"hideBase64Images":true');
+    expect(rendered).toContain('"showTabs":true');
+    expect(rendered).toContain('# First\\n\\nOne.');
+    expect(rendered).toContain('# Second\\n\\nTwo.');
+  });
+
+  it('passes rendered block markup to the part WYSIWYG editor', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 2;
+    state.status = 'complete';
+    state.preferences.outputFormat = 'epub';
+    state.previewMode = 'edit';
+    state.model = editorModel();
+    state.model.blocks = markdownToBlocks(
+      '# First\n\nOne with <sup>spacing</sup>.\n\nMore one.',
+      state.model,
+    );
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('"mode":"wysiwyg"');
+    expect(rendered).toContain('"content":"<h1>First</h1>\\n\\n<p>');
+    expect(rendered).toContain('One with <sup>spacing</sup>.');
+    expect(rendered).not.toContain('"content":"# First');
   });
 
   it('preserves inline equation image presentation in the EPUB preview', () => {
@@ -947,6 +1173,36 @@ describe('App', () => {
     const rendered = epubRenderedPreview(state, '');
 
     expect(rendered).toContain('equation-image image-width-45');
+  });
+
+  it('renders either the current part or the entire semantic book', () => {
+    const state = createInitialState('2026-07-15');
+    state.model = editorModel();
+    state.model.blocks = markdownToBlocks(
+      ['# One', '', 'First.', '', '# Two', '', 'Second.'].join('\n'),
+      state.model,
+    );
+    state.epubParts = {
+      ...createContentPartState(state.model),
+      activeIndex: 1,
+    };
+    state.epubPreviewScope = 'part';
+
+    const part = epubRenderedPreview(state, '');
+    state.epubPreviewScope = 'book';
+    const book = epubRenderedPreview(state, '');
+
+    expect({
+      partHasFirst: part.includes('First.'),
+      partHasSecond: part.includes('Second.'),
+      bookHasFirst: book.includes('First.'),
+      bookHasSecond: book.includes('Second.'),
+    }).toEqual({
+      partHasFirst: false,
+      partHasSecond: true,
+      bookHasFirst: true,
+      bookHasSecond: true,
+    });
   });
 
   it('shows source HTML editing beside an isolated styled preview', () => {

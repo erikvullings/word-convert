@@ -370,25 +370,23 @@ h1 {
   text-align: center;
 }
 
-.file-label {
+.document-file-picker {
+  max-width: 100%;
   padding: 0.8rem 1.2rem;
+  border: 0;
   border-radius: 0.4rem;
   background: var(--accent);
   color: var(--panel);
   cursor: pointer;
+  font: inherit;
   font-weight: 700;
 }
 
-.drop-zone input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
+.document-file-picker:hover {
+  background: var(--accent-strong);
 }
 
-.drop-zone input:focus + p,
-.file-label:focus-within {
+.document-file-picker:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 3px;
 }
@@ -544,17 +542,24 @@ h1 {
 }
 
 .pdf-pagination {
-  justify-content: center;
   margin-top: 0.35rem;
+}
+
+.pdf-pagination > .datatable-pagination {
+  justify-content: center;
   border-top: 0;
   background: transparent;
+}
+
+.pdf-pagination .pagination-info {
+  display: none;
 }
 
 .pdf-pagination .pagination-controls {
   margin-inline: auto;
 }
 
-.preview-pane--original .pdf-page-preview + .datatable-pagination {
+.preview-pane--original .pdf-page-preview + .pdf-pagination {
   margin-top: 0.75rem;
   margin-bottom: 0;
 }
@@ -709,8 +714,7 @@ h1 {
 }
 
 .format-card span,
-.secondary-actions,
-.epub-config small {
+.secondary-actions {
   color: var(--muted);
 }
 
@@ -795,23 +799,6 @@ h1 {
   transform: rotate(180deg);
 }
 
-.epub-config {
-  display: block;
-  margin-top: 1.5rem;
-  padding: 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.7rem;
-}
-
-.epub-config > * + * {
-  margin-top: 0.8rem;
-}
-
-.epub-config label {
-  display: grid;
-  gap: 0.4rem;
-}
-
 .cover-editor {
   display: block;
   margin-top: 1rem;
@@ -826,7 +813,6 @@ h1 {
 }
 
 .cover-editor .row,
-.epub-config .row,
 .cover-controls {
   margin-bottom: 0;
 }
@@ -890,6 +876,49 @@ h1 {
   gap: 1rem;
 }
 
+.epub-preview-navigation {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-block: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.epub-preview-tabs {
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.epub-preview-tab {
+  min-height: 2.75rem;
+  padding: 0.65rem 1rem;
+  border: 0;
+  border-bottom: 0.2rem solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.epub-preview-tab:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--ink);
+}
+
+.epub-preview-tab[aria-selected='true'] {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.epub-preview-tab:focus-visible {
+  outline: 0.15rem solid var(--accent);
+  outline-offset: -0.2rem;
+}
+
 .preview-mode {
   min-width: 0;
   flex: 1;
@@ -900,14 +929,70 @@ h1 {
   max-width: 100%;
 }
 
+.book-part-editor {
+  display: grid;
+  gap: 1rem;
+}
+
+.book-part-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.book-part-heading h3 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.book-part-editor-content .md-wysiwyg-editor-wrapper {
+  display: flex;
+  height: min(75vh, 60rem);
+  flex-direction: column;
+}
+
+.book-part-editor-content .md-toolbar {
+  flex: 0 0 auto;
+}
+
+.book-part-editor-content .md-editor-content-area {
+  min-height: 0;
+  flex: 1 1 auto;
+  height: auto;
+}
+
 .original-preview-toggle {
   display: flex;
   justify-content: flex-end;
   flex: 0 0 auto;
+  padding-bottom: 0.25rem;
+}
+
+.epub-guidance {
+  max-width: 75ch;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.epub-guidance > * {
+  margin: 0;
+}
+
+.epub-guidance > * + * {
+  margin-top: 0.5rem;
 }
 
 .preview-comparison {
   min-width: 0;
+}
+
+.preview-workspace-stack {
+  display: grid;
+  gap: 1rem;
 }
 
 .preview-comparison--visible {
@@ -921,6 +1006,11 @@ h1 {
 .preview-comparison--visible .document-preview {
   height: min(65vh, 50rem);
   max-height: min(65vh, 50rem);
+}
+
+.preview-comparison--visible.preview-comparison--edit .pdf-page-preview {
+  height: min(75vh, 60rem);
+  max-height: min(75vh, 60rem);
 }
 
 .preview-pane {
@@ -962,6 +1052,124 @@ h1 {
   width: 100%;
   max-width: none;
   max-height: none;
+}
+
+@media (min-width: 56.01rem) {
+  .preview-comparison--visible.preview-comparison--edit {
+    grid-template-rows: auto minmax(0, auto) auto auto;
+    row-gap: 0;
+  }
+
+  .preview-comparison--edit
+    :is(
+      .preview-pane,
+      .preview-pane--original .pdf-preview-workspace,
+      .preview-pane--converted .book-part-editor
+    ) {
+    display: contents;
+  }
+
+  .preview-comparison--edit .preview-pane--original > h3,
+  .preview-comparison--edit .book-part-heading {
+    grid-row: 1;
+    margin-bottom: 1rem;
+  }
+
+  .preview-comparison--edit .preview-pane--original > h3,
+  .preview-comparison--edit .pdf-page-preview,
+  .preview-comparison--edit .pdf-preview-scale,
+  .preview-comparison--edit .preview-pane--original .pdf-pagination {
+    grid-column: 1;
+  }
+
+  .preview-comparison--edit .book-part-heading,
+  .preview-comparison--edit .book-part-editor-content,
+  .preview-comparison--edit .book-part-editor > [role='status'],
+  .preview-comparison--edit .book-part-editor > .pdf-pagination {
+    grid-column: 2;
+  }
+
+  .preview-comparison--edit .pdf-page-preview,
+  .preview-comparison--edit .book-part-editor-content {
+    grid-row: 2;
+  }
+
+  .preview-comparison--edit .pdf-preview-scale,
+  .preview-comparison--edit .book-part-editor > [role='status'] {
+    grid-row: 3;
+  }
+
+  .preview-comparison--edit
+    :is(
+      .preview-pane--original .pdf-pagination,
+      .book-part-editor > .pdf-pagination
+    ) {
+    grid-row: 4;
+  }
+}
+
+.pdf-image-insertion {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--panel);
+}
+
+.pdf-image-insertion > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.pdf-image-insertion > header :is(h3, p) {
+  margin: 0;
+}
+
+.pdf-image-insertion > header p {
+  margin-top: 0.25rem;
+}
+
+.pdf-image-selection-surface {
+  width: min(100%, 56rem);
+  max-height: 36rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.pdf-image-selection-page {
+  position: relative;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.pdf-image-selection-page:focus-visible {
+  outline: 0.2rem solid var(--accent);
+  outline-offset: -0.2rem;
+}
+
+.pdf-image-selection-page img {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+  pointer-events: none;
+}
+
+.pdf-image-selection-box {
+  position: absolute;
+  background: rgb(15 118 110 / 16%);
+  border: 0.18rem solid var(--accent);
+  pointer-events: none;
+}
+
+.pdf-image-insertion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
 }
 
 .document-preview,
@@ -2041,6 +2249,19 @@ h1 {
     min-height: 0;
     padding: 1rem;
     border-radius: 0.7rem;
+  }
+
+  .epub-preview-navigation {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .epub-preview-tabs {
+    width: 100%;
+  }
+
+  .original-preview-toggle {
+    align-self: flex-end;
   }
 
   .document-preview,

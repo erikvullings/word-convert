@@ -11,6 +11,7 @@ minimumReleaseAgeExclude:
   - '@codemirror/state@6.7.4'
   - dompurify@3.4.15
   - katex@0.18.7
-  - mithril-markdown-wysiwyg@0.3.2 || 0.4.0
+  - mithril-markdown-wysiwyg@0.3.2 || 0.4.0 || 0.4.3
+  - mithril-materialized@3.17.10 || 3.17.11
 
 onlyBuiltDependencies: []

@@ -30,4 +30,32 @@ describe('Markdown preview rendering', () => {
     expect(html).toContain('<a id="toc123"></a>');
     expect(html).not.toContain('&lt;a');
   });
+
+  it('renders escaped Markdown punctuation without a visible backslash', () => {
+    const html = renderMarkdownPreview('A literal \\* and \\\\ character.');
+
+    expect(html).toContain('A literal &#42; and &#92; character.');
+    expect(html).not.toContain('\\*');
+    expect(html).not.toContain('\\\\ character');
+  });
+
+  it('preserves backslashes inside code and math', () => {
+    const html = renderMarkdownPreview(
+      '`\\*`\n\n```txt\n\\*\n```\n\n$\\frac{1}{2}$',
+    );
+
+    expect(html).toContain('<code>\\*</code>');
+    expect(html).toContain('<pre><code class="language-txt">\\*');
+    expect(html).toContain('<mfrac>');
+  });
+
+  it('renders page-break markers as semantic dividers instead of text', () => {
+    const html = renderMarkdownPreview(
+      'Before.\n\n<!-- markdown:page-break -->\n\nAfter.',
+    );
+
+    expect(html).toContain('class="md-page-break"');
+    expect(html).toContain('role="doc-pagebreak"');
+    expect(html).not.toContain('<!-- markdown:page-break -->');
+  });
 });

@@ -56,3 +56,4 @@ These improvements are intentionally outside the initial production path.
 - [x] 0026 Preserve optional DOCX ToC links
 - [x] 0027 Add workflow routes
 - [x] 0028 Refine backend-free EPUB sharing
+- [x] 0029 Add part-based book editor *(needs 0014)*

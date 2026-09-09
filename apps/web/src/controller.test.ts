@@ -9,6 +9,31 @@ import {
 import { applyDocumentTheme, createBrowserController } from './controller.ts';
 import type { WorkerResponse } from './worker/protocol.ts';
 import type { PdfFormulaCandidate } from '@wordconvert/pdf-reader';
+import {
+  contentEditorSource,
+  createContentPartState,
+  markdownToBlocks,
+} from './content-editor.ts';
+
+vi.mock('./pdf-preview.ts', () => ({
+  createPdfPagePreviewRenderer: () => ({
+    render: vi.fn(async () => ({
+      pageNumber: 1,
+      width: 1,
+      height: 1,
+      blob: new Blob(
+        [
+          Uint8Array.from([
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0,
+            0, 1, 0, 0, 0, 1,
+          ]),
+        ],
+        { type: 'image/png' },
+      ),
+    })),
+    dispose: vi.fn(async () => undefined),
+  }),
+}));
 
 class WorkerStub {
   readonly postMessage = vi.fn();
@@ -103,6 +128,7 @@ function formulaCandidate(id = 'pdf-equation-p2-001'): PdfFormulaCandidate {
 
 describe('browser controller', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -118,6 +144,765 @@ describe('browser controller', () => {
 
     applyDocumentTheme('system', root);
     expect(root.dataset.theme).toBeUndefined();
+  });
+
+  it('automatically selects the first PDF page as the initial cover', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([new Uint8Array([1])], 'scan.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    const operationId = controller.state.operationId;
+    if (!operationId) throw new Error('Analysis operation was not started.');
+
+    worker.emit({
+      type: 'analysed',
+      operationId,
+      model: model(),
+      pdfAnalysis: {
+        pageCount: 2,
+        analysedPages: [1, 2],
+        crop: { top: 0, bottom: 0 },
+        scannedPages: [],
+        candidates: [],
+      },
+    });
+
+    expect(controller.state.cover).toMatchObject({
+      source: 'pdf-page',
+      warning: 'Rendering the original first page…',
+    });
+    await vi.waitFor(() =>
+      expect(controller.state.cover.warning).not.toBe(
+        'Rendering the original first page…',
+      ),
+    );
+    controller.dispose?.();
+  });
+
+  it('autosaves the active book part before navigating to the next part', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+
+    const controller = createBrowserController();
+    const document = model();
+    document.metadata.title = {
+      value: 'Persistent title',
+      provenance: {
+        source: 'test',
+        method: 'user',
+        confidence: 'certain',
+      },
+    };
+    document.blocks = markdownToBlocks(
+      [
+        '# One',
+        '',
+        'Original.',
+        '',
+        'More one.',
+        '',
+        '# Two',
+        '',
+        'Keep me.',
+        '',
+        'More two.',
+      ].join('\n'),
+      document,
+    );
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.setEpubContent?.('# One\n\nRevised.\n\nMore one.');
+
+    controller.navigateEpubPart?.('next');
+
+    expect({
+      activeIndex: controller.state.epubParts?.activeIndex,
+      blocks: controller.state.model.blocks,
+      metadata: controller.state.model.metadata,
+      draft: controller.state.epubContentEdit,
+    }).toMatchObject({
+      activeIndex: 1,
+      blocks: [
+        { type: 'heading', children: [{ text: 'One' }] },
+        { type: 'paragraph', children: [{ text: 'Revised.' }] },
+        { type: 'paragraph', children: [{ text: 'More one.' }] },
+        { type: 'heading', children: [{ text: 'Two' }] },
+        { type: 'paragraph', children: [{ text: 'Keep me.' }] },
+        { type: 'paragraph', children: [{ text: 'More two.' }] },
+      ],
+      metadata: document.metadata,
+      draft: undefined,
+    });
+  });
+
+  it('autosaves before jumping directly to a part', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks(
+      [
+        '# One',
+        '',
+        'Original.',
+        '',
+        'More one.',
+        '',
+        '# Two',
+        '',
+        'Keep two.',
+        '',
+        'More two.',
+        '',
+        '# Three',
+        '',
+        'Keep three.',
+        '',
+        'More three.',
+      ].join('\n'),
+      document,
+    );
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.setEpubContent?.('# One\n\nRevised.\n\nMore one.');
+
+    controller.setEpubPart?.(2);
+
+    expect({
+      activeIndex: controller.state.epubParts?.activeIndex,
+      firstParagraph: controller.state.model.blocks[1],
+      draft: controller.state.epubContentEdit,
+    }).toMatchObject({
+      activeIndex: 2,
+      firstParagraph: {
+        type: 'paragraph',
+        children: [{ text: 'Revised.' }],
+      },
+      draft: undefined,
+    });
+  });
+
+  it('merges a newly shortened part before navigating onward', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks(
+      [
+        '# One',
+        '',
+        'One.',
+        '',
+        'More one.',
+        '',
+        '# Two',
+        '',
+        'Two.',
+        '',
+        'More two.',
+        '',
+        '# Three',
+        '',
+        'Three.',
+        '',
+        'More three.',
+      ].join('\n'),
+      document,
+    );
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.navigateEpubPart?.('next');
+    controller.setEpubContent?.('# Two\n\nShort.');
+
+    controller.navigateEpubPart?.('next');
+
+    expect(controller.state.epubParts).toEqual({
+      starts: [0, 5],
+      activeIndex: 1,
+    });
+    expect(controller.state.model.blocks.slice(3, 5)).toMatchObject([
+      { type: 'heading', children: [{ text: 'Two' }] },
+      { type: 'paragraph', children: [{ text: 'Short.' }] },
+    ]);
+  });
+
+  it('blocks part navigation when the draft contains an external image', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks(
+      [
+        '# One',
+        '',
+        'Original.',
+        '',
+        'More one.',
+        '',
+        '# Two',
+        '',
+        'Keep me.',
+        '',
+        'More two.',
+      ].join('\n'),
+      document,
+    );
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.setEpubContent?.(
+      '# One\n\n![Remote](https://example.com/image.png)',
+    );
+
+    controller.navigateEpubPart?.('next');
+
+    expect(controller.state.epubParts?.activeIndex).toBe(0);
+    expect(controller.state.epubContentEdit).toContain('https://example.com');
+    expect(controller.state.epubEditorNotice).toContain(
+      'not stored in the book',
+    );
+    expect(controller.state.model.blocks).toEqual(document.blocks);
+  });
+
+  it('saves full-book Markdown before returning to part editing', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.previewMode = 'source';
+    controller.setEpubFullContent?.(
+      '# One\n\nRevised.\n\n# Two\n\nAdded from full text.',
+    );
+
+    controller.setEpubPreviewMode?.('edit');
+
+    expect(controller.state.epubFullContentEdit).toBeUndefined();
+    expect(controller.state.model.blocks).toMatchObject([
+      { type: 'heading', children: [{ text: 'One' }] },
+      { type: 'paragraph', children: [{ text: 'Revised.' }] },
+      { type: 'heading', children: [{ text: 'Two' }] },
+      {
+        type: 'paragraph',
+        children: [{ text: 'Added from full text.' }],
+      },
+    ]);
+  });
+
+  it('stores base64 images inserted in the full-book Markdown editor', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.previewMode = 'source';
+    controller.setEpubFullContent?.(
+      '# One\n\n![Pixel](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nQAAAABJRU5ErkJggg==)',
+    );
+
+    controller.setEpubPreviewMode?.('edit');
+
+    expect(controller.state.epubEditorNotice).toBeUndefined();
+    expect(controller.state.model.assets['editor-image-0001']).toMatchObject({
+      mediaType: 'image/png',
+    });
+    expect(controller.state.model.blocks).toMatchObject([
+      { type: 'heading', children: [{ text: 'One' }] },
+      {
+        type: 'paragraph',
+        children: [{ type: 'image', assetId: 'editor-image-0001' }],
+      },
+    ]);
+  });
+
+  it('preserves full-book line breaks before deriving poem parts', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.state.model = model();
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.previewMode = 'source';
+    controller.setEpubFullContent?.(
+      [
+        '# Book',
+        '',
+        'Introduction.',
+        '',
+        'More introduction.',
+        '',
+        '## 1',
+        '',
+        'First line.  ',
+        'Second line.  ',
+        'Third line.',
+        '',
+        '## 2',
+        '',
+        'Fourth line.  ',
+        'Fifth line.  ',
+        'Sixth line.',
+      ].join('\n'),
+    );
+
+    controller.setEpubPreviewMode?.('edit');
+
+    expect(controller.state.epubParts).toEqual({
+      starts: [0, 3, 5],
+      activeIndex: 0,
+    });
+    expect(contentEditorSource(controller.state.model)).toContain(
+      'First line.  \nSecond line.  \nThird line.',
+    );
+  });
+
+  it('deletes the active part after confirmation', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    );
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks(
+      '# One\n\nFirst.\n\n# Two\n\nDelete me.',
+      document,
+    );
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.epubParts = { starts: [0, 2], activeIndex: 1 };
+    controller.setEpubContent?.('# Two\n\nEdited before deletion.');
+
+    controller.deleteEpubPart?.();
+
+    expect(controller.state.model.blocks).toMatchObject([
+      { type: 'heading', children: [{ text: 'One' }] },
+      { type: 'paragraph', children: [{ text: 'First.' }] },
+    ]);
+    expect(controller.state.epubParts).toEqual({
+      starts: [0],
+      activeIndex: 0,
+    });
+    expect(controller.state.epubEditorNotice).toBe('Deleted "Two".');
+  });
+
+  it('autosaves before previewing the current part without changing book settings', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    const preferences = controller.state.preferences;
+    controller.setEpubContent?.('# One\n\nRevised.');
+
+    controller.previewEpubContent?.('part');
+
+    expect({
+      text:
+        controller.state.model.blocks[1]?.type === 'paragraph'
+          ? controller.state.model.blocks[1].children[0]
+          : undefined,
+      scope: controller.state.epubPreviewScope,
+      mode: controller.state.previewMode,
+      preferences: controller.state.preferences,
+    }).toEqual({
+      text: { type: 'text', text: 'Revised.' },
+      scope: 'part',
+      mode: 'rendered',
+      preferences,
+    });
+  });
+
+  it('autosaves before splitting at the selected level-two heading', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks(
+      [
+        '# One',
+        '',
+        'Opening.',
+        '',
+        'Context.',
+        '',
+        '## Section',
+        '',
+        'Original.',
+        '',
+        'More details.',
+      ].join('\n'),
+      document,
+    );
+    controller.state.model = document;
+    controller.state.epubParts = createContentPartState(document);
+    controller.state.preferences.outputFormat = 'epub';
+    controller.setEpubContent?.(
+      [
+        '# One',
+        '',
+        'Opening.',
+        '',
+        'Context.',
+        '',
+        '## Section',
+        '',
+        'Revised.',
+        '',
+        'More details.',
+      ].join('\n'),
+    );
+    controller.setEpubSplitHeading?.(3);
+
+    controller.splitEpubPart?.();
+
+    expect({
+      parts: controller.state.epubParts,
+      blocks: controller.state.model.blocks,
+      notice: controller.state.epubEditorNotice,
+    }).toMatchObject({
+      parts: { starts: [0, 3], activeIndex: 1 },
+      blocks: [
+        { type: 'heading', children: [{ text: 'One' }] },
+        { type: 'paragraph', children: [{ text: 'Opening.' }] },
+        { type: 'paragraph', children: [{ text: 'Context.' }] },
+        { type: 'heading', children: [{ text: 'Section' }] },
+        { type: 'paragraph', children: [{ text: 'Revised.' }] },
+        { type: 'paragraph', children: [{ text: 'More details.' }] },
+      ],
+      notice: 'Split the part at the selected heading.',
+    });
+  });
+
+  it('resolves a selected split heading after hidden and newly inserted blocks', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = [
+      {
+        type: 'heading',
+        level: 1,
+        children: [{ type: 'text', text: 'One' }],
+      },
+      { type: 'pageBreak' },
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Opening.' }],
+      },
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Context.' }],
+      },
+      {
+        type: 'heading',
+        level: 2,
+        children: [{ type: 'text', text: 'Section' }],
+      },
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Details.' }],
+      },
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'More details.' }],
+      },
+    ];
+    controller.state.model = document;
+    controller.state.epubParts = createContentPartState(document);
+    controller.state.preferences.outputFormat = 'epub';
+    controller.setEpubContent?.(
+      '# One\n\n<!-- markdown:page-break -->\n\nOpening.\n\nContext.\n\n## Section\n\nDetails.\n\nMore details.',
+    );
+    controller.setEpubSplitHeading?.(4);
+    controller.setEpubContent?.(
+      '# One\n\n<!-- markdown:page-break -->\n\nOpening.\n\nContext.\n\nInserted.\n\n## Section\n\nDetails.\n\nMore details.',
+    );
+    expect(controller.state.epubSplitBlockOffset).toBeUndefined();
+    controller.setEpubSplitHeading?.(5);
+
+    controller.splitEpubPart?.();
+
+    expect({
+      parts: controller.state.epubParts,
+      blocks: controller.state.model.blocks,
+      notice: controller.state.epubEditorNotice,
+    }).toMatchObject({
+      parts: { starts: [0, 5], activeIndex: 1 },
+      blocks: [
+        { type: 'heading', children: [{ text: 'One' }] },
+        { type: 'pageBreak' },
+        { type: 'paragraph', children: [{ text: 'Opening.' }] },
+        { type: 'paragraph', children: [{ text: 'Context.' }] },
+        { type: 'paragraph', children: [{ text: 'Inserted.' }] },
+        { type: 'heading', children: [{ text: 'Section' }] },
+        { type: 'paragraph', children: [{ text: 'Details.' }] },
+        { type: 'paragraph', children: [{ text: 'More details.' }] },
+      ],
+      notice: 'Split the part at the selected heading.',
+    });
+  });
+
+  it('rejects a split selection that is not a level-two heading', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nNot a heading.', document);
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.setEpubSplitHeading?.(1);
+
+    controller.splitEpubPart?.();
+
+    expect({
+      parts: controller.state.epubParts,
+      notice: controller.state.epubEditorNotice,
+    }).toEqual({
+      parts: { starts: [0], activeIndex: 0 },
+      notice: 'The selected heading is not a valid split point.',
+    });
+  });
+
+  it('autosaves before merging with the next part', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks(
+      [
+        '# One',
+        '',
+        'Original.',
+        '',
+        'More one.',
+        '',
+        '# Two',
+        '',
+        'Keep me.',
+        '',
+        'More two.',
+      ].join('\n'),
+      document,
+    );
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.setEpubContent?.('# One\n\nRevised.\n\nMore one.');
+    const revision = controller.state.epubEditorRevision;
+
+    controller.mergeEpubPart?.('next');
+
+    expect({
+      parts: controller.state.epubParts,
+      blocks: controller.state.model.blocks,
+      revision: controller.state.epubEditorRevision,
+    }).toMatchObject({
+      parts: { starts: [0], activeIndex: 0 },
+      blocks: [
+        { type: 'heading', children: [{ text: 'One' }] },
+        { type: 'paragraph', children: [{ text: 'Revised.' }] },
+        { type: 'paragraph', children: [{ text: 'More one.' }] },
+        { type: 'heading', children: [{ text: 'Two' }] },
+        { type: 'paragraph', children: [{ text: 'Keep me.' }] },
+        { type: 'paragraph', children: [{ text: 'More two.' }] },
+      ],
+      revision: revision + 1,
+    });
+
+    controller.setEpubContent?.(
+      '# One\n\nRevised.\n\n# Two\n\nEdited after merging.',
+    );
+    controller.previewEpubContent?.('book');
+
+    expect(controller.state.model.blocks).toMatchObject([
+      { type: 'heading', children: [{ text: 'One' }] },
+      { type: 'paragraph', children: [{ text: 'Revised.' }] },
+      { type: 'heading', children: [{ text: 'Two' }] },
+      { type: 'paragraph', children: [{ text: 'Edited after merging.' }] },
+    ]);
+  });
+
+  it('autosaves the active EPUB part before switching output formats', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.setEpubContent?.('# One\n\nRevised.');
+
+    controller.setOutputFormat('markdown');
+
+    const request = worker.postMessage.mock.calls.at(-1)?.[0] as {
+      model: DocumentModel;
+    };
+    expect({
+      format: controller.state.preferences.outputFormat,
+      draft: controller.state.epubContentEdit,
+      stateBlocks: controller.state.model.blocks,
+      requestBlocks: request.model.blocks,
+    }).toMatchObject({
+      format: 'markdown',
+      draft: undefined,
+      stateBlocks: [
+        { type: 'heading', children: [{ text: 'One' }] },
+        { type: 'paragraph', children: [{ text: 'Revised.' }] },
+      ],
+      requestBlocks: [
+        { type: 'heading', children: [{ text: 'One' }] },
+        { type: 'paragraph', children: [{ text: 'Revised.' }] },
+      ],
+    });
+  });
+
+  it('autosaves the active EPUB part before returning to output selection', () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.stage = 2;
+    controller.setEpubContent?.('# One\n\nRevised.');
+
+    controller.showOutputFormats?.();
+
+    expect({
+      stage: controller.state.stage,
+      draft: controller.state.epubContentEdit,
+      blocks: controller.state.model.blocks,
+    }).toMatchObject({
+      stage: 1,
+      draft: undefined,
+      blocks: [
+        { type: 'heading', children: [{ text: 'One' }] },
+        { type: 'paragraph', children: [{ text: 'Revised.' }] },
+      ],
+    });
+  });
+
+  it('converts the complete reconstructed book after part edits', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.blocks = markdownToBlocks(
+      [
+        '# One',
+        '',
+        'First.',
+        '',
+        'More one.',
+        '',
+        '# Two',
+        '',
+        'Original.',
+        '',
+        'More two.',
+      ].join('\n'),
+      document,
+    );
+    controller.state.model = document;
+    controller.state.preferences.outputFormat = 'epub';
+    controller.navigateEpubPart?.('next');
+    controller.setEpubContent?.('# Two\n\nRevised.\n\nMore two.');
+
+    controller.convert();
+
+    const request = worker.postMessage.mock.calls.at(-1)?.[0] as {
+      model: DocumentModel;
+    };
+    expect(request.model.blocks).toMatchObject([
+      { type: 'heading', children: [{ text: 'One' }] },
+      { type: 'paragraph', children: [{ text: 'First.' }] },
+      { type: 'paragraph', children: [{ text: 'More one.' }] },
+      { type: 'heading', children: [{ text: 'Two' }] },
+      { type: 'paragraph', children: [{ text: 'Revised.' }] },
+      { type: 'paragraph', children: [{ text: 'More two.' }] },
+    ]);
   });
 
   it('reports a selected file that the browser cannot read', async () => {
@@ -314,6 +1099,9 @@ describe('browser controller', () => {
         candidates: [],
       },
     });
+    expect(controller.state.pdfLayoutStatus).toBeUndefined();
+
+    controller.setPdfEnhancedFigureDetection?.(true);
     expect(controller.state.pdfLayoutStatus).toBe('loading');
 
     controller.selectFiles([secondFile]);
@@ -413,6 +1201,76 @@ describe('browser controller', () => {
     controller.setOutputFilename('Final handbook.epub');
 
     expect(controller.state.output.filename).toBe('Final handbook.epub');
+  });
+
+  it('keeps a custom output filename while EPUB edits regenerate output', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    const document = model();
+    document.metadata.title = {
+      value: 'Report',
+      provenance: {
+        source: 'test',
+        method: 'user',
+        confidence: 'certain',
+      },
+    };
+    document.metadata.language = {
+      value: 'en',
+      provenance: {
+        source: 'test',
+        method: 'user',
+        confidence: 'certain',
+      },
+    };
+    document.metadata.identifier = {
+      value: 'urn:test:report',
+      provenance: {
+        source: 'test',
+        method: 'user',
+        confidence: 'certain',
+      },
+    };
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.epubParts = createContentPartState(document);
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.stage = 2;
+    controller.state.status = 'complete';
+    controller.state.output = {
+      filename: 'report.epub',
+      mediaType: 'application/epub+zip',
+      data: new ArrayBuffer(1),
+    };
+    controller.state.outputFilename = 'report.epub';
+    controller.setOutputFilename('My book.epub');
+
+    controller.setEpubContent?.('# One\n\nRevised.');
+
+    expect(controller.state.output).toBeUndefined();
+    expect(controller.state.outputFilename).toBe('My book.epub');
+
+    await vi.advanceTimersByTimeAsync(300);
+    const request = worker.postMessage.mock.calls.at(-1)?.[0] as {
+      operationId: string;
+    };
+    worker.emit({
+      type: 'output',
+      operationId: request.operationId,
+      filename: 'report.epub',
+      mediaType: 'application/epub+zip',
+      data: new ArrayBuffer(1),
+    });
+
+    expect(controller.state.output?.filename).toBe('My book.epub');
+    expect(controller.state.outputFilename).toBe('My book.epub');
   });
 
   it('detects and shares the ready EPUB using its document metadata title', async () => {
@@ -621,6 +1479,7 @@ describe('browser controller', () => {
       expect.objectContaining({
         type: 'analyse',
         pdfOptions: expect.objectContaining({
+          layoutDetectionEnabled: false,
           formulaDecisions: {
             'pdf-equation-p2-001': {
               equationId: 'pdf-equation-p2-001',
@@ -851,6 +1710,127 @@ describe('browser controller', () => {
       manualFormulaRegions: [],
       formulaDecisions: {},
     });
+  });
+
+  it('inserts a selected PDF page region into the active EPUB part', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([new Uint8Array([1])], 'illustrated.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.epubParts = createContentPartState(document);
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.stage = 2;
+    controller.state.pdfPreviewPage = 2;
+    controller.openPdfImageSelection?.();
+    controller.setPdfImageSelectionBounds?.({
+      x: 0.1,
+      top: 0.2,
+      width: 0.5,
+      height: 0.3,
+    });
+    controller.setPdfImageSelectionAlt?.('A source illustration');
+
+    controller.insertPdfImageSelection?.();
+
+    await vi.waitFor(() =>
+      expect(controller.state.model?.assets['editor-image-0001']).toBeDefined(),
+    );
+    expect(controller.state.model?.blocks.at(-1)).toMatchObject({
+      type: 'imageBlock',
+      assetId: 'editor-image-0001',
+      alt: 'A source illustration',
+      alignment: 'center',
+    });
+    expect(controller.state.epubEditorNotice).toContain(
+      'Inserted image from PDF page 2',
+    );
+  });
+
+  it('does not insert a PDF image after the selection is cancelled', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([new Uint8Array([1])], 'illustrated.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.epubParts = createContentPartState(document);
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.stage = 2;
+    controller.openPdfImageSelection?.();
+
+    controller.insertPdfImageSelection?.();
+    controller.cancelPdfImageSelection?.();
+
+    await vi.waitFor(() =>
+      expect(controller.state.pdfImageInsertionLoading).toBeFalsy(),
+    );
+    expect(controller.state.model?.assets).toEqual({});
+    expect(controller.state.epubEditorNotice).toBeUndefined();
+  });
+
+  it('does not insert a stale PDF image after navigating to another page', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([new Uint8Array([1])], 'illustrated.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    const document = model();
+    document.blocks = markdownToBlocks('# One\n\nOriginal.', document);
+    controller.state.model = document;
+    controller.state.epubParts = createContentPartState(document);
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.stage = 2;
+    controller.state.pdfAnalysis = {
+      pageCount: 3,
+      analysedPages: [1, 2, 3],
+      crop: { top: 0, bottom: 0 },
+      scannedPages: [],
+      candidates: [],
+    };
+    controller.state.pdfPreviewPage = 2;
+    controller.openPdfImageSelection?.();
+
+    controller.insertPdfImageSelection?.();
+    controller.setPdfPreviewPage?.(3);
+
+    await vi.waitFor(() =>
+      expect(controller.state.pdfImageInsertionLoading).toBeFalsy(),
+    );
+    expect(controller.state.model?.assets).toEqual({});
+    expect(controller.state.pdfImageSelectionAlt).toBe('Image from PDF page 3');
   });
 
   it('keeps a detected image or promotes it to TexTeller recognition', async () => {

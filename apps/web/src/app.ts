@@ -13,11 +13,15 @@ import {
   InputCheckbox,
   LinearProgress,
   NumberInput,
+  PaginationControls,
   RadioButtons,
   Select,
   TextInput,
 } from 'mithril-materialized';
-import { MarkdownEditor } from 'mithril-markdown-wysiwyg';
+import {
+  builtinHtmlToMarkdown as editorHtmlToMarkdown,
+  MarkdownEditor,
+} from 'mithril-markdown-wysiwyg';
 import DOMPurify from 'dompurify';
 import { strFromU8, unzipSync } from 'fflate';
 import 'katex/dist/katex.min.css';
@@ -28,6 +32,7 @@ import {
   WORKFLOW_STAGES,
   type AppState,
   type DownloadOutput,
+  type EpubPreviewScope,
   type FormulaReviewFilter,
   type PreviewMode,
   type ThemePreference,
@@ -40,7 +45,6 @@ import {
 } from './cover.ts';
 import { createCoverSvg } from '@wordconvert/cover-generator';
 import type { MathOutputMode } from '@wordconvert/math-converter';
-import { writeMarkdown } from '@wordconvert/markdown-writer';
 import {
   SOURCE_HTML_EQUATION_LAYOUT_STYLES,
   SOURCE_HTML_PARAGRAPH_TITLE_STYLES,
@@ -51,11 +55,20 @@ import { previewSanitizeConfig, warningDestination } from './preview/index.ts';
 import type { HtmlOutputMode, MarkdownOutputMode } from './output.ts';
 import type { PdfFormulaDecision } from '@wordconvert/pdf-reader';
 import type { PdfBounds } from '@wordconvert/pdf-reader';
-import type { FormulaSelectionPoint } from './formula-selection.ts';
+import {
+  pointInPreview,
+  type FormulaSelectionPoint,
+} from './formula-selection.ts';
 import { formulaReviewEditor } from './formula-review.ts';
 import { renderMarkdownPreview as renderMarkdown } from './markdown-preview.ts';
 import { HtmlSourceEditor } from './html-source-editor.ts';
 import { sanitizeEditedSourceHtml } from './text-document-import.ts';
+import {
+  contentEditorSource,
+  contentPartModel,
+  contentPartSummaries,
+  createPracticalContentPartState,
+} from './content-editor.ts';
 
 const styleMappingOptions = STYLE_MAPPINGS.map((mapping) => ({
   id: mapping,
@@ -70,9 +83,21 @@ const previewModeOptionsWithEdit = [
   { id: 'edit' as const, label: 'Edit' },
 ];
 const epubPreviewModeOptions = [
-  ...previewModeOptionsWithEdit,
+  { id: 'cover' as const, label: 'Front cover' },
+  { id: 'rendered' as const, label: 'Rendered' },
+  { id: 'edit' as const, label: 'Edit' },
+  { id: 'source' as const, label: 'Markdown' },
   { id: 'package' as const, label: 'EPUB files' },
 ];
+
+export function editorTheme(
+  theme: ThemePreference,
+  prefersDark = (): boolean =>
+    typeof matchMedia !== 'undefined' &&
+    matchMedia('(prefers-color-scheme: dark)').matches,
+): 'light' | 'dark' {
+  return theme === 'system' ? (prefersDark() ? 'dark' : 'light') : theme;
+}
 
 export interface AppController {
   state: AppState;
@@ -100,6 +125,15 @@ export interface AppController {
   setMarkdownIncludeInternalLinks?(include: boolean): void;
   setEpubIncludeCover?(include: boolean): void;
   setEpubContent?(content: string): void;
+  setEpubFullContent?(content: string): void;
+  setEpubPreviewMode?(mode: PreviewMode): void;
+  navigateEpubPart?(direction: 'previous' | 'next'): void;
+  setEpubPart?(partIndex: number): void;
+  previewEpubContent?(scope: EpubPreviewScope): void;
+  mergeEpubPart?(direction: 'previous' | 'next'): void;
+  deleteEpubPart?(): void;
+  setEpubSplitHeading?(blockOffset: number | undefined): void;
+  splitEpubPart?(): void;
   setEpubSourceContent?(content: string): void;
   setStyleMapping(styleId: string, mapping: StyleMapping): void;
   acceptHighConfidence(): void;
@@ -109,7 +143,16 @@ export interface AppController {
   retryPdfPreview?(): void;
   setPdfPreviewScale?(scale: number): void;
   setPdfOriginalVisible?(visible: boolean): void;
+  openPdfImageSelection?(): void;
+  cancelPdfImageSelection?(): void;
+  beginPdfImageSelection?(point: FormulaSelectionPoint): void;
+  updatePdfImageSelection?(point: FormulaSelectionPoint): void;
+  endPdfImageSelection?(point: FormulaSelectionPoint): void;
+  setPdfImageSelectionBounds?(bounds: PdfBounds): void;
+  setPdfImageSelectionAlt?(alt: string): void;
+  insertPdfImageSelection?(): void;
   setPdfSamplePageCount?(pageCount: number): void;
+  setPdfEnhancedFigureDetection?(enabled: boolean): void;
   rescanPdfSample?(): void;
   setPdfCandidateRemoval?(candidateId: string, remove: boolean): void;
   setFormulaDecision?(decision: PdfFormulaDecision): void;
@@ -155,6 +198,55 @@ export interface AppController {
   updateCover(patch: Partial<CoverSettings>): void;
   selectCoverFile(file: File): void;
   selectExtractedCover(assetId: string): void;
+}
+
+interface DocumentFileHandle {
+  getFile(): Promise<File>;
+}
+
+interface DocumentPickerOptions {
+  multiple: boolean;
+  types: {
+    description: string;
+    accept: Record<string, string[]>;
+  }[];
+}
+
+type ShowDocumentPicker = (
+  options: DocumentPickerOptions,
+) => Promise<readonly DocumentFileHandle[]>;
+
+export async function selectDocumentWithPicker(
+  controller: AppController,
+  showPicker: ShowDocumentPicker,
+): Promise<void> {
+  try {
+    const handles = await showPicker({
+      multiple: false,
+      types: [
+        {
+          description: 'Word and PDF documents',
+          accept: {
+            [DOCX_MEDIA_TYPE]: ['.docx'],
+            [PDF_MEDIA_TYPE]: ['.pdf'],
+          },
+        },
+      ],
+    });
+    controller.selectFiles(
+      await Promise.all(handles.map((handle) => handle.getFile())),
+    );
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === 'AbortError') return;
+    controller.state.error = {
+      code: 'invalid-input',
+      message:
+        'The document picker could not be opened. Reload the page and try again.',
+      recoverable: true,
+    };
+    controller.state.status = 'error';
+    m.redraw();
+  }
 }
 
 export function App(controller: AppController): Component {
@@ -294,15 +386,35 @@ function filePicker(
       },
       [
         m(
-          'label.file-label[for="document-input"]',
+          'button.document-file-picker',
+          {
+            type: 'button',
+            onclick: () => {
+              const showPicker = (
+                window as typeof window & {
+                  showOpenFilePicker?: ShowDocumentPicker;
+                }
+              ).showOpenFilePicker;
+              if (showPicker) {
+                void selectDocumentWithPicker(controller, (options) =>
+                  showPicker.call(window, options),
+                );
+                return;
+              }
+              document
+                .querySelector<HTMLInputElement>('#document-input')
+                ?.click();
+            },
+          },
           'Choose a DOCX or PDF document',
         ),
-        m('input#document-input', {
+        m('input#document-input.document-file-input', {
           type: 'file',
+          hidden: true,
+          'aria-label': 'Choose a DOCX or PDF document',
           accept: `${DOCX_MEDIA_TYPE},${PDF_MEDIA_TYPE},.docx,.pdf`,
           onchange,
         }),
-        m('p', 'or drag and drop a .docx or .pdf file here'),
       ],
     ),
     m(
@@ -510,6 +622,18 @@ function pdfImportEditor(controller: AppController): m.Vnode {
       }),
       m('small', `Currently scanned: ${analysedPages.join(', ') || 'none'}`),
     ]),
+    m(InputCheckbox, {
+      checked: state.pdfImport.enhancedFigureDetection,
+      onchange: (enabled) =>
+        controller.setPdfEnhancedFigureDetection?.(enabled),
+      label: 'Use enhanced figure and table detection (slower)',
+    }),
+    m(
+      'small.pdf-import-option-help',
+      state.pdfImport.enhancedFigureDetection
+        ? 'The local layout model will classify every page during full processing.'
+        : 'Embedded images and deterministic PDF graphics are still preserved.',
+    ),
     state.pdfPreviewRequested
       ? m('.pdf-crop-layout', [
           m('.pdf-preview-slot', [
@@ -728,32 +852,33 @@ function pdfPaginationControls(
   pageCount: number,
 ): m.Vnode {
   const page = controller.state.pdfPreviewPage;
-  const button = (
-    label: string,
-    symbol: string,
-    target: number,
-    disabled: boolean,
-  ) =>
-    m(
-      'button.btn-flat',
-      {
-        type: 'button',
-        disabled,
-        title: label,
-        'aria-label': label,
-        onclick: () => controller.setPdfPreviewPage?.(target),
+  return paginationControls('page', page, pageCount, (target) =>
+    controller.setPdfPreviewPage?.(target),
+  );
+}
+
+function paginationControls(
+  item: 'page' | 'part',
+  current: number,
+  total: number,
+  select: (target: number) => void,
+): m.Vnode {
+  const name = `${item[0]?.toUpperCase()}${item.slice(1)}`;
+  return m(
+    '.pdf-pagination',
+    m(PaginationControls, {
+      pagination: { page: current - 1, pageSize: 1, total },
+      allowPageInput: true,
+      i18n: {
+        page: name,
+        showing: '',
+        to: '',
+        of: 'of',
+        entries: item === 'page' ? 'pages' : 'parts',
       },
-      symbol,
-    );
-  return m('.datatable-pagination.pdf-pagination', [
-    m('.pagination-controls', [
-      button('First page', '⏮', 1, page <= 1),
-      button('Previous page', '◀', page - 1, page <= 1),
-      m('span.page-info', `Page ${page} of ${pageCount}`),
-      button('Next page', '▶', page + 1, page >= pageCount),
-      button('Last page', '⏭', pageCount, page >= pageCount),
-    ]),
-  ]);
+      onPaginationChange: ({ page }) => select(page + 1),
+    }),
+  );
 }
 
 function cropControl(
@@ -822,27 +947,14 @@ function epubPackaging(): m.Vnode {
   ]);
 }
 
-function epubConfiguration(controller: AppController): m.Vnode {
+function epubGuidance(controller: AppController): m.Vnode {
   const metadata = controller.state.model?.metadata;
   const issues = epubMetadataIssues(metadata);
-  return m('section.epub-config', [
-    m('h3', 'EPUB configuration'),
+  return m('footer.epub-guidance', [
     m(
       'p',
       'The title, language, identifier, and authors come from the analysed document metadata.',
     ),
-    m('.row.epub-config-grid', [coverEditor(controller)]),
-    m('label', [
-      m('input', {
-        type: 'checkbox',
-        checked: controller.state.preferences.epubIncludeCover,
-        onchange: (event: Event) =>
-          controller.setEpubIncludeCover?.(
-            (event.currentTarget as HTMLInputElement).checked,
-          ),
-      }),
-      'Include the configured EPUB cover',
-    ]),
     issues.length
       ? m('p.error[role="alert"]', [
           `Update required EPUB metadata: ${issues.join('; ')}. `,
@@ -861,6 +973,74 @@ function epubConfiguration(controller: AppController): m.Vnode {
             ? 'Refreshing EPUB preview…'
             : 'EPUB preview updates automatically when metadata changes.',
         ),
+  ]);
+}
+
+function epubPreviewOptions(
+  state: AppState,
+): readonly { id: PreviewMode; label: string }[] {
+  return state.sourceHtml
+    ? epubPreviewModeOptions.map((option) =>
+        option.id === 'source' ? { ...option, label: 'HTML' } : option,
+      )
+    : epubPreviewModeOptions;
+}
+
+function epubPreviewTabs(controller: AppController): m.Vnode {
+  const { state } = controller;
+  const options = epubPreviewOptions(state);
+  const select = (mode: PreviewMode): void => {
+    controller.setEpubPreviewMode?.(mode);
+  };
+  const onkeydown = (event: KeyboardEvent, index: number): void => {
+    let nextIndex: number | undefined;
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % options.length;
+    else if (event.key === 'ArrowLeft')
+      nextIndex = (index - 1 + options.length) % options.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = options.length - 1;
+    if (nextIndex === undefined) return;
+    event.preventDefault();
+    const option = options[nextIndex];
+    if (!option) return;
+    select(option.id);
+    document.getElementById(`epub-preview-mode-${option.id}`)?.focus();
+  };
+  return m(
+    '.epub-preview-tabs[role="tablist"][aria-label="EPUB preview views"]',
+    options.map((option, index) =>
+      m(
+        'button.epub-preview-tab',
+        {
+          id: `epub-preview-mode-${option.id}`,
+          type: 'button',
+          role: 'tab',
+          'aria-controls': 'epub-preview-content',
+          'aria-selected': state.previewMode === option.id ? 'true' : 'false',
+          tabindex: state.previewMode === option.id ? 0 : -1,
+          onclick: () => select(option.id),
+          onkeydown: (event: KeyboardEvent) => onkeydown(event, index),
+        },
+        option.label,
+      ),
+    ),
+  );
+}
+
+function epubCoverPanel(controller: AppController): m.Vnode {
+  return m('section.epub-cover-panel', [
+    coverEditor(controller),
+    m('label', [
+      m('input', {
+        type: 'checkbox',
+        checked: controller.state.preferences.epubIncludeCover,
+        onchange: (event: Event) =>
+          controller.setEpubIncludeCover?.(
+            (event.currentTarget as HTMLInputElement).checked,
+          ),
+      }),
+      'Include the configured EPUB cover',
+    ]),
   ]);
 }
 
@@ -896,6 +1076,9 @@ function coverEditor(controller: AppController): m.Vnode {
             label: 'Extracted document image',
             disabled: images.length <= 0,
           },
+          ...(controller.state.sourceFormat === 'pdf'
+            ? [{ id: 'pdf-page' as const, label: 'Original PDF first page' }]
+            : []),
           { id: 'generated', label: 'Generated typographic cover' },
         ],
         onchange: (checkedIds: CoverSource[]) => {
@@ -1145,89 +1328,66 @@ function preview(controller: AppController): m.Vnode {
   if (state.preferences.outputFormat === 'epub') {
     const source = epubContentSource(state);
     const converted =
-      state.previewMode === 'edit'
-        ? state.sourceHtml
-          ? m('.source-edit-comparison', [
-              m('section.preview-pane', [
-                m('h3', 'HTML'),
-                m(
-                  '.html-source-editor-pane',
-                  m(HtmlSourceEditor, {
-                    content: source,
-                    theme:
-                      state.preferences.theme === 'dark' ? 'dark' : 'light',
-                    onContentChange: (newContent: string) => {
-                      state.epubSourceEdit = newContent;
-                      controller.setEpubSourceContent?.(newContent);
-                      m.redraw();
-                    },
-                  }),
-                ),
-              ]),
-              m('section.preview-pane', [
-                m('h3', 'Rendered'),
-                sourceHtmlPreview(state, source),
-              ]),
-            ])
-          : m(MarkdownEditor, {
-              content: source,
-              mode: 'wysiwyg',
-              onContentChange: (newContent: string) => {
-                state.epubContentEdit = newContent;
-                controller.setEpubContent?.(newContent);
-              },
-              markdownToHtml: renderMarkdown,
-              placeholder: 'Edit document content…',
-              theme: state.preferences.theme === 'dark' ? 'dark' : 'light',
-              toolbar: true,
-              showTabs: true,
-            })
-        : state.previewMode === 'source'
-          ? m(
-              'pre.markdown-source',
-              state.sourceHtml ? source : markdownSourcePreview(source),
-            )
-          : state.previewMode === 'package'
-            ? epubLayoutPreview(controller)
-            : state.sourceHtml
-              ? sourceHtmlPreview(state, source)
-              : m(
-                  'article.document-preview',
-                  m.trust(
-                    DOMPurify.sanitize(
-                      epubRenderedPreview(state, source),
-                      previewSanitizeConfig(),
-                    ),
+      state.previewMode === 'cover'
+        ? epubCoverPanel(controller)
+        : state.previewMode === 'edit'
+          ? state.sourceHtml
+            ? m('.source-edit-comparison', [
+                m('section.preview-pane', [
+                  m('h3', 'HTML'),
+                  m(
+                    '.html-source-editor-pane',
+                    m(HtmlSourceEditor, {
+                      content: source,
+                      theme:
+                        state.preferences.theme === 'dark' ? 'dark' : 'light',
+                      onContentChange: (newContent: string) => {
+                        state.epubSourceEdit = newContent;
+                        controller.setEpubSourceContent?.(newContent);
+                        m.redraw();
+                      },
+                    }),
                   ),
-                );
+                ]),
+                m('section.preview-pane', [
+                  m('h3', 'Rendered'),
+                  sourceHtmlPreview(state, source),
+                ]),
+              ])
+            : epubPartEditor(controller, source)
+          : state.previewMode === 'source'
+            ? state.sourceHtml
+              ? m('pre.markdown-source', source)
+              : epubMarkdownEditor(controller, source)
+            : state.previewMode === 'package'
+              ? epubLayoutPreview(controller)
+              : state.sourceHtml
+                ? sourceHtmlPreview(state, source)
+                : m(
+                    'article.document-preview',
+                    m.trust(
+                      DOMPurify.sanitize(
+                        epubRenderedPreview(state, source),
+                        previewSanitizeConfig(),
+                      ),
+                    ),
+                  );
     return m('.preview-panel', [
       previewActions(controller),
-      epubConfiguration(controller),
-      m('.preview-display-controls', [
-        m(
-          '.preview-mode',
-          m(RadioButtons<PreviewMode>, {
-            id: 'epub-preview-mode',
-            options: state.sourceHtml
-              ? epubPreviewModeOptions.map((option) =>
-                  option.id === 'source'
-                    ? { ...option, label: 'HTML' }
-                    : option,
-                )
-              : epubPreviewModeOptions,
-            checkedId: state.previewMode,
-            className: 'row',
-            checkboxClass: 'col s3',
-            onchange: (mode) => {
-              state.previewMode = mode;
-            },
-          }),
-        ),
+      m('.epub-preview-navigation', [
+        epubPreviewTabs(controller),
         state.sourceFormat === 'pdf' ? originalPreviewToggle(controller) : null,
       ]),
-      outputPreviewWorkspace(controller, converted),
+      m(
+        '#epub-preview-content[role="tabpanel"]',
+        {
+          'aria-labelledby': `epub-preview-mode-${state.previewMode}`,
+        },
+        outputPreviewWorkspace(controller, converted),
+      ),
       warningPanel(controller),
       previewActions(controller),
+      epubGuidance(controller),
     ]);
   }
 
@@ -1290,6 +1450,7 @@ function preview(controller: AppController): m.Vnode {
         ? (() => {
             if (state.markdownEdit === undefined) state.markdownEdit = source;
             return m(MarkdownEditor, {
+              key: `markdown-editor-${editorTheme(state.preferences.theme)}`,
               content: state.markdownEdit,
               mode: 'wysiwyg',
               onContentChange: (newContent: string) => {
@@ -1297,7 +1458,7 @@ function preview(controller: AppController): m.Vnode {
               },
               markdownToHtml: renderMarkdown,
               placeholder: 'Edit markdown…',
-              theme: state.preferences.theme === 'dark' ? 'dark' : 'light',
+              theme: editorTheme(state.preferences.theme),
               toolbar: true,
               showTabs: true,
             });
@@ -1327,10 +1488,14 @@ export function epubRenderedPreview(state: AppState, source: string): string {
         )?.html ?? '');
   if (state.epubContentEdit !== undefined || !state.model)
     return renderMarkdown(source);
-  const metadata = { ...state.model.metadata };
+  const previewModel =
+    state.epubPreviewScope === 'part' && state.epubParts
+      ? contentPartModel(state.model, state.epubParts)
+      : state.model;
+  const metadata = { ...previewModel.metadata };
   delete metadata.title;
   return writeHtml(
-    { ...state.model, metadata },
+    { ...previewModel, metadata },
     {
       conversionDate: state.conversionDate,
       mode: 'fragment',
@@ -1362,17 +1527,189 @@ function sourcePreviewThemeCss(theme: ThemePreference): string {
 
 function epubContentSource(state: AppState): string {
   if (state.sourceHtml) return state.epubSourceEdit ?? state.sourceHtml.xhtml;
-  if (state.epubContentEdit !== undefined) return state.epubContentEdit;
+  if (state.previewMode === 'edit' && state.epubContentEdit !== undefined)
+    return state.epubContentEdit;
+  if (state.previewMode === 'source' && state.epubFullContentEdit !== undefined)
+    return state.epubFullContentEdit;
   if (!state.model) return '';
-  const metadata = { ...state.model.metadata };
-  delete metadata.title;
-  return writeMarkdown(
-    { ...state.model, metadata },
-    {
-      conversionDate: state.conversionDate,
-      formulaMode: 'source',
-    },
-  );
+  const partState =
+    state.epubParts ?? createPracticalContentPartState(state.model);
+  const contentModel =
+    state.previewMode === 'edit' ||
+    (state.previewMode === 'rendered' && state.epubPreviewScope === 'part')
+      ? contentPartModel(state.model, partState)
+      : state.model;
+  return contentEditorSource(contentModel);
+}
+
+function epubMarkdownEditor(
+  controller: AppController,
+  source: string,
+): m.Vnode {
+  const theme = editorTheme(controller.state.preferences.theme);
+  return m('section.book-full-editor[aria-label="Full book Markdown editor"]', [
+    ...(controller.state.epubEditorNotice
+      ? [
+          m(
+            'p[role="status"]',
+            { key: 'editor-notice' },
+            controller.state.epubEditorNotice,
+          ),
+        ]
+      : []),
+    m(MarkdownEditor, {
+      key: `epub-full-markdown-${controller.state.epubEditorRevision}-${theme}`,
+      content: source,
+      mode: 'markdown',
+      onContentChange: (newContent: string) =>
+        controller.setEpubFullContent?.(newContent),
+      htmlToMarkdown: epubEditorHtmlToMarkdown,
+      markdownToHtml: renderMarkdown,
+      hideBase64Images: true,
+      placeholder: 'Edit the full book…',
+      theme,
+      toolbar: true,
+      showTabs: true,
+    }),
+  ]);
+}
+
+export function epubEditorHtmlToMarkdown(html: string): string {
+  const container = document.createElement('div');
+  container.innerHTML = html;
+  const replacements: { token: string; markdown: string }[] = [];
+  const preserve = (element: Element, markdown: string): void => {
+    const token = `WORDCONVERTSEMANTIC${replacements.length}TOKEN`;
+    replacements.push({ token, markdown });
+    element.replaceWith(document.createTextNode(token));
+  };
+
+  for (const element of container.querySelectorAll<HTMLElement>(
+    '[data-wordconvert-equation-id]',
+  )) {
+    const id = element.dataset.wordconvertEquationId;
+    if (!id) continue;
+    const display = element.dataset.wordconvertDisplay === 'block';
+    preserve(
+      element,
+      display
+        ? `[wordconvert-equation-block:${encodeURIComponent(id)}]`
+        : `[wordconvert-equation:${encodeURIComponent(id)}]`,
+    );
+  }
+  for (const element of container.querySelectorAll('.katex')) {
+    const annotation = element.querySelector(
+      'annotation[encoding="application/x-tex"]',
+    )?.textContent;
+    if (annotation === undefined || annotation === null) continue;
+    const display = element.querySelector('math[display="block"]');
+    preserve(element, display ? `$$\n${annotation}\n$$` : `$${annotation}$`);
+  }
+  for (const element of container.querySelectorAll('sup[id^="fnref:"]')) {
+    const id = element.id.slice('fnref:'.length);
+    if (id) preserve(element, `[^${id}]`);
+  }
+  for (const element of container.querySelectorAll('.footnotes'))
+    element.remove();
+  for (const element of container.querySelectorAll(
+    '[data-markdown-page-break="true"], .md-page-break',
+  ))
+    preserve(element, '\n\n<!-- markdown:page-break -->\n\n');
+  for (const element of container.querySelectorAll('a[id]')) {
+    if (!element.textContent?.trim())
+      preserve(element, `<a id="${escapeHtmlAttribute(element.id)}"></a>`);
+  }
+  for (const element of container.querySelectorAll('pre')) {
+    const code = element.querySelector(':scope > code');
+    const language =
+      Array.from(code?.classList ?? [])
+        .find((value) => value.startsWith('language-'))
+        ?.slice('language-'.length) ?? '';
+    const value = code?.textContent ?? element.textContent ?? '';
+    const fence = value.includes('```') ? '````' : '```';
+    preserve(element, `${fence}${language}\n${value}\n${fence}`);
+  }
+  for (const element of container.querySelectorAll('br'))
+    preserve(element, '  \n');
+  for (const element of Array.from(
+    container.querySelectorAll('u, sub, sup'),
+  ).reverse()) {
+    const tag = element.tagName.toLowerCase();
+    preserve(
+      element,
+      `<${tag}>${editorHtmlToMarkdown(element.innerHTML)}</${tag}>`,
+    );
+  }
+
+  let markdown = editorHtmlToMarkdown(container.innerHTML);
+  for (const replacement of replacements.reverse())
+    markdown = markdown.replaceAll(replacement.token, replacement.markdown);
+  return markdown;
+}
+
+function escapeHtmlText(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return escapeHtmlText(value).replaceAll('"', '&quot;');
+}
+
+function epubPartEditor(controller: AppController, source: string): m.Vnode {
+  const { state } = controller;
+  if (!state.model)
+    return m('p[role="status"]', 'No document content is available.');
+  const partState =
+    state.epubParts ?? createPracticalContentPartState(state.model);
+  const parts = contentPartSummaries(state.model, partState);
+  const activePart = parts[partState.activeIndex];
+  const theme = editorTheme(state.preferences.theme);
+  return m('section.book-part-editor[aria-label="Book part editor"]', [
+    m('.book-part-heading', [
+      m('h3', activePart?.title ?? `Part ${partState.activeIndex + 1}`),
+      m(FlatButton, {
+        label: 'Delete part',
+        disabled: parts.length <= 1,
+        onclick: () => controller.deleteEpubPart?.(),
+      }),
+    ]),
+    state.epubEditorNotice
+      ? m('p[role="status"]', state.epubEditorNotice)
+      : null,
+    m('.book-part-editor-content', [
+      m(MarkdownEditor, {
+        key: `epub-part-${partState.activeIndex}-${state.epubEditorRevision}-${theme}`,
+        content: renderMarkdown(source),
+        mode: 'wysiwyg',
+        onContentChange: (newContent: string) => {
+          state.epubContentEdit = newContent;
+          controller.setEpubContent?.(newContent);
+        },
+        htmlToMarkdown: epubEditorHtmlToMarkdown,
+        markdownToHtml: renderMarkdown,
+        placeholder: 'Edit document content…',
+        theme,
+        toolbar: true,
+        showTabs: true,
+        hideBase64Images: true,
+      }),
+    ]),
+    paginationControls(
+      'part',
+      partState.activeIndex + 1,
+      parts.length,
+      (target) => {
+        if (target === partState.activeIndex)
+          controller.navigateEpubPart?.('previous');
+        else if (target === partState.activeIndex + 2)
+          controller.navigateEpubPart?.('next');
+        else controller.setEpubPart?.(target - 1);
+      },
+    ),
+  ]);
 }
 
 function outputPreviewWorkspace(
@@ -1383,23 +1720,146 @@ function outputPreviewWorkspace(
   if (state.sourceFormat !== 'pdf') return converted;
   const visible = state.pdfOriginalVisible === true;
   const pageCount = state.pdfAnalysis?.pageCount ?? 1;
+  return m('.preview-workspace-stack', [
+    m(
+      '.preview-comparison',
+      {
+        class: [
+          visible ? 'preview-comparison--visible' : '',
+          state.previewMode === 'edit' ? 'preview-comparison--edit' : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+      },
+      [
+        visible
+          ? m('section.preview-pane.preview-pane--original', [
+              m('h3', 'Original PDF'),
+              pdfSourcePreview(controller, 0, 0, pageCount, {
+                paginationPosition: 'after',
+                showCleanupNote: false,
+                showScaleControl: true,
+              }),
+            ])
+          : null,
+        m('section.preview-pane.preview-pane--converted', [
+          visible && state.previewMode !== 'edit'
+            ? m('h3', 'Converted document')
+            : null,
+          converted,
+        ]),
+      ],
+    ),
+    visible && state.previewMode === 'edit'
+      ? pdfImageInsertionControls(controller)
+      : null,
+  ]);
+}
+
+function pdfImageInsertionControls(controller: AppController): m.Vnode {
+  const { state } = controller;
+  if (!state.pdfImageSelectionOpen)
+    return m(
+      'section.pdf-image-insertion[aria-label="Insert image from original PDF"]',
+      m(FlatButton, {
+        label: 'Insert image from original page',
+        disabled: !state.pdfPreview,
+        onclick: () => controller.openPdfImageSelection?.(),
+      }),
+    );
+  const preview = state.pdfPreview;
+  const bounds = state.pdfImageSelectionBounds;
+  const pointer = (event: PointerEvent) =>
+    pointInPreview(
+      event.clientX,
+      event.clientY,
+      (event.currentTarget as HTMLElement).getBoundingClientRect(),
+    );
   return m(
-    '.preview-comparison',
-    { class: visible ? 'preview-comparison--visible' : '' },
+    'section.pdf-image-insertion.pdf-image-insertion--open[aria-label="Insert image from original PDF"]',
     [
-      visible
-        ? m('section.preview-pane.preview-pane--original', [
-            m('h3', 'Original PDF'),
-            pdfSourcePreview(controller, 0, 0, pageCount, {
-              paginationPosition: 'after',
-              showCleanupNote: false,
-              showScaleControl: true,
-            }),
-          ])
+      m('header', [
+        m('div', [
+          m('h3', `Insert image from PDF page ${state.pdfPreviewPage}`),
+          m(
+            'p.help',
+            'Drag over the source page to choose the image area. The selected PNG is added to the end of this part.',
+          ),
+        ]),
+        m(FlatButton, {
+          label: 'Cancel',
+          onclick: () => controller.cancelPdfImageSelection?.(),
+        }),
+      ]),
+      preview
+        ? m(
+            '.pdf-image-selection-surface',
+            m(
+              '.pdf-image-selection-page',
+              {
+                tabindex: 0,
+                role: 'group',
+                'aria-label': `Select an image region on PDF page ${preview.pageNumber}`,
+                onpointerdown: (event: PointerEvent) => {
+                  (event.currentTarget as HTMLElement).setPointerCapture(
+                    event.pointerId,
+                  );
+                  controller.beginPdfImageSelection?.(pointer(event));
+                },
+                onpointermove: (event: PointerEvent) => {
+                  if (event.buttons === 1)
+                    controller.updatePdfImageSelection?.(pointer(event));
+                },
+                onpointerup: (event: PointerEvent) =>
+                  controller.endPdfImageSelection?.(pointer(event)),
+              },
+              [
+                m('img', {
+                  src: preview.url,
+                  width: preview.width,
+                  height: preview.height,
+                  alt: `PDF page ${preview.pageNumber} for image selection`,
+                }),
+                bounds
+                  ? m('.pdf-image-selection-box', {
+                      style: {
+                        left: `${bounds.x * 100}%`,
+                        top: `${bounds.top * 100}%`,
+                        width: `${bounds.width * 100}%`,
+                        height: `${bounds.height * 100}%`,
+                      },
+                    })
+                  : null,
+              ],
+            ),
+          )
+        : m('p[role="status"]', 'Loading the current PDF page for selection.'),
+      m(TextInput, {
+        label: 'Image description',
+        value: state.pdfImageSelectionAlt ?? '',
+        oninput: (value) => controller.setPdfImageSelectionAlt?.(value),
+      }),
+      state.pdfImageInsertionError
+        ? m('p.error[role="alert"]', state.pdfImageInsertionError)
         : null,
-      m('section.preview-pane.preview-pane--converted', [
-        visible ? m('h3', 'Converted document') : null,
-        converted,
+      m('.pdf-image-insertion-actions', [
+        m(FlatButton, {
+          label: 'Use full page',
+          onclick: () =>
+            controller.setPdfImageSelectionBounds?.({
+              x: 0,
+              top: 0,
+              width: 1,
+              height: 1,
+            }),
+        }),
+        m(Button, {
+          label: state.pdfImageInsertionLoading
+            ? 'Inserting image…'
+            : 'Insert selected image',
+          disabled: !bounds || state.pdfImageInsertionLoading,
+          onclick: () => controller.insertPdfImageSelection?.(),
+        }),
       ]),
     ],
   );
@@ -1409,7 +1869,7 @@ function originalPreviewToggle(controller: AppController): m.Vnode {
   const visible = controller.state.pdfOriginalVisible === true;
   return m(
     '.original-preview-toggle',
-    m(Button, {
+    m(FlatButton, {
       label: visible ? 'Hide original' : 'Show original',
       onclick: () => controller.setPdfOriginalVisible?.(!visible),
     }),
@@ -1792,11 +2252,12 @@ function epubDeliveryButton(controller: AppController): m.Vnode | null {
 
 function outputFilenameField(controller: AppController): m.Vnode | null {
   const output = controller.state.output;
-  if (!output) return null;
+  const filename = controller.state.outputFilename ?? output?.filename;
+  if (!filename) return null;
   return m(TextInput, {
     className: 'output-filename',
     label: 'Output filename',
-    value: outputBasename(output.filename),
+    value: outputBasename(filename),
     autocomplete: 'off',
     oninput: (value) => controller.setOutputFilename(value),
   });

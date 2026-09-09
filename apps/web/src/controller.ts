@@ -41,7 +41,22 @@ import {
   saveDownload,
   shareEpub,
 } from './download/index.ts';
-import { withMarkdownContent } from './content-editor.ts';
+import {
+  contentPartModel,
+  contentPartSplitHeadings,
+  contentPartSummaries,
+  createPracticalContentPartState,
+  deleteContentPart,
+  importContentDataImages,
+  insertImageIntoContentPart,
+  mergeContentPart,
+  nextContentImageId,
+  normalizeContentPartState,
+  saveContentPart,
+  splitContentPart,
+  unsupportedContentImageSources,
+  withMarkdownContent,
+} from './content-editor.ts';
 import {
   fetchRemoteDocument,
   fetchRemoteHtmlImages,
@@ -82,6 +97,14 @@ export function createBrowserController(): AppController {
   );
   if (typeof document !== 'undefined')
     applyDocumentTheme(state.preferences.theme, document.documentElement);
+  const colorSchemeQuery =
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-color-scheme: dark)')
+      : undefined;
+  const handleColorSchemeChange = (): void => {
+    if (state.preferences.theme === 'system') m.redraw();
+  };
+  colorSchemeQuery?.addEventListener('change', handleColorSchemeChange);
   if (typeof caches === 'undefined') state.formulaCacheStatus = 'empty';
   else
     void hasCachedTexTellerAssets().then((cached) => {
@@ -95,12 +118,16 @@ export function createBrowserController(): AppController {
   let sourceFilename: string | undefined;
   let autoPreviewOperationId: string | undefined;
   let pdfLayoutOperationId: string | undefined;
+  let pdfCoverOperationId: string | undefined;
+  let pdfCoverInitialized = false;
   let epubRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let remoteDocumentAbort: AbortController | undefined;
   let previewRenderer:
     import('./pdf-preview.ts').PdfPagePreviewRenderer | undefined;
   let pendingPdfPreviewPage: number | undefined;
   let pdfPreviewRendering = false;
+  let pdfImageSelectionAnchor: FormulaSelectionPoint | undefined;
+  let pdfImageInsertionOperation = 0;
   let formulaSelectionAdjustment:
     | {
         bounds: import('@wordconvert/pdf-reader').PdfBounds;
@@ -110,6 +137,117 @@ export function createBrowserController(): AppController {
     | undefined;
   let formulaSelectionSourceImageId: string | undefined;
   let disposed = false;
+  const resetEpubPartState = (): void => {
+    delete state.epubContentEdit;
+    delete state.epubFullContentEdit;
+    delete state.epubEditorNotice;
+    delete state.epubParts;
+    delete state.epubSplitBlockOffset;
+    delete state.epubSplitHeadingIdentity;
+    state.epubEditorRevision += 1;
+    state.epubPreviewScope = 'book';
+  };
+  const ensureEpubParts = (): void => {
+    if (!state.model) return;
+    state.epubParts ??= createPracticalContentPartState(state.model);
+    state.epubParts.activeIndex = Math.min(
+      state.epubParts.starts.length - 1,
+      Math.max(0, state.epubParts.activeIndex),
+    );
+  };
+  const saveActiveEpubPart = (
+    clearDraft = true,
+    normalizeParts = clearDraft,
+  ): boolean => {
+    if (!state.model || state.epubContentEdit === undefined) return true;
+    ensureEpubParts();
+    if (!state.epubParts) return true;
+    const importedImages = importContentDataImages(
+      state.epubContentEdit,
+      state.model,
+    );
+    if (!importedImages.ok) {
+      state.epubEditorNotice = importedImages.message;
+      state.status = 'ready';
+      delete state.operationId;
+      return false;
+    }
+    const unsupportedImages = unsupportedContentImageSources(
+      importedImages.markdown,
+      importedImages.model,
+    );
+    if (unsupportedImages.length > 0) {
+      state.epubEditorNotice =
+        'This part contains an image that is not stored in the book. Remove it before leaving the editor.';
+      state.status = 'ready';
+      delete state.operationId;
+      return false;
+    }
+    const saved = saveContentPart(
+      importedImages.model,
+      state.epubParts,
+      importedImages.markdown,
+    );
+    state.model = saved.model;
+    state.epubParts = normalizeParts
+      ? normalizeContentPartState(saved.model, saved.state)
+      : saved.state;
+    if (clearDraft) {
+      delete state.epubContentEdit;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
+    }
+    state.outputSaved = false;
+    return true;
+  };
+  const saveFullEpubContent = (clearDraft = true): boolean => {
+    if (!state.model || state.epubFullContentEdit === undefined) return true;
+    const importedImages = importContentDataImages(
+      state.epubFullContentEdit,
+      state.model,
+    );
+    if (!importedImages.ok) {
+      state.epubEditorNotice = importedImages.message;
+      state.status = 'ready';
+      delete state.operationId;
+      return false;
+    }
+    const unsupportedImages = unsupportedContentImageSources(
+      importedImages.markdown,
+      importedImages.model,
+    );
+    if (unsupportedImages.length > 0) {
+      state.epubEditorNotice =
+        'The book contains an image that is not stored locally. Remove it before leaving the editor.';
+      state.status = 'ready';
+      delete state.operationId;
+      return false;
+    }
+    state.model = withMarkdownContent(
+      importedImages.model,
+      importedImages.markdown,
+    );
+    state.epubParts = createPracticalContentPartState(state.model);
+    if (clearDraft) {
+      state.epubEditorRevision += 1;
+      delete state.epubFullContentEdit;
+    }
+    state.outputSaved = false;
+    return true;
+  };
+  const saveEpubDraftForMode = (
+    mode = state.previewMode,
+    clearDraft = true,
+  ): boolean =>
+    mode === 'edit'
+      ? saveActiveEpubPart(clearDraft)
+      : mode === 'source'
+        ? saveFullEpubContent(clearDraft)
+        : true;
+  const savePendingEpubDraft = (clearDraft = true): boolean =>
+    state.epubFullContentEdit !== undefined
+      ? saveFullEpubContent(clearDraft)
+      : saveActiveEpubPart(clearDraft);
   const releasePdfPreview = (): void => {
     if (state.pdfPreview) URL.revokeObjectURL(state.pdfPreview.url);
     delete state.pdfPreview;
@@ -174,6 +312,14 @@ export function createBrowserController(): AppController {
       Math.max(1, Math.round(requestedPage)),
     );
     state.pdfPreviewPage = pageNumber;
+    if (state.pdfImageSelectionOpen) {
+      pdfImageInsertionOperation += 1;
+      delete state.pdfImageInsertionLoading;
+      state.pdfImageSelectionBounds = { x: 0, top: 0, width: 1, height: 1 };
+      state.pdfImageSelectionAlt = `Image from PDF page ${pageNumber}`;
+      delete state.pdfImageInsertionError;
+      pdfImageSelectionAnchor = undefined;
+    }
     state.pdfPreviewRequested = true;
     state.pdfOriginalVisible = true;
     state.pdfPreviewLoading = true;
@@ -182,11 +328,82 @@ export function createBrowserController(): AppController {
     pendingPdfPreviewPage = pageNumber;
     void renderPendingPdfPage();
   };
+  const requestPdfFrontCover = (): void => {
+    if (!sourceInput || state.sourceFormat !== 'pdf') {
+      state.cover = {
+        ...state.cover,
+        warning: 'The original PDF page is not available.',
+      };
+      return;
+    }
+    const coverOperationId = operationId('pdf-cover');
+    pdfCoverOperationId = coverOperationId;
+    const input = sourceInput.slice(0);
+    const loading: CoverSettings = {
+      ...state.cover,
+      source: 'pdf-page',
+      warning: 'Rendering the original first page…',
+    };
+    delete loading.image;
+    delete loading.imageName;
+    state.cover = loading;
+    void import('./pdf-preview.ts')
+      .then(async ({ createPdfPagePreviewRenderer }) => {
+        const renderer = createPdfPagePreviewRenderer();
+        try {
+          const preview = await renderer.render(input, 1);
+          const image = prepareCoverImage({
+            mediaType: 'image/png',
+            data: new Uint8Array(await preview.blob.arrayBuffer()),
+            width: preview.width,
+            height: preview.height,
+          });
+          if (
+            pdfCoverOperationId !== coverOperationId ||
+            state.cover.source !== 'pdf-page'
+          )
+            return;
+          const next: CoverSettings = {
+            ...state.cover,
+            source: 'pdf-page',
+            image,
+            imageName: 'Original PDF page 1',
+          };
+          delete next.warning;
+          state.cover = next;
+          state.outputSaved = false;
+          refreshEpubPreview();
+          m.redraw();
+        } finally {
+          await renderer.dispose();
+        }
+      })
+      .catch((cause: unknown) => {
+        if (
+          pdfCoverOperationId !== coverOperationId ||
+          state.cover.source !== 'pdf-page'
+        )
+          return;
+        state.cover = {
+          ...state.cover,
+          warning:
+            cause instanceof Error
+              ? cause.message
+              : 'The original PDF first page could not be rendered.',
+        };
+        m.redraw();
+      });
+  };
   const requestConvert = (): void => {
     if (!state.model) return;
     if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
     epubRefreshTimer = undefined;
     delete state.markdownEdit;
+    if (
+      state.preferences.outputFormat === 'epub' &&
+      !savePendingEpubDraft(false)
+    )
+      return;
     state.outputSaved = false;
     state.status = 'converting';
     state.operationId = operationId('convert');
@@ -211,11 +428,7 @@ export function createBrowserController(): AppController {
     worker.postMessage({
       type: 'convert',
       operationId: state.operationId,
-      model:
-        state.preferences.outputFormat === 'epub' &&
-        state.epubContentEdit !== undefined
-          ? withMarkdownContent(state.model, state.epubContentEdit)
-          : state.model,
+      model: state.model,
       filename: conversionSourceFilename(state, sourceFilename),
       format: state.preferences.outputFormat,
       conversionDate: state.conversionDate,
@@ -261,6 +474,11 @@ export function createBrowserController(): AppController {
   };
 
   const applyRoute = (route: AppRoute, convert: boolean): void => {
+    if (
+      state.preferences.outputFormat === 'epub' &&
+      (route.page !== 'conversion' || route.format !== 'epub')
+    )
+      if (!savePendingEpubDraft()) return;
     delete state.review;
     if (route.page === 'document') {
       state.stage = 0;
@@ -283,6 +501,7 @@ export function createBrowserController(): AppController {
     state.stage = 2;
     if (formatChanged) {
       delete state.output;
+      delete state.outputFilename;
       delete state.selectedEpubFile;
     }
     if (
@@ -334,8 +553,18 @@ export function createBrowserController(): AppController {
     if (
       event.data.type === 'analysed' &&
       event.data.pdfAnalysis &&
+      state.sourceFormat === 'pdf' &&
+      !pdfCoverInitialized
+    ) {
+      pdfCoverInitialized = true;
+      requestPdfFrontCover();
+    }
+    if (
+      event.data.type === 'analysed' &&
+      event.data.pdfAnalysis &&
       event.data.pdfAnalysis.analysedPages.length <
         event.data.pdfAnalysis.pageCount &&
+      state.pdfImport.enhancedFigureDetection &&
       !pdfLayoutOperationId &&
       state.pdfLayoutStatus !== 'ready'
     ) {
@@ -391,12 +620,15 @@ export function createBrowserController(): AppController {
       remoteDocumentAbort = undefined;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
+      pdfCoverOperationId = undefined;
+      pdfCoverInitialized = false;
       disposePdfPreview();
       worker.terminate();
       if (typeof window !== 'undefined') {
         window.removeEventListener('beforeunload', disposePdfPreview);
         window.removeEventListener('popstate', handlePopState);
       }
+      colorSchemeQuery?.removeEventListener('change', handleColorSchemeChange);
     },
     reset() {
       if (
@@ -410,6 +642,8 @@ export function createBrowserController(): AppController {
       remoteDocumentAbort = undefined;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
+      pdfCoverOperationId = undefined;
+      pdfCoverInitialized = false;
       disposePdfPreview();
       replaceWorker();
       sourceInput = undefined;
@@ -428,6 +662,8 @@ export function createBrowserController(): AppController {
     selectFiles(files) {
       const file = files[0];
       if (!file) return;
+      pdfCoverOperationId = undefined;
+      pdfCoverInitialized = false;
       if (
         pdfLayoutOperationId ||
         state.status === 'analysing' ||
@@ -451,9 +687,17 @@ export function createBrowserController(): AppController {
       }
       delete state.error;
       delete state.output;
+      delete state.outputFilename;
+      delete state.pdfImageSelectionOpen;
+      delete state.pdfImageSelectionBounds;
+      delete state.pdfImageSelectionAlt;
+      delete state.pdfImageInsertionLoading;
+      delete state.pdfImageInsertionError;
+      pdfImageSelectionAnchor = undefined;
+      pdfImageInsertionOperation += 1;
       state.outputSaved = false;
       delete state.selectedEpubFile;
-      delete state.epubContentEdit;
+      resetEpubPartState();
       delete state.epubSourceEdit;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
@@ -474,6 +718,7 @@ export function createBrowserController(): AppController {
       delete state.formulaExtractionId;
       delete state.formulaExtractionMessage;
       delete state.pdfLayoutStatus;
+      state.pdfImport.enhancedFigureDetection = false;
       disposePdfPreview();
       state.pdfPreviewPage = 1;
       state.pdfPreviewScale = 1;
@@ -618,6 +863,7 @@ export function createBrowserController(): AppController {
             },
           );
           if (remoteDocumentAbort !== abort) return;
+          resetEpubPartState();
           state.model = imported.model;
           if (imported.sourceHtml) state.sourceHtml = imported.sourceHtml;
           else delete state.sourceHtml;
@@ -804,11 +1050,11 @@ export function createBrowserController(): AppController {
         });
     },
     setOutputFilename(filename) {
-      if (!state.output) return;
-      state.output = {
-        ...state.output,
-        filename: normalizeOutputFilename(filename, state.output.filename),
-      };
+      const currentFilename = state.outputFilename ?? state.output?.filename;
+      if (!currentFilename) return;
+      state.outputFilename = normalizeOutputFilename(filename, currentFilename);
+      if (state.output)
+        state.output = { ...state.output, filename: state.outputFilename };
       state.outputSaved = false;
     },
     setMarkdownContent(content) {
@@ -823,11 +1069,15 @@ export function createBrowserController(): AppController {
     setOutputFormat(format) {
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
+      if (state.preferences.outputFormat === 'epub' && !savePendingEpubDraft())
+        return;
       state.preferences.outputFormat = format;
       persistPreferences(localStorage, state.preferences);
       delete state.output;
+      delete state.outputFilename;
       delete state.selectedEpubFile;
       state.stage = 2;
+      if (format === 'epub') ensureEpubParts();
       updateBrowserRoute({ page: 'conversion', format });
       if (format !== 'epub' || !epubMetadataIssues(state)) requestConvert();
     },
@@ -879,6 +1129,10 @@ export function createBrowserController(): AppController {
     },
     setEpubContent(content) {
       state.epubContentEdit = content;
+      delete state.epubFullContentEdit;
+      delete state.epubEditorNotice;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
       state.outputSaved = false;
       if (state.preferences.outputFormat !== 'epub' || state.stage !== 2)
         return;
@@ -895,6 +1149,191 @@ export function createBrowserController(): AppController {
         epubRefreshTimer = undefined;
         refreshEpubPreview();
       }, 300);
+    },
+    setEpubFullContent(content) {
+      state.epubFullContentEdit = content;
+      delete state.epubContentEdit;
+      delete state.epubEditorNotice;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
+      state.outputSaved = false;
+      if (state.preferences.outputFormat !== 'epub' || state.stage !== 2)
+        return;
+      if (state.operationId && state.status === 'converting')
+        worker.postMessage({
+          type: 'cancel',
+          operationId: state.operationId,
+        } satisfies WorkerRequest);
+      state.operationId = operationId('epub-edit-pending');
+      state.status = 'converting';
+      delete state.output;
+      if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
+      epubRefreshTimer = setTimeout(() => {
+        epubRefreshTimer = undefined;
+        refreshEpubPreview();
+      }, 300);
+    },
+    setEpubPreviewMode(mode) {
+      if (!state.sourceHtml && !saveEpubDraftForMode()) return;
+      state.previewMode = mode;
+      if (mode !== 'edit') controller.cancelPdfImageSelection?.();
+      if (mode !== 'edit' && mode !== 'source') refreshEpubPreview();
+    },
+    navigateEpubPart(direction) {
+      if (!saveActiveEpubPart()) return;
+      ensureEpubParts();
+      if (!state.epubParts) return;
+      const offset = direction === 'previous' ? -1 : 1;
+      const activeIndex = state.epubParts.activeIndex + offset;
+      if (activeIndex < 0 || activeIndex >= state.epubParts.starts.length)
+        return;
+      state.epubParts = { ...state.epubParts, activeIndex };
+      state.previewMode = 'edit';
+      delete state.epubContentEdit;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
+      delete state.epubEditorNotice;
+    },
+    setEpubPart(partIndex) {
+      if (!saveActiveEpubPart()) return;
+      ensureEpubParts();
+      if (!state.epubParts || !Number.isInteger(partIndex)) return;
+      const activeIndex = Math.min(
+        Math.max(0, partIndex),
+        state.epubParts.starts.length - 1,
+      );
+      state.epubParts = { ...state.epubParts, activeIndex };
+      state.previewMode = 'edit';
+      delete state.epubContentEdit;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
+      delete state.epubEditorNotice;
+    },
+    previewEpubContent(scope) {
+      if (!saveActiveEpubPart()) return;
+      state.epubPreviewScope = scope;
+      state.previewMode = 'rendered';
+      refreshEpubPreview();
+    },
+    mergeEpubPart(direction) {
+      if (!saveActiveEpubPart(true, false)) return;
+      ensureEpubParts();
+      if (!state.model || !state.epubParts) return;
+      const merged = mergeContentPart(state.model, state.epubParts, direction);
+      if (!merged) {
+        state.epubEditorNotice = `There is no ${direction} part to merge.`;
+        return;
+      }
+      state.model = merged.model;
+      state.epubParts = merged.state;
+      state.epubEditorRevision += 1;
+      delete state.epubContentEdit;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
+      state.epubEditorNotice =
+        direction === 'previous'
+          ? 'Merged with the previous part.'
+          : 'Merged with the next part.';
+      state.outputSaved = false;
+      refreshEpubPreview();
+    },
+    deleteEpubPart() {
+      if (!saveActiveEpubPart(true, false)) return;
+      ensureEpubParts();
+      if (!state.model || !state.epubParts) return;
+      if (state.epubParts.starts.length <= 1) {
+        state.epubEditorNotice = 'The only remaining part cannot be deleted.';
+        return;
+      }
+      const parts = contentPartSummaries(state.model, state.epubParts);
+      const title =
+        parts[state.epubParts.activeIndex]?.title ??
+        `Part ${state.epubParts.activeIndex + 1}`;
+      if (!confirm(`Delete "${title}" and all of its content?`)) return;
+      const deleted = deleteContentPart(state.model, state.epubParts);
+      if (!deleted) return;
+      state.model = deleted.model;
+      state.epubParts = normalizeContentPartState(deleted.model, deleted.state);
+      state.epubEditorRevision += 1;
+      delete state.epubContentEdit;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
+      state.epubEditorNotice = `Deleted "${title}".`;
+      state.outputSaved = false;
+      refreshEpubPreview();
+    },
+    setEpubSplitHeading(blockOffset) {
+      if (blockOffset === undefined) {
+        delete state.epubSplitBlockOffset;
+        delete state.epubSplitHeadingIdentity;
+        return;
+      }
+      state.epubSplitBlockOffset = blockOffset;
+      ensureEpubParts();
+      if (!state.model || !state.epubParts) return;
+      const currentPart = contentPartModel(state.model, state.epubParts);
+      const draft =
+        state.epubContentEdit === undefined
+          ? currentPart
+          : withMarkdownContent(currentPart, state.epubContentEdit);
+      const headings = contentPartSplitHeadings(draft, {
+        starts: [0],
+        activeIndex: 0,
+      });
+      const selectedIndex = headings.findIndex(
+        (heading) => heading.blockOffset === blockOffset,
+      );
+      const selected = headings[selectedIndex];
+      if (!selected) {
+        delete state.epubSplitHeadingIdentity;
+        return;
+      }
+      state.epubSplitHeadingIdentity = {
+        title: selected.title,
+        occurrence: headings
+          .slice(0, selectedIndex)
+          .filter((heading) => heading.title === selected.title).length,
+      };
+    },
+    splitEpubPart() {
+      const blockOffset = state.epubSplitBlockOffset;
+      const headingIdentity = state.epubSplitHeadingIdentity;
+      if (!saveActiveEpubPart(true, false)) return;
+      ensureEpubParts();
+      if (!state.model || !state.epubParts || blockOffset === undefined) {
+        state.epubEditorNotice =
+          'Select a level-two heading to split this part.';
+        return;
+      }
+      const currentPart = contentPartModel(state.model, state.epubParts);
+      const matchingHeadings = headingIdentity
+        ? contentPartSplitHeadings(currentPart, {
+            starts: [0],
+            activeIndex: 0,
+          }).filter((heading) => heading.title === headingIdentity.title)
+        : [];
+      const resolvedBlockOffset =
+        matchingHeadings[headingIdentity?.occurrence ?? -1]?.blockOffset ??
+        blockOffset;
+      const split = splitContentPart(
+        state.model,
+        state.epubParts,
+        resolvedBlockOffset,
+      );
+      if (!split) {
+        state.epubEditorNotice =
+          'The selected heading is not a valid split point.';
+        return;
+      }
+      state.model = split.model;
+      state.epubParts = split.state;
+      state.epubEditorRevision += 1;
+      delete state.epubContentEdit;
+      delete state.epubSplitBlockOffset;
+      delete state.epubSplitHeadingIdentity;
+      state.epubEditorNotice = 'Split the part at the selected heading.';
+      state.outputSaved = false;
+      refreshEpubPreview();
     },
     setEpubSourceContent(content) {
       state.epubSourceEdit = content;
@@ -928,7 +1367,7 @@ export function createBrowserController(): AppController {
     },
     rerunAnalysis() {
       if (!sourceInput || !sourceFilename) return;
-      delete state.epubContentEdit;
+      resetEpubPartState();
       delete state.epubSourceEdit;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
@@ -965,7 +1404,7 @@ export function createBrowserController(): AppController {
     rescanPdfSample() {
       if (!sourceInput || !sourceFilename || state.sourceFormat !== 'pdf')
         return;
-      delete state.epubContentEdit;
+      resetEpubPartState();
       delete state.epubSourceEdit;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
       epubRefreshTimer = undefined;
@@ -1007,6 +1446,15 @@ export function createBrowserController(): AppController {
     },
     setPdfOriginalVisible(visible) {
       state.pdfOriginalVisible = visible;
+      if (!visible) {
+        delete state.pdfImageSelectionOpen;
+        delete state.pdfImageSelectionBounds;
+        delete state.pdfImageSelectionAlt;
+        delete state.pdfImageInsertionLoading;
+        delete state.pdfImageInsertionError;
+        pdfImageSelectionAnchor = undefined;
+        pdfImageInsertionOperation += 1;
+      }
       if (
         visible &&
         !state.pdfPreview &&
@@ -1015,6 +1463,135 @@ export function createBrowserController(): AppController {
       )
         requestPdfPage(state.pdfPreviewPage);
     },
+    openPdfImageSelection() {
+      pdfImageInsertionOperation += 1;
+      state.pdfImageSelectionOpen = true;
+      state.pdfImageSelectionBounds = { x: 0, top: 0, width: 1, height: 1 };
+      state.pdfImageSelectionAlt = `Image from PDF page ${state.pdfPreviewPage}`;
+      delete state.pdfImageInsertionError;
+      pdfImageSelectionAnchor = undefined;
+    },
+    cancelPdfImageSelection() {
+      pdfImageInsertionOperation += 1;
+      delete state.pdfImageSelectionOpen;
+      delete state.pdfImageSelectionBounds;
+      delete state.pdfImageSelectionAlt;
+      delete state.pdfImageInsertionLoading;
+      delete state.pdfImageInsertionError;
+      pdfImageSelectionAnchor = undefined;
+    },
+    beginPdfImageSelection(point) {
+      pdfImageSelectionAnchor = point;
+      delete state.pdfImageSelectionBounds;
+    },
+    updatePdfImageSelection(point) {
+      if (!pdfImageSelectionAnchor) return;
+      const bounds = normalizeFormulaSelection(pdfImageSelectionAnchor, point);
+      if (bounds) state.pdfImageSelectionBounds = bounds;
+      else delete state.pdfImageSelectionBounds;
+    },
+    endPdfImageSelection(point) {
+      controller.updatePdfImageSelection?.(point);
+      pdfImageSelectionAnchor = undefined;
+    },
+    setPdfImageSelectionBounds(bounds) {
+      state.pdfImageSelectionBounds = { ...bounds };
+    },
+    setPdfImageSelectionAlt(alt) {
+      state.pdfImageSelectionAlt = alt;
+    },
+    insertPdfImageSelection() {
+      const input = sourceInput;
+      const bounds = state.pdfImageSelectionBounds;
+      const page = state.pdfPreview?.pageNumber ?? state.pdfPreviewPage;
+      const alt =
+        state.pdfImageSelectionAlt?.trim() || `Image from PDF page ${page}`;
+      if (!input || !bounds || !state.model || state.pdfImageInsertionLoading)
+        return;
+      ensureEpubParts();
+      const targetPartIndex = state.epubParts?.activeIndex;
+      if (targetPartIndex === undefined) return;
+      const operation = ++pdfImageInsertionOperation;
+      state.pdfImageInsertionLoading = true;
+      delete state.pdfImageInsertionError;
+      void import('./pdf-preview.ts')
+        .then(async ({ createPdfPagePreviewRenderer }) => {
+          const renderer = createPdfPagePreviewRenderer();
+          try {
+            return await renderer.render(input, page, bounds);
+          } finally {
+            await renderer.dispose();
+          }
+        })
+        .then(async (preview) => {
+          if (
+            operation !== pdfImageInsertionOperation ||
+            !state.pdfImageSelectionOpen
+          )
+            return;
+          if (sourceInput !== input) return;
+          if (state.epubParts?.activeIndex !== targetPartIndex)
+            throw new Error(
+              'The active part changed before insertion finished.',
+            );
+          if (!saveActiveEpubPart()) return;
+          const model = state.model;
+          const parts = state.epubParts;
+          if (!model || !parts) return;
+          if (preview.blob.size > 10 * 1024 * 1024)
+            throw new Error('The selected image exceeds the 10 MiB limit.');
+          const editorAssets = Object.values(model.assets).filter(({ id }) =>
+            id.startsWith('editor-image-'),
+          );
+          if (editorAssets.length >= 100)
+            throw new Error('A book can contain at most 100 inserted images.');
+          if (
+            editorAssets.reduce(
+              (total, asset) => total + asset.data.byteLength,
+              preview.blob.size,
+            ) >
+            50 * 1024 * 1024
+          )
+            throw new Error(
+              'Inserted images exceed the 50 MiB total size limit.',
+            );
+          const id = nextContentImageId(model);
+          const inserted = insertImageIntoContentPart(
+            model,
+            parts,
+            {
+              id,
+              mediaType: 'image/png',
+              data: new Uint8Array(await preview.blob.arrayBuffer()),
+              filename: `${id}.png`,
+              width: preview.width,
+              height: preview.height,
+            },
+            Math.min(1, Math.max(0.2, bounds.width / 0.8)),
+            alt,
+          );
+          state.model = inserted.model;
+          state.epubParts = inserted.state;
+          state.epubEditorRevision += 1;
+          delete state.epubContentEdit;
+          state.epubEditorNotice = `Inserted image from PDF page ${page}.`;
+          state.outputSaved = false;
+          controller.cancelPdfImageSelection?.();
+          refreshEpubPreview();
+        })
+        .catch((cause: unknown) => {
+          if (operation !== pdfImageInsertionOperation) return;
+          state.pdfImageInsertionError =
+            cause instanceof Error
+              ? cause.message
+              : 'The selected PDF image could not be inserted.';
+        })
+        .finally(() => {
+          if (operation !== pdfImageInsertionOperation) return;
+          state.pdfImageInsertionLoading = false;
+          m.redraw();
+        });
+    },
     setPdfSamplePageCount(pageCount) {
       const maximum = state.pdfAnalysis?.pageCount ?? 50;
       const minimum = Math.min(5, maximum);
@@ -1022,6 +1599,34 @@ export function createBrowserController(): AppController {
         maximum,
         Math.max(minimum, Math.round(pageCount)),
       );
+    },
+    setPdfEnhancedFigureDetection(enabled) {
+      state.pdfImport.enhancedFigureDetection = enabled;
+      state.outputSaved = false;
+      if (!enabled) {
+        if (pdfLayoutOperationId)
+          worker.postMessage({
+            type: 'cancel',
+            operationId: pdfLayoutOperationId,
+          } satisfies WorkerRequest);
+        pdfLayoutOperationId = undefined;
+        delete state.pdfLayoutStatus;
+        return;
+      }
+      if (
+        state.sourceFormat !== 'pdf' ||
+        !state.pdfAnalysis ||
+        state.pdfAnalysis.analysedPages.length >= state.pdfAnalysis.pageCount ||
+        pdfLayoutOperationId ||
+        state.pdfLayoutStatus === 'ready'
+      )
+        return;
+      pdfLayoutOperationId = operationId('prepare-pdf-layout');
+      state.pdfLayoutStatus = 'loading';
+      worker.postMessage({
+        type: 'prepare-pdf-layout',
+        operationId: pdfLayoutOperationId,
+      } satisfies WorkerRequest);
     },
     setPdfCandidateRemoval(candidateId, remove) {
       state.pdfImport.removedCandidateIds =
@@ -1469,6 +2074,11 @@ export function createBrowserController(): AppController {
       refreshEpubPreview();
     },
     setCoverSource(source: CoverSource) {
+      pdfCoverOperationId = undefined;
+      if (source === 'pdf-page') {
+        requestPdfFrontCover();
+        return;
+      }
       state.cover = { ...state.cover, source };
       state.outputSaved = false;
       refreshEpubPreview();
@@ -1582,6 +2192,14 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
       delete state.formulaExtractionId;
     }
     inferDocumentLanguage(response.model);
+    delete state.epubContentEdit;
+    delete state.epubFullContentEdit;
+    delete state.epubEditorNotice;
+    delete state.epubParts;
+    delete state.epubSplitBlockOffset;
+    delete state.epubSplitHeadingIdentity;
+    state.epubEditorRevision += 1;
+    state.epubPreviewScope = 'book';
     state.model = response.model;
     if (response.pdfAnalysis) {
       state.pdfAnalysis = response.pdfAnalysis;
@@ -1623,7 +2241,10 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
   }
 
   if (response.type === 'output') {
-    state.output = response;
+    state.outputFilename = state.outputFilename
+      ? normalizeOutputFilename(state.outputFilename, response.filename)
+      : response.filename;
+    state.output = { ...response, filename: state.outputFilename };
     state.outputSaved = false;
     if (response.files?.[0]) state.selectedEpubFile = response.files[0];
     else delete state.selectedEpubFile;
@@ -1692,6 +2313,7 @@ function pdfWorkerOptions(
     if (candidate.removed) removedCandidateIds.add(candidate.id);
   return {
     formulaRecognitionEnabled: state.preferences.formulaRecognitionEnabled,
+    layoutDetectionEnabled: state.pdfImport.enhancedFigureDetection,
     ...(samplePageCount !== undefined ? { samplePageCount } : {}),
     crop: {
       top: state.pdfImport.cropTop,

@@ -5,9 +5,14 @@ import {
   type PDFDocumentProxy,
   type RenderTask,
 } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import pdfJsWorkerSrc from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
+import type { PdfBounds } from '@wordconvert/pdf-reader';
 
-GlobalWorkerOptions.workerSrc = pdfJsWorkerSrc;
+import { pdfJsDecoderBaseUrl, pdfJsWorkerUrl } from './pdfjs-assets.ts';
+
+GlobalWorkerOptions.workerSrc = pdfJsWorkerUrl(
+  __WORDCONVERT_BASE_PATH__,
+  globalThis.location.origin,
+);
 
 export interface PdfPagePreviewResult {
   pageNumber: number;
@@ -17,7 +22,11 @@ export interface PdfPagePreviewResult {
 }
 
 export interface PdfPagePreviewRenderer {
-  render(input: ArrayBuffer, pageNumber: number): Promise<PdfPagePreviewResult>;
+  render(
+    input: ArrayBuffer,
+    pageNumber: number,
+    crop?: PdfBounds,
+  ): Promise<PdfPagePreviewResult>;
   cancel(): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -26,6 +35,25 @@ const MAX_INPUT_BYTES = 50 * 1024 * 1024;
 const MAX_PAGES = 2_000;
 const MAX_WIDTH = 1_200;
 const MAX_PIXELS = 4_000_000;
+
+export function normalizedCropPixels(
+  bounds: PdfBounds,
+  width: number,
+  height: number,
+): { x: number; y: number; width: number; height: number } {
+  const left = Math.max(0, Math.min(1, bounds.x));
+  const top = Math.max(0, Math.min(1, bounds.top));
+  const right = Math.max(left, Math.min(1, bounds.x + bounds.width));
+  const bottom = Math.max(top, Math.min(1, bounds.top + bounds.height));
+  const x = Math.round(left * width);
+  const y = Math.round(top * height);
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.round(right * width) - x),
+    height: Math.max(1, Math.round(bottom * height) - y),
+  };
+}
 
 export function createPdfPagePreviewRenderer(
   loadDocument: typeof getDocument = getDocument,
@@ -72,7 +100,11 @@ export function createPdfPagePreviewRenderer(
       disableFontFace: false,
       isOffscreenCanvasSupported: false,
       useSystemFonts: true,
-      useWasm: false,
+      useWasm: true,
+      wasmUrl: pdfJsDecoderBaseUrl(
+        __WORDCONVERT_BASE_PATH__,
+        globalThis.location.origin,
+      ),
       verbosity: 0,
     });
     loadingTask = task;
@@ -102,7 +134,7 @@ export function createPdfPagePreviewRenderer(
     async dispose() {
       await dispose();
     },
-    async render(input, pageNumber) {
+    async render(input, pageNumber, crop) {
       const loaded = await load(input);
       if (
         !Number.isInteger(pageNumber) ||
@@ -131,11 +163,32 @@ export function createPdfPagePreviewRenderer(
         renderTask = currentRenderTask;
         try {
           await currentRenderTask.promise;
+          let outputCanvas = canvas;
+          if (crop) {
+            const pixels = normalizedCropPixels(crop, width, height);
+            outputCanvas = documentOwner().createElement('canvas');
+            outputCanvas.width = pixels.width;
+            outputCanvas.height = pixels.height;
+            const context = outputCanvas.getContext('2d');
+            if (!context)
+              throw new Error('The PDF image crop could not be created.');
+            context.drawImage(
+              canvas,
+              pixels.x,
+              pixels.y,
+              pixels.width,
+              pixels.height,
+              0,
+              0,
+              pixels.width,
+              pixels.height,
+            );
+          }
           return {
             pageNumber,
-            width,
-            height,
-            blob: await canvasBlob(canvas),
+            width: outputCanvas.width,
+            height: outputCanvas.height,
+            blob: await canvasBlob(outputCanvas),
           };
         } finally {
           if (renderTask === currentRenderTask) renderTask = undefined;

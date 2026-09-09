@@ -12,14 +12,17 @@ import {
   PdfReadError,
   pdfJsReader,
 } from '@wordconvert/pdf-reader';
-import pdfJsWorkerSrc from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import { unzipSync } from 'fflate';
 
 import type { WorkerRequest, WorkerSend } from './protocol.ts';
 import { createConfiguredFormulaRecognizer } from 'virtual:wordconvert-formula-recognizer';
 import { createPdfFigureRasterizer } from './pdf-figure-rasterizer.ts';
+import { pdfJsWorkerUrl } from '../pdfjs-assets.ts';
 
-if (typeof Worker !== 'undefined') configurePdfJsWorker(pdfJsWorkerSrc);
+if (typeof Worker !== 'undefined')
+  configurePdfJsWorker(
+    pdfJsWorkerUrl(__WORDCONVERT_BASE_PATH__, globalThis.location.origin),
+  );
 
 export interface WorkerRuntime {
   handle(request: WorkerRequest): Promise<void>;
@@ -87,9 +90,11 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
             request.pdfOptions?.samplePageCount === undefined
               ? createPdfFigureRasterizer()
               : undefined;
-          const detector = figureRasterizer
-            ? await (layoutDetector ??= loadHeronLayoutDetector())
-            : undefined;
+          const detector =
+            figureRasterizer &&
+            request.pdfOptions?.layoutDetectionEnabled !== false
+              ? await (layoutDetector ??= loadHeronLayoutDetector())
+              : undefined;
           if (signal.cancelled) throw cancelledError();
           const pdfResult =
             request.sourceFormat === 'pdf'

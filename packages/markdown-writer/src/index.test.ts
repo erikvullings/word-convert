@@ -237,6 +237,34 @@ describe('writeMarkdown', () => {
     );
   });
 
+  it('does not escape an isolated literal asterisk', () => {
+    const markdown = writeMarkdown(
+      model([
+        {
+          type: 'paragraph',
+          children: [{ type: 'text', text: 'A note * marker' }],
+        },
+      ]),
+      { conversionDate: '2026-07-15' },
+    );
+
+    expect(markdown).toBe('A note * marker\n');
+  });
+
+  it('escapes an asterisk that could become a list marker', () => {
+    const markdown = writeMarkdown(
+      model([
+        {
+          type: 'paragraph',
+          children: [{ type: 'text', text: '* Not a list item' }],
+        },
+      ]),
+      { conversionDate: '2026-07-15' },
+    );
+
+    expect(markdown).toBe('\\* Not a list item\n');
+  });
+
   it('coalesces adjacent text runs with identical marks', () => {
     const input = model([
       {
@@ -312,6 +340,21 @@ describe('writeMarkdown', () => {
     expect(markdown).toContain('```type-script\nconst x = `a`;\n```');
     expect(markdown).toContain('\n---\n');
     expect(markdown).not.toContain('page break');
+  });
+
+  it('can include semantic page-break markers for editable Markdown', () => {
+    const markdown = writeMarkdown(
+      model([
+        { type: 'paragraph', children: [{ type: 'text', text: 'Before.' }] },
+        { type: 'pageBreak' },
+        { type: 'paragraph', children: [{ type: 'text', text: 'After.' }] },
+      ]),
+      { conversionDate: '2026-07-15', includePageBreaks: true },
+    );
+
+    expect(markdown).toContain(
+      'Before.\n\n<!-- markdown:page-break -->\n\nAfter.',
+    );
   });
 
   it('writes ordered and unordered nested lists and GFM tables', () => {

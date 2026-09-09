@@ -16,7 +16,7 @@ This document is the release checklist for security, privacy, performance, and b
 | Unexpectedly large images | `maxImageBytes: 25 MiB` per image | Configurable oversized-image assertion in `docx-reader/src/index.test.ts` |
 | Memory exhaustion | Bound package, expanded content, entry count, compression ratio, and each image; transfer output buffers and release them after download | Reader limit tests, worker runtime cleanup tests, and download lifecycle tests |
 | Script injection through metadata, formulas, or filenames | Escape semantic text and generate safe output paths | HTML/Markdown/EPUB writer hostile-input tests, math-converter injection test, cover-generator escaping test |
-| Active markup entered in the EPUB content editor | Parse Markdown tokens into typed document blocks; preserve raw HTML as escaped text and reconnect only exact existing asset data URIs | Content-editor parser tests and restrictive preview DOMPurify policy |
+| Active markup entered in the EPUB content editor | Parse Markdown tokens into typed document blocks; preserve raw HTML as escaped text; reconnect exact existing asset data URIs; import only signature-checked AVIF, GIF, JPEG, PNG, and WebP data URIs with 10 MiB per-image, 50 MiB aggregate, and 100-image limits | Content-editor parser and base64-image import tests; restrictive preview DOMPurify policy |
 | Failure and cancellation cleanup | Remove every operation in `finally`; stale cancellation creates no retained state | Worker runtime cancellation and actual reader-failure tests assert zero active operations and private errors |
 | Sensitive-data disclosure | No document logging, analytics, conversion fetches, URL parameters, or document persistence | Worker test spies on console and `fetch`; state tests restrict storage to preferences and validated mapping presets |
 | Excessive PDF input | `maxInputBytes: 50 MiB`, `maxPages: 2,000`, `maxTextItems: 2,000,000`, and `maxTextItemsPerPage: 100,000` | PDF reader corpus and configurable-limit tests |
@@ -26,7 +26,7 @@ This document is the release checklist for security, privacy, performance, and b
 | PDF formula recognition | At most 100 candidates per page and 1,000 per document; 4 MP per temporary crop, 40 MP total, and 512 decoder tokens; strict safe KaTeX validation; preserve source on every failure | Formula candidate, real-crop, fake-session adapter, cancellation, and opt-in real-model tests |
 | Remote document import | HTTPS only, omit credentials/referrer, enforce 50 MiB while streaming, validate HTML/Markdown/text/PDF response types, parse HTML inertly, and keep URL/bytes out of persistence | Remote document normalization, classification, limit, semantic-import, and failure tests |
 | Encrypted or malformed PDF | Reject before semantic analysis with private structured errors | Password-protected and malformed PDF corpus fixtures |
-| PDF external loading | Supply exact bytes; disable range, streaming, auto-fetch, system-font, and external WASM loading | Worker privacy regression spies on `fetch` during DOCX and PDF analysis |
+| PDF external loading | Supply exact bytes; disable range, streaming, auto-fetch, and system-font loading; page previews may fetch only bundled, same-origin PDF.js image decoders | Worker privacy regression spies on `fetch` during DOCX and PDF analysis; static build and decoder-path tests cover local decoder assets |
 | False-positive page-furniture removal | Crop bounds are explicit; repeated content is parity/position aware; medium/low confidence remains until user review | PDF layout tests cover crop boundaries, short documents, odd/even headers, and explicit candidate overrides |
 
 All reader limits are configurable through `DocxReaderOptions.limits`. Raising them increases peak memory exposure and should be a deliberate host-application decision.
@@ -34,6 +34,7 @@ All reader limits are configurable through `DocxReaderOptions.limits`. Raising t
 PDF limits are configurable through `PdfReaderOptions.limits`. The application
 conversion worker launches the bundled PDF.js module worker; conversion does not
 load optional CMaps, standard fonts, image decoders, or WASM from remote URLs.
+Source-page previews load only the bundled, same-origin PDF.js image decoders.
 
 ## Determinism and performance budget
 
@@ -46,7 +47,7 @@ deeply equal analysis and `DocumentModel` values.
 
 ## Browser support policy
 
-WordConvert targets the current and immediately previous major releases of Chrome, Edge, Firefox, and Safari on desktop, plus the corresponding current mobile engines. The production build targets ES2022 and relies on standards available in those releases: Web Workers, transferable `ArrayBuffer`, `Blob`, `File`, object URLs, structured cloning, HTML canvas, CSS Grid/Flexbox, and module scripts. Browsers exposing the File System Access API use their native save picker so the user can choose the output filename and folder. Other browsers retain the generated filename and use the standard browser download flow.
+WordConvert targets the current and immediately previous major releases of Chrome, Edge, Firefox, and Safari on desktop, plus the corresponding current mobile engines. The production build targets ES2022 and relies on standards available in those releases: Web Workers, WebAssembly, transferable `ArrayBuffer`, `Blob`, `File`, object URLs, structured cloning, HTML canvas, CSS Grid/Flexbox, and module scripts. Browsers exposing the File System Access API use its native open and save pickers; the open picker avoids embedded-browser interception of file-input dialogs, and the save picker lets the user choose the output filename and folder. Other browsers use a standard file input for opening documents and retain the generated filename with the standard browser download flow.
 
 Workflow URLs use the History API under the configured application base path.
 The static build emits `404.html` from the same application shell so GitHub
@@ -96,17 +97,27 @@ This table is evidence, not a browser allowlist. The application always uses
 runtime detection because operating-system share targets and accepted file types
 can change independently of browser versions.
 
-PDF source-page previews are loaded only on request and rasterized on an HTML canvas with a maximum width of 1,200 pixels and a 4-megapixel budget. The browser-canvas path supports embedded fonts that PDF.js cannot reliably draw on `OffscreenCanvas` for some legacy PDFs. Preview rendering is best-effort so recoverable legacy-font errors do not produce blank pages; extraction remains strict. Preview tasks and PNG object URLs are released when replaced, when another source is selected, and when the page unloads.
+PDF source-page previews are loaded only on request and rasterized on an HTML canvas with a maximum width of 1,200 pixels and a 4-megapixel budget. The browser-canvas path supports embedded fonts that PDF.js cannot reliably draw on `OffscreenCanvas` for some legacy PDFs. Bundled OpenJPEG, JBIG2, and QCMS decoder assets allow scanned JPEG 2000 pages and masks to render without a network dependency; their JavaScript fallbacks are shipped beside the WebAssembly modules. Preview rendering is best-effort so recoverable legacy-font errors do not produce blank pages; extraction remains strict. Edit-mode source-region insertion reuses the same bounded rasterization path, stores only passive PNG data in the in-memory document model, and applies the editor's 10 MiB per-image, 100-image, and 50 MiB aggregate limits. Preview tasks and PNG object URLs are released when replaced, when another source is selected, and when the page unloads.
 
 Initial PDF cleanup analysis reads five deterministic representative pages by default, without extracting images. The user can increase and rescan that sample before the first full-document pass. Output choices remain unavailable until cleanup is applied to the complete document. Crop bands omit text only; images are retained even when they overlap a configured band.
 
+A manual Chromium 146 benchmark on 8 September 2026 used a 160-page,
+3.1 MiB OCR-layer book. The five-page cleanup sample became usable in 0.13
+seconds and the default full pass completed in 4.34 seconds with warm local
+formula assets. Before cached line reuse, scheduler-based checkpoints, and
+opt-in learned layout detection, the same pass took 20.05 seconds. The
+representative browser budget is under 1 second for the cleanup sample and
+under 10 seconds for the default full pass on the reference machine.
+
 During the full-document pass, connected clusters of PDF vector paths and substantial embedded images seed bounded figure regions that PDF.js renders to passive PNG assets inside the conversion worker. Image-seeded renders preserve the effective source-image resolution up to the configured pixel budget, include overlaid PDF labels or drawing commands, and suppress duplicate text inside the rendered region. Tiny icons remain independent assets. Figure surfaces are capped by the existing per-image and aggregate pixel budgets and are released immediately after PNG encoding. This deliberately favors ebook fidelity and passive output over exporting active SVG or fragmented text assembled from untrusted PDF drawing commands.
 
-Full PDF conversion also renders each page to a fixed 640×640 RGBA surface and
-runs the bundled Docling Heron model through ONNX Runtime Web in the conversion
-worker. WebGPU is preferred when available, with a single-threaded WASM fallback.
-Picture and table predictions with at least 0.6 confidence seed figure
-composition; coordinates are clipped to the page and remain subject to the
+The SPA offers enhanced figure and table detection as an explicit, per-document
+option because its document-wide model pass is expensive for long text-first
+books. When enabled, full PDF conversion renders each page to a fixed 640×640
+RGBA surface and runs the bundled Docling Heron model through ONNX Runtime Web
+in the conversion worker. WebGPU is preferred when available, with a
+single-threaded WASM fallback. Picture and table predictions with at least 0.6
+confidence seed figure composition; coordinates are clipped to the page and remain subject to the
 existing image and pixel budgets. Confidence-ordered overlap suppression keeps
 the strongest learned proposal where picture and table predictions duplicate
 the same visual region. Learned regions take precedence over overlapping
@@ -169,15 +180,16 @@ learned picture/table proposals; learned proposals enclosing sentence-like
 prose are rejected so paragraphs are not duplicated as image strips.
 
 The FP16 model is approximately 82.5 MiB and the emitted ONNX WASM runtime is
-approximately 25 MiB. Both are same-origin, content-hashed build assets. After
-the initial PDF cleanup sample, the application prepares the model and runtime
-in the background while the user reviews crop settings. The service worker
-caches them after that request rather than downloading approximately 108 MiB
-during installation. Model inference therefore makes no third-party request and
-remains available offline after its first successful use; users who do not open
-PDFs avoid the model download entirely. Preparation removes the one-time download
-and session setup from the subsequent full-document wait, but full processing
-still classifies every page locally. Per-page inference remains the dominant cost
+approximately 25 MiB. Both are same-origin, content-hashed build assets. When
+the user enables enhanced detection after the initial PDF cleanup sample, the
+application prepares the model and runtime in the background while the user
+reviews crop settings. The service worker caches them after that request rather
+than downloading approximately 108 MiB during installation. Model inference
+therefore makes no third-party request and remains available offline after its
+first successful use; users who leave enhanced detection off avoid the model
+download entirely. Preparation removes the one-time download and session setup
+from the subsequent full-document wait, but full processing still classifies
+every page locally when enabled. Per-page inference remains the dominant cost
 for long PDFs and should not be presented as part of the one-time setup. This
 runtime and cache budget should be re-measured when the model or ONNX Runtime
 version changes.

@@ -1,7 +1,7 @@
 # Third-party notices
 
 This audit covers the direct third-party runtime dependencies bundled by the
-WordConvert web application at `pnpm-lock.yaml` as reviewed on 3 September 2026.
+WordConvert web application at `pnpm-lock.yaml` as reviewed on 9 September 2026.
 Workspace packages are part of WordConvert; development-only dependencies are not
 distributed in its browser bundle.
 
@@ -11,18 +11,20 @@ distributed in its browser bundle.
 | css-tree | 3.2.1 | MIT | Copyright (c) 2016–2026 Roman Dvornov | <https://github.com/csstree/csstree> |
 | DOMPurify | 3.4.14 | Apache-2.0 OR MPL-2.0 | Cure53 and other contributors | <https://github.com/cure53/DOMPurify> |
 | fflate | 0.8.3 | MIT | Copyright (c) 2026 Arjun Barrett | <https://github.com/101arrowz/fflate> |
-| KaTeX | 0.16.47 | MIT | Copyright (c) 2013–2020 Khan Academy and other contributors | <https://github.com/KaTeX/KaTeX> |
+| KaTeX | 0.18.7 | MIT | Copyright (c) 2013–2020 Khan Academy and other contributors | <https://github.com/KaTeX/KaTeX> |
 | Marked | 18.0.11 | MIT and BSD-3-Clause | Copyright (c) 2018+ MarkedJS; Copyright (c) 2011–2018 Christopher Jeffrey; Markdown copyright © 2004 John Gruber | <https://github.com/markedjs/marked> |
 | Mithril | 2.3.8 | MIT | Copyright (c) 2017 Leo Horie | <https://github.com/MithrilJS/mithril.js> |
-| mithril-materialized | 3.17.9 | MIT | Erik Vullings and contributors | <https://github.com/erikvullings/mithril-materialized> |
+| mithril-markdown-wysiwyg | 0.4.3 | MIT | Copyright (c) 2024 Erik Vullings | <https://github.com/erikvullings/mithril-markdown-wysiwyg> |
+| mithril-materialized | 3.17.11 | MIT | Erik Vullings and contributors | <https://github.com/erikvullings/mithril-materialized> |
 | ONNX Runtime Web and Common | 1.29.0 | MIT | Microsoft Corporation and contributors | <https://github.com/microsoft/onnxruntime> |
 | FlatBuffers | 25.9.23 | Apache-2.0 | Google LLC and contributors | <https://github.com/google/flatbuffers> |
 | guid-typescript | 1.0.9 | ISC | Kevin Le and contributors | <https://github.com/snico-dev/guid-typescript> |
 | long | 5.3.2 | Apache-2.0 | Daniel Wirtz and contributors | <https://github.com/dcodeIO/long.js> |
 | platform | 1.3.6 | MIT | Benjamin Tan and contributors | <https://github.com/bestiejs/platform.js> |
 | protobufjs | 7.6.6 | BSD-3-Clause | Daniel Wirtz and contributors | <https://github.com/protobufjs/protobuf.js> |
-| PDF.js (`pdfjs-dist`) | 6.2.108 | Apache-2.0 | Mozilla Foundation and PDF.js contributors | <https://github.com/mozilla/pdf.js> |
-| slimdown-js | 1.5.0 | MIT | Copyright (c) 2019 Erik Vullings | <https://github.com/erikvullings/slimdown-js> |
+| PDF.js (`pdfjs-dist`) | 6.3.289 | Apache-2.0 | Mozilla Foundation and PDF.js contributors | <https://github.com/mozilla/pdf.js> |
+| PDF.js image decoders (OpenJPEG, JBIG2/PDFium, QCMS, and PDF.js wrappers) | bundled with `pdfjs-dist` 6.3.289 | Apache-2.0, BSD-2-Clause, BSD-3-Clause, and MIT | Mozilla Foundation, Université catholique de Louvain and OpenJPEG contributors, PDFium Authors, Mozilla Corporation, Marti Maria | <https://github.com/mozilla/pdf.js/tree/master/external> |
+| slimdown-js | 1.5.4 | MIT | Copyright (c) 2019 Erik Vullings | <https://github.com/erikvullings/slimdown-js> |
 | slimdown-katex | 0.2.1 | MIT | No copyright notice in published package | <https://www.npmjs.com/package/slimdown-katex> |
 | Docling Heron model | revision `8f39ad3` | Apache-2.0 | IBM Research and Docling contributors | <https://huggingface.co/docling-project/docling-layout-heron> |
 | TexTeller ONNX q4 model | revision `9727784d91d7f8437dc7140941c4335284ce075e` | Apache-2.0 | TexTeller and ONNX Community contributors | <https://huggingface.co/onnx-community/TexTeller-ONNX> |
@@ -32,6 +34,8 @@ and the Docling Heron model are also used under Apache License 2.0. The reviewed
 distributions do not include a separate required `NOTICE` file. A copy of the
 Apache-2.0 terms is included in
 [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt).
+The decoder-specific upstream licence texts are distributed beside the decoder
+assets under `pdfjs/`.
 
 The MIT-licensed dependencies retain their upstream copyright and permission
 notices from the table above under these common terms:

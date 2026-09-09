@@ -42,4 +42,23 @@ describe('cover editor model', () => {
       }),
     ).toContain('10 MiB');
   });
+
+  it('uses a rasterized PDF first page as cover image input', () => {
+    const settings = createCoverSettings();
+    settings.source = 'pdf-page';
+    settings.image = {
+      mediaType: 'image/png',
+      data: new Uint8Array([1, 2, 3]),
+    };
+
+    expect(
+      coverComposition(settings, { title: 'Book', authors: [] }),
+    ).toMatchObject({
+      layout: 'image-only',
+      image: {
+        mediaType: 'image/png',
+        data: new Uint8Array([1, 2, 3]),
+      },
+    });
+  });
 });
