@@ -193,7 +193,7 @@ describe('App', () => {
     expect(rendered).not.toContain('Share EPUB');
   });
 
-  it('keeps the output filename visible while EPUB edits regenerate output', () => {
+  it('keeps EPUB actions and the filename stable while edits regenerate output', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 2;
     state.status = 'converting';
@@ -202,10 +202,19 @@ describe('App', () => {
     state.model = editorModel();
     state.outputFilename = 'tao-multilingual.epub';
 
-    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+    const rendered = JSON.stringify(
+      renderApp({
+        ...controllerFor(state),
+        canShareDocument: () => true,
+      }),
+    );
 
     expect(rendered).toContain('Output filename');
     expect(rendered).toContain('"value":"tao-multilingual"');
+    expect(rendered).toContain('Download EPUB');
+    expect(rendered).toContain('Share EPUB');
+    expect(rendered).not.toContain('"label":"Download"');
+    expect(rendered).toContain('"disabled":true');
   });
 
   it('does not offer sharing or email for non-EPUB output', () => {
@@ -1078,13 +1087,16 @@ describe('App', () => {
       url: 'blob:page',
     };
     state.pdfPreviewRequested = true;
+    state.pdfImageRegionSelectionActive = true;
     const choices = JSON.stringify(renderApp(controllerFor(state)));
     expect(choices).toContain('Full page');
     expect(choices).toContain('Region');
     expect(choices).toContain('Cancel');
+    expect(choices).toContain(
+      'Drag over the original page to insert the selected region.',
+    );
     expect(choices).not.toContain('pdf-image-selection-surface');
 
-    state.pdfImageRegionSelectionActive = true;
     expect(JSON.stringify(renderApp(controllerFor(state)))).toContain(
       'pdf-page-preview__sheet--selecting',
     );

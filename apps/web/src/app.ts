@@ -1799,16 +1799,16 @@ function pdfImageInsertionControls(controller: AppController): m.Vnode {
     [
       m('.pdf-image-insertion-actions', [
         m(Button, {
+          label: 'Region',
+          disabled: state.pdfImageInsertionLoading,
+          onclick: () => controller.startPdfImageRegionSelection?.(),
+        }),
+        m(FlatButton, {
           label: state.pdfImageInsertionLoading
             ? 'Inserting image…'
             : 'Full page',
           disabled: state.pdfImageInsertionLoading,
           onclick: () => controller.insertPdfFullPageImage?.(),
-        }),
-        m(FlatButton, {
-          label: 'Region',
-          disabled: state.pdfImageInsertionLoading,
-          onclick: () => controller.startPdfImageRegionSelection?.(),
         }),
         m(FlatButton, {
           label: 'Cancel',
@@ -1999,12 +1999,15 @@ export function extractHtmlBody(source: string): string {
 
 function previewActions(controller: AppController): m.Vnode {
   const state = controller.state;
-  const isEpub = state.output?.mediaType === 'application/epub+zip';
+  const isEpub =
+    state.preferences.outputFormat === 'epub' ||
+    state.output?.mediaType === 'application/epub+zip';
+  const outputUnavailable = !state.output || state.status === 'converting';
   return m('.preview-actions', [
     outputFilenameField(controller),
     m(Button, {
       label: isEpub ? 'Download EPUB' : 'Download',
-      disabled: !state.output,
+      disabled: outputUnavailable,
       onclick: () => controller.download(),
     }),
     epubDeliveryButton(controller),
@@ -2203,24 +2206,29 @@ function downloadPanel(controller: AppController): m.Vnode {
 }
 
 function epubDeliveryButton(controller: AppController): m.Vnode | null {
-  if (controller.state.output?.mediaType !== 'application/epub+zip')
+  const { state } = controller;
+  if (
+    state.preferences.outputFormat !== 'epub' &&
+    state.output?.mediaType !== 'application/epub+zip'
+  )
     return null;
   const canShare = controller.canShareDocument?.() === true;
   return m(Button, {
     label: canShare ? 'Share EPUB' : 'Email…',
+    disabled: !state.output || state.status === 'converting',
     onclick: () =>
       canShare ? controller.shareDocument?.() : controller.mailDocument?.(),
   });
 }
 
 function outputFilenameField(controller: AppController): m.Vnode | null {
-  const output = controller.state.output;
-  const filename = controller.state.outputFilename ?? output?.filename;
+  const { state } = controller;
+  const filename = state.outputFilename ?? state.output?.filename;
   if (!filename) return null;
   return m(TextInput, {
     className: 'output-filename',
     label: 'Output filename',
-    value: outputBasename(filename),
+    value: state.outputFilenameDraft ?? outputBasename(filename),
     autocomplete: 'off',
     oninput: (value) => controller.setOutputFilename(value),
   });

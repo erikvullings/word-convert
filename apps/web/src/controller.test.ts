@@ -1280,6 +1280,31 @@ describe('browser controller', () => {
     expect(controller.state.output.filename).toBe('Final handbook.epub');
   });
 
+  it('preserves a trailing space while an output filename is being typed', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.state.output = {
+      filename: 'report.epub',
+      mediaType: 'application/epub+zip',
+      data: new ArrayBuffer(1),
+    };
+
+    controller.setOutputFilename('My ');
+
+    expect(controller.state.outputFilenameDraft).toBe('My ');
+    expect(controller.state.outputFilename).toBe('My.epub');
+
+    controller.setOutputFilename(`${controller.state.outputFilenameDraft}book`);
+
+    expect(controller.state.outputFilenameDraft).toBe('My book');
+    expect(controller.state.outputFilename).toBe('My book.epub');
+  });
+
   it('keeps a custom output filename while EPUB edits regenerate output', async () => {
     vi.useFakeTimers();
     vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
@@ -1391,6 +1416,24 @@ describe('browser controller', () => {
       text: 'EPUB: Attention Is All You Need [1706.03762]',
       files: [expect.objectContaining({ name: '1706.03762v7.epub' })],
     });
+  });
+
+  it('retains EPUB sharing support while edited output regenerates', () => {
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    vi.stubGlobal('navigator', {
+      canShare: () => true,
+      share: async () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.state.preferences.outputFormat = 'epub';
+    controller.state.outputFilename = 'report.epub';
+
+    expect(controller.canShareDocument?.()).toBe(true);
   });
 
   it('ignores share cancellation and reports unexpected share failures', async () => {
@@ -1815,6 +1858,7 @@ describe('browser controller', () => {
     controller.state.pdfPreviewPage = 2;
     const cursor = markdown.indexOf('After.');
     controller.openPdfImageSelection?.({ start: cursor, end: cursor });
+    expect(controller.state.pdfImageRegionSelectionActive).toBe(true);
     controller.setPdfImageSelectionBounds?.({
       x: 0.1,
       top: 0.2,

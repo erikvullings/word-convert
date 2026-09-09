@@ -113,6 +113,7 @@ export interface AppState {
   pdfImageInsertionError?: string;
   output?: DownloadOutput;
   outputFilename?: string;
+  outputFilenameDraft?: string;
   outputSaved?: boolean;
   selectedEpubFile?: string;
   markdownEdit?: string;

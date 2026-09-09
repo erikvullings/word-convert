@@ -322,7 +322,7 @@ export function createBrowserController(): AppController {
     if (state.pdfImageSelectionOpen) {
       pdfImageInsertionOperation += 1;
       delete state.pdfImageInsertionLoading;
-      delete state.pdfImageRegionSelectionActive;
+      state.pdfImageRegionSelectionActive = true;
       delete state.pdfImageSelectionBounds;
       state.pdfImageSelectionAlt = `Image from PDF page ${pageNumber}`;
       delete state.pdfImageInsertionError;
@@ -541,6 +541,7 @@ export function createBrowserController(): AppController {
     if (formatChanged) {
       delete state.output;
       delete state.outputFilename;
+      delete state.outputFilenameDraft;
       delete state.selectedEpubFile;
     }
     if (
@@ -727,6 +728,7 @@ export function createBrowserController(): AppController {
       delete state.error;
       delete state.output;
       delete state.outputFilename;
+      delete state.outputFilenameDraft;
       delete state.pdfImageSelectionOpen;
       delete state.pdfImageRegionSelectionActive;
       delete state.pdfImageSelectionBounds;
@@ -990,11 +992,17 @@ export function createBrowserController(): AppController {
     },
     canShareDocument() {
       const output = state.output;
-      if (output?.mediaType !== 'application/epub+zip') return false;
+      if (
+        state.preferences.outputFormat !== 'epub' &&
+        output?.mediaType !== 'application/epub+zip'
+      )
+        return false;
       return canShareEpub(
         createEpubFile(
-          new Blob([output.data], { type: 'application/epub+zip' }),
-          output.filename,
+          output
+            ? new Blob([output.data], { type: 'application/epub+zip' })
+            : new Blob([], { type: 'application/epub+zip' }),
+          output?.filename ?? state.outputFilename ?? 'document.epub',
         ),
         {
           ...(typeof navigator.canShare === 'function'
@@ -1093,6 +1101,7 @@ export function createBrowserController(): AppController {
     setOutputFilename(filename) {
       const currentFilename = state.outputFilename ?? state.output?.filename;
       if (!currentFilename) return;
+      state.outputFilenameDraft = editableOutputFilename(filename);
       state.outputFilename = normalizeOutputFilename(filename, currentFilename);
       if (state.output)
         state.output = { ...state.output, filename: state.outputFilename };
@@ -1116,6 +1125,7 @@ export function createBrowserController(): AppController {
       persistPreferences(localStorage, state.preferences);
       delete state.output;
       delete state.outputFilename;
+      delete state.outputFilenameDraft;
       delete state.selectedEpubFile;
       state.stage = 2;
       if (format === 'epub') ensureEpubParts();
@@ -1509,7 +1519,7 @@ export function createBrowserController(): AppController {
     openPdfImageSelection(selection, displayedMarkdown) {
       pdfImageInsertionOperation += 1;
       state.pdfImageSelectionOpen = true;
-      delete state.pdfImageRegionSelectionActive;
+      state.pdfImageRegionSelectionActive = true;
       delete state.pdfImageSelectionBounds;
       state.pdfImageSelectionAlt = `Image from PDF page ${state.pdfPreviewPage}`;
       delete state.pdfImageInsertionError;
@@ -2359,19 +2369,28 @@ function applyResponse(state: AppState, response: WorkerResponse): void {
 
 function normalizeOutputFilename(value: string, fallback: string): string {
   const expectedExtension = /\.[^.]+$/.exec(fallback)?.[0] ?? '';
-  const leaf = value.split(/[\\/]/).at(-1) ?? '';
-  const cleaned = [...leaf]
-    .filter((character) => {
-      const code = character.charCodeAt(0);
-      return code >= 32 && code !== 127;
-    })
-    .join('')
-    .trim();
+  const cleaned = sanitizedOutputFilenameLeaf(value).trim();
   if (!cleaned || cleaned === '.' || cleaned === '..') return fallback;
   const basename =
     cleaned.replace(/\.(?:epub|html?|md|markdown|zip)$/i, '').trim() ||
     'document';
   return `${basename}${expectedExtension}`;
+}
+
+function editableOutputFilename(value: string): string {
+  return sanitizedOutputFilenameLeaf(value)
+    .trimStart()
+    .replace(/\.(?:epub|html?|md|markdown|zip)$/i, '');
+}
+
+function sanitizedOutputFilenameLeaf(value: string): string {
+  const leaf = value.split(/[\\/]/).at(-1) ?? '';
+  return [...leaf]
+    .filter((character) => {
+      const code = character.charCodeAt(0);
+      return code >= 32 && code !== 127;
+    })
+    .join('');
 }
 
 function conversionSourceFilename(
