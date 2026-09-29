@@ -1556,6 +1556,183 @@ describe('browser controller', () => {
     );
   });
 
+  it('asks how to convert dense PDF pages and remembers the choice per document', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const stored = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => stored.set(key, value),
+    });
+    const bytes = Uint8Array.from([37, 80, 68, 70, 1, 2, 3]);
+    const fingerprint = Array.from(
+      new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+      (byte) => byte.toString(16).padStart(2, '0'),
+    ).join('');
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([bytes], 'infographic.pdf', { type: 'application/pdf' }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    expect(worker.postMessage.mock.calls[0]![0].pdfOptions).not.toHaveProperty(
+      'askDensePageMode',
+    );
+
+    controller.rerunAnalysis();
+    const operationId = controller.state.operationId!;
+    expect(worker.postMessage.mock.lastCall![0].pdfOptions).toMatchObject({
+      askDensePageMode: true,
+    });
+    worker.emit({
+      type: 'pdf-dense-page-question',
+      operationId,
+      page: 22,
+      vectorPaths: 3_013,
+    });
+    expect(controller.state.pdfDensePagePrompt).toEqual({
+      operationId,
+      page: 22,
+      mode: 'image-and-prose',
+      remember: false,
+    });
+
+    controller.setPdfDensePagePrompt?.({
+      mode: 'image-and-text',
+      remember: true,
+    });
+    controller.confirmPdfDensePageMode?.();
+
+    expect(worker.postMessage).toHaveBeenLastCalledWith({
+      type: 'pdf-dense-page-answer',
+      operationId,
+      mode: 'image-and-text',
+    });
+    expect(controller.state.pdfDensePagePrompt).toBeUndefined();
+    await vi.waitFor(() =>
+      expect(controller.state.preferences.densePageModes).toEqual({
+        [fingerprint]: 'image-and-text',
+      }),
+    );
+    expect([...stored.values()].join(' ')).not.toContain('infographic');
+
+    worker.emit({
+      type: 'analysed',
+      operationId,
+      model: model(),
+      pdfAnalysis: {
+        pageCount: 30,
+        analysedPages: Array.from({ length: 30 }, (_, index) => index + 1),
+        crop: { top: 0, bottom: 0 },
+        scannedPages: [],
+        candidates: [],
+        densePages: [22],
+        fallbackPages: [{ page: 22, reason: 'dense', mode: 'image-and-text' }],
+      },
+    });
+    controller.rerunAnalysis();
+    expect(worker.postMessage.mock.lastCall![0].pdfOptions).toMatchObject({
+      densePageMode: 'image-and-text',
+    });
+    expect(worker.postMessage.mock.lastCall![0].pdfOptions).not.toHaveProperty(
+      'askDensePageMode',
+    );
+    controller.dispose?.();
+
+    const nextWorker = new WorkerStub();
+    stubWorkers(nextWorker);
+    const reopened = createBrowserController();
+    reopened.selectFiles([
+      new File([bytes], 'renamed.pdf', { type: 'application/pdf' }),
+    ]);
+    await vi.waitFor(() =>
+      expect(reopened.state.pdfImport.densePageMode).toBe('image-and-text'),
+    );
+    expect(reopened.state.pdfDensePageRemembered).toBe(true);
+    reopened.dispose?.();
+  });
+
+  it('changes a finished dense-page choice, reprocesses, and can forget it', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const stored = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => stored.set(key, value),
+    });
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([Uint8Array.from([1, 2])], 'dense.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    controller.rerunAnalysis();
+    const operationId = controller.state.operationId!;
+    worker.emit({
+      type: 'pdf-dense-page-question',
+      operationId,
+      page: 3,
+      vectorPaths: 2_600,
+    });
+    controller.setPdfDensePagePrompt?.({ remember: true });
+    controller.confirmPdfDensePageMode?.();
+    await vi.waitFor(() =>
+      expect(
+        Object.values(controller.state.preferences.densePageModes ?? {}),
+      ).toEqual(['image-and-prose']),
+    );
+    worker.emit({
+      type: 'analysed',
+      operationId,
+      model: model(),
+      pdfAnalysis: {
+        pageCount: 3,
+        analysedPages: [1, 2, 3],
+        crop: { top: 0, bottom: 0 },
+        scannedPages: [],
+        candidates: [],
+        densePages: [3],
+        fallbackPages: [{ page: 3, reason: 'dense', mode: 'image-and-prose' }],
+      },
+    });
+
+    controller.changePdfDensePageMode?.();
+    expect(controller.state.pdfDensePagePrompt).toEqual({
+      page: 3,
+      mode: 'image-and-prose',
+      remember: true,
+    });
+    controller.dismissPdfDensePagePrompt?.();
+    expect(controller.state.pdfDensePagePrompt).toBeUndefined();
+
+    controller.changePdfDensePageMode?.();
+    controller.setPdfDensePagePrompt?.({ mode: 'image-only', remember: false });
+    controller.confirmPdfDensePageMode?.();
+
+    expect(controller.state.status).toBe('analysing');
+    expect(worker.postMessage.mock.lastCall![0]).toMatchObject({
+      type: 'analyse',
+      pdfOptions: { densePageMode: 'image-only' },
+    });
+    await vi.waitFor(() =>
+      expect(controller.state.preferences.densePageModes).toEqual({}),
+    );
+    expect(controller.state.pdfDensePageRemembered).toBe(false);
+
+    const pendingOperationId = controller.state.operationId!;
+    controller.state.pdfDensePagePrompt = {
+      operationId: pendingOperationId,
+      page: 3,
+      mode: 'image-only',
+      remember: false,
+    };
+    controller.cancel();
+    expect(controller.state.pdfDensePagePrompt).toBeUndefined();
+    controller.dispose?.();
+  });
+
   it('retains formula decisions across PDF reruns and prunes disappeared candidates', async () => {
     vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
     const worker = new WorkerStub();

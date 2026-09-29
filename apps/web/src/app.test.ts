@@ -526,6 +526,67 @@ describe('App', () => {
     );
   });
 
+  it('asks what a conversion is for while a dense PDF page waits', () => {
+    const state = createInitialState('2026-09-01');
+    state.stage = 1;
+    state.status = 'analysing';
+    state.sourceFormat = 'pdf';
+    state.operationId = 'analyse-1';
+    state.progress = { phase: 'read', completed: 21, total: 36 };
+    state.pdfDensePagePrompt = {
+      operationId: 'analyse-1',
+      page: 22,
+      mode: 'image-and-text',
+      remember: false,
+    };
+
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+
+    expect(rendered).toContain('Page 22 contains a dense illustration');
+    expect(rendered).toContain('What is this conversion for?');
+    expect(rendered).toContain('"checkedId":"image-and-text"');
+    expect(rendered).toContain('Labels from the illustration may appear twice');
+    expect(rendered).toContain('Remember this choice for this document');
+    expect(rendered).toContain('Continue');
+    expect(rendered).not.toContain('Keep current choice');
+    expect(rendered.indexOf('pdf-dense-page-prompt')).toBeLessThan(
+      rendered.indexOf('progress-status'),
+    );
+  });
+
+  it('summarizes dense PDF page handling with a change control', () => {
+    const state = createInitialState('2026-09-01');
+    state.stage = 1;
+    state.status = 'ready';
+    state.sourceFormat = 'pdf';
+    state.pdfDensePageRemembered = true;
+    state.pdfAnalysis = {
+      pageCount: 3,
+      analysedPages: [1, 2, 3],
+      crop: { top: 0, bottom: 0 },
+      candidates: [],
+      scannedPages: [],
+      densePages: [2, 3],
+      fallbackPages: [
+        { page: 2, reason: 'dense', mode: 'image-only' },
+        { page: 3, reason: 'dense', mode: 'image-only' },
+      ],
+    };
+
+    const summary = JSON.stringify(renderApp(controllerFor(state)));
+    expect(summary).toContain('Pages 2, 3 contain dense illustrations');
+    expect(summary).toContain('Keep the page look');
+    expect(summary).toContain('(remembered for this document)');
+    expect(summary).toContain('pdf-dense-page-change');
+
+    state.pdfDensePagePrompt = { page: 2, mode: 'image-only', remember: true };
+    const prompt = JSON.stringify(renderApp(controllerFor(state)));
+    expect(prompt).toContain('Pages with dense illustrations');
+    expect(prompt).toContain('Apply and reprocess');
+    expect(prompt).toContain('Keep current choice');
+    expect(prompt).not.toContain('pdf-dense-page-change');
+  });
+
   it('shows background figure detection and places pagination under crop controls', () => {
     const state = createInitialState('2026-09-01');
     state.stage = 1;

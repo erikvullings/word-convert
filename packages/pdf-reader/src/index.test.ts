@@ -12,7 +12,17 @@ import {
   type RawPdfDocument,
   type RawPdfTextSpan,
 } from './index.ts';
-import { readImages, readSpans, recognizeFormulaCandidates } from './pdfjs.ts';
+import {
+  countVectorPaths,
+  proseSpans,
+  readGuardedPage,
+  readImages,
+  readSpans,
+  recognizeFormulaCandidates,
+  type GuardedPageContext,
+  type PdfExtractionOptions,
+  type PdfFigureRasterizer,
+} from './pdfjs.ts';
 
 async function fixture(name: string): Promise<Uint8Array> {
   return new Uint8Array(
@@ -4133,5 +4143,299 @@ describe('PDF.js extraction helpers', () => {
         maxTotalImagePixels: 10,
       }),
     ).rejects.toMatchObject({ code: 'resource-limit' });
+  });
+});
+
+describe('dense and slow PDF page guard', () => {
+  const testLimits = {
+    maxInputBytes: 1_000_000,
+    maxPages: 10,
+    maxTextItems: 1_000,
+    maxTextItemsPerPage: 1_000,
+    maxImages: 10,
+    maxImagePixels: 1_000_000,
+    maxTotalImagePixels: 1_000_000,
+    denseVectorPathsPerPage: 3,
+    pageTimeoutMs: 0,
+  };
+
+  function textItem(str: string, x: number, y: number, size: number) {
+    return {
+      str,
+      dir: 'ltr',
+      transform: [size, 0, 0, size, x, y],
+      width: str.length * size * 0.5,
+      height: size,
+      fontName: 'f1',
+      hasEOL: false,
+    };
+  }
+
+  function densePage(overrides: Record<string, unknown> = {}) {
+    return {
+      pageNumber: 1,
+      getViewport: ({ scale = 1 }: { scale?: number } = {}) => ({
+        width: 100 * scale,
+        height: 200 * scale,
+        rotation: 0,
+        transform: [scale, 0, 0, -scale, 0, 200 * scale],
+      }),
+      getTextContent: async () => ({
+        items: [
+          textItem('Dense heading', 10, 160, 16),
+          textItem('Body prose starts here and', 10, 60, 6),
+          textItem('continues on the next line.', 10, 52, 6),
+          textItem('Waarderen', 60, 120, 6),
+        ],
+        styles: { f1: { fontFamily: 'Arial', ascent: 0.8, descent: -0.2 } },
+        lang: null,
+      }),
+      getAnnotations: async () => [],
+      getStructTree: async () => null,
+      objs: { get: vi.fn() },
+      commonObjs: { get: vi.fn() },
+      getOperatorList: async () => ({
+        fnArray: [OPS.constructPath, OPS.constructPath, OPS.constructPath],
+        argsArray: [
+          [20, [], Float32Array.from([10, 90, 50, 130])],
+          [20, [], Float32Array.from([40, 80, 90, 120])],
+          [20, [], Float32Array.from([20, 70, 60, 110])],
+        ],
+      }),
+      render: vi.fn(() => ({ promise: Promise.resolve() })),
+      ...overrides,
+    };
+  }
+
+  function rasterizer(dispose = vi.fn()): PdfFigureRasterizer {
+    return {
+      CanvasFactory: class {},
+      FilterFactory: class {
+        destroy(): void {}
+      },
+      createSurface: (width, height) => ({
+        canvas: { width, height },
+        encodePng: async () => Uint8Array.from([137, 80, 78, 71]),
+        dispose,
+      }),
+    };
+  }
+
+  function context(
+    options: Partial<PdfExtractionOptions> = {},
+    densePageMode?: GuardedPageContext['densePageMode'],
+  ): GuardedPageContext {
+    return {
+      options: {
+        figureRasterizer: rasterizer(),
+        ...options,
+        limits: { ...testLimits, ...options.limits },
+      },
+      imageBudget: { images: 0, pixels: 0 },
+      formulaBudget: { candidates: 0, cropPixels: 0, recognized: 0 },
+      includeImages: true,
+      densePageMode,
+      guard: { timedOut: false },
+    };
+  }
+
+  it('asks how to convert a dense page and keeps its prose beside the page image', async () => {
+    const resolveDensePageMode = vi.fn(async () => 'image-and-prose' as const);
+    const dispose = vi.fn();
+    const guarded = context({
+      resolveDensePageMode,
+      figureRasterizer: rasterizer(dispose),
+    });
+
+    const result = await readGuardedPage(densePage() as never, 1, guarded);
+
+    expect(resolveDensePageMode).toHaveBeenCalledExactlyOnceWith({
+      page: 1,
+      vectorPaths: 3,
+    });
+    expect(result.denseMode).toBe('image-and-prose');
+    expect(result.page).toMatchObject({
+      dense: true,
+      fallback: { reason: 'dense', mode: 'image-and-prose' },
+      images: [
+        {
+          id: 'pdf-page-1',
+          source: 'rendered-page',
+          pixelWidth: 200,
+          pixelHeight: 400,
+          x: 0,
+          top: 0,
+          width: 1,
+          height: 1,
+        },
+      ],
+    });
+    expect(result.page.images[0]!.placementTop).toBeCloseTo(0.35, 2);
+    const text = result.page.spans.map(({ text }) => text);
+    expect(text).toContain('Dense heading');
+    expect(text).toContain('Body prose starts here and');
+    expect(text).not.toContain('Waarderen');
+    expect(guarded.imageBudget).toEqual({ images: 1, pixels: 80_000 });
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('applies a known dense-page choice without asking and bounds the page raster', async () => {
+    const resolveDensePageMode = vi.fn();
+    const result = await readGuardedPage(
+      densePage() as never,
+      1,
+      context(
+        {
+          resolveDensePageMode,
+          limits: { ...testLimits, maxImagePixels: 5_000 },
+        },
+        'image-only',
+      ),
+    );
+
+    expect(resolveDensePageMode).not.toHaveBeenCalled();
+    expect(result.page.spans).toEqual([]);
+    expect(result.page.images[0]).toMatchObject({
+      pixelWidth: 50,
+      pixelHeight: 100,
+    });
+  });
+
+  it('does not flag pages below the dense threshold', async () => {
+    const resolveDensePageMode = vi.fn();
+    const result = await readGuardedPage(
+      densePage() as never,
+      1,
+      context({
+        resolveDensePageMode,
+        limits: { ...testLimits, denseVectorPathsPerPage: 4 },
+      }),
+    );
+
+    expect(resolveDensePageMode).not.toHaveBeenCalled();
+    expect(result.page.dense).toBeUndefined();
+    expect(result.page.fallback).toBeUndefined();
+  });
+
+  it('keeps page text and restores budgets when a page misses its deadline', async () => {
+    const guarded = context(
+      { limits: { ...testLimits, pageTimeoutMs: 20 } },
+      'image-and-text',
+    );
+    const result = await readGuardedPage(
+      densePage({
+        render: () => ({ promise: new Promise(() => undefined) }),
+      }) as never,
+      1,
+      guarded,
+    );
+
+    expect(result.page).toMatchObject({
+      dense: true,
+      fallback: { reason: 'timeout', mode: 'text-only' },
+      images: [],
+    });
+    expect(result.page.spans.map(({ text }) => text)).toContain('Waarderen');
+    expect(guarded.imageBudget).toEqual({ images: 0, pixels: 0 });
+    expect(guarded.guard.timedOut).toBe(true);
+  });
+
+  it('reports a recoverable limit when even page text misses its deadline', async () => {
+    await expect(
+      readGuardedPage(
+        densePage({
+          getTextContent: () => new Promise(() => undefined),
+        }) as never,
+        1,
+        context(
+          { limits: { ...testLimits, pageTimeoutMs: 20 } },
+          'image-and-text',
+        ),
+      ),
+    ).rejects.toMatchObject({
+      code: 'resource-limit',
+      recoverable: true,
+      details: { page: 1, limit: 20 },
+    });
+  });
+
+  it('counts vector paths and keeps headings and prose but not isolated labels', () => {
+    expect(
+      countVectorPaths({
+        fnArray: [OPS.constructPath, OPS.fill, OPS.constructPath],
+        argsArray: [],
+      } as never),
+    ).toBe(2);
+    const spans = [
+      span('Section heading', 0.1, 0.1, { fontSize: 16, height: 0.03 }),
+      span('First body line with several words', 0.1, 0.6, { fontSize: 10 }),
+      span('second body line', 0.1, 0.625, { fontSize: 10 }),
+      span('Label', 0.5, 0.35, { fontSize: 10, width: 0.08 }),
+      span('12', 0.9, 0.95, { fontSize: 10, width: 0.03 }),
+    ];
+
+    expect(proseSpans(spans).map(({ text }) => text)).toEqual([
+      'Section heading',
+      'First body line with several words',
+      'second body line',
+      '12',
+    ]);
+  });
+
+  it('resolves images shared across pages from the document object pool', async () => {
+    const image = {
+      width: 1,
+      height: 1,
+      kind: 3,
+      data: Uint8Array.from([10, 20, 30, 255]),
+    };
+    const pageObjects = vi.fn();
+    const page = {
+      pageNumber: 2,
+      getViewport: () => ({ width: 100, height: 100 }),
+      objs: { get: pageObjects },
+      commonObjs: {
+        get: (_id: string, callback: (value: unknown) => void) =>
+          callback(image),
+      },
+      getOperatorList: async () => ({
+        fnArray: [OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore],
+        argsArray: [
+          undefined,
+          [20, 0, 0, 20, 10, 10],
+          ['g_d0_img_p1_1'],
+          undefined,
+        ],
+      }),
+    };
+
+    const images = await readImages(page as never, [1, 0, 0, 1, 0, 0], {
+      ...testLimits,
+      maxImagePixels: 10,
+      maxTotalImagePixels: 10,
+    });
+
+    expect(images).toHaveLength(1);
+    expect(pageObjects).not.toHaveBeenCalled();
+  });
+
+  it('asks once per document and reports dense pages converted with regular extraction', async () => {
+    const resolveDensePageMode = vi.fn(async () => 'extract' as const);
+    const result = await pdfJsReader.read(
+      await fixture('two-column-article.pdf'),
+      {
+        conversionDate: '2026-01-01T00:00:00Z',
+        figureRasterizer: rasterizer(),
+        limits: { denseVectorPathsPerPage: 0 },
+        resolveDensePageMode,
+      },
+    );
+
+    expect(resolveDensePageMode).toHaveBeenCalledOnce();
+    expect(result.analysis.densePages?.length).toBeGreaterThan(0);
+    expect(result.analysis.fallbackPages ?? []).toEqual([]);
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({ code: 'pdf-dense-pages-extracted' }),
+    );
   });
 });

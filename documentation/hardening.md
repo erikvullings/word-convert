@@ -18,9 +18,10 @@ This document is the release checklist for security, privacy, performance, and b
 | Script injection through metadata, formulas, or filenames | Escape semantic text and generate safe output paths | HTML/Markdown/EPUB writer hostile-input tests, math-converter injection test, cover-generator escaping test |
 | Active markup entered in the EPUB content editor | Parse Markdown tokens into typed document blocks; preserve raw HTML as escaped text; reconnect exact existing asset data URIs; import only signature-checked AVIF, GIF, JPEG, PNG, and WebP data URIs with 10 MiB per-image, 50 MiB aggregate, and 100-image limits | Content-editor parser and base64-image import tests; restrictive preview DOMPurify policy |
 | Failure and cancellation cleanup | Remove every operation in `finally`; stale cancellation creates no retained state | Worker runtime cancellation and actual reader-failure tests assert zero active operations and private errors |
-| Sensitive-data disclosure | No document logging, analytics, conversion fetches, URL parameters, or document persistence | Worker test spies on console and `fetch`; state tests restrict storage to preferences and validated mapping presets |
+| Sensitive-data disclosure | No document logging, analytics, conversion fetches, URL parameters, or document persistence; an opted-in dense-page choice stores only a SHA-256 fingerprint of the PDF bytes and the chosen mode, for at most 50 documents | Worker test spies on console and `fetch`; state tests restrict storage to preferences, validated mapping presets, and validated, bounded dense-page choices; controller test asserts filenames are not stored |
 | Excessive PDF input | `maxInputBytes: 50 MiB`, `maxPages: 2,000`, `maxTextItems: 2,000,000`, and `maxTextItemsPerPage: 100,000` | PDF reader corpus and configurable-limit tests |
 | Excessive PDF raster images | `maxImagePixels: 40,000,000` per image, `maxImages: 10,000`, and `maxTotalImagePixels: 80,000,000` across placements | PDF reader configurable per-image and aggregate-limit tests |
+| Dense or slow PDF pages | Pages with at least `denseVectorPathsPerPage: 2,500` path operations use the user's dense-page choice; each page stage has a `pageTimeoutMs: 60,000` deadline, then falls back to a whole-page image with its text, then to text only, and finally to a recoverable `resource-limit` error. Page images are charged to the existing image budgets; abandoned attempts cannot charge them | PDF reader dense-page and deadline tests; worker question, answer, and cancellation tests |
 | PDF vector figure rendering | Detect connected path regions, render only bounded regions to passive PNG, and charge them to the existing image-count and pixel budgets | PDF reader figure-region and aggregate-limit tests; browser conversion check |
 | PDF layout model | Run the bundled Apache-2.0 Heron FP16 ONNX model on fixed 640×640 local page renders; accept only bounded, confident picture/table proposals and retain deterministic geometry fallback | Heron preprocessing/decoding tests and PDF proposal-fusion tests |
 | PDF formula recognition | At most 100 candidates per page and 1,000 per document; 4 MP per temporary crop, 40 MP total, and 512 decoder tokens; strict safe KaTeX validation; preserve source on every failure | Formula candidate, real-crop, fake-session adapter, cancellation, and opt-in real-model tests |
@@ -44,6 +45,11 @@ The synthetic PDF corpus covers one- and two-column text, tagged structure,
 links, raster images, odd/even running headers, page-number footers, image-only
 pages, password protection, and malformed input. Repeated PDF reads must produce
 deeply equal analysis and `DocumentModel` values.
+
+The per-page PDF deadline is a wall-clock safety net, so a page that reaches it
+can produce different output on a slower machine. Pages that finish within the
+deadline are unaffected. Hosts that require strictly reproducible output can
+set `pageTimeoutMs: 0` to disable the deadline.
 
 ## Browser support policy
 
@@ -110,6 +116,25 @@ representative browser budget is under 1 second for the cleanup sample and
 under 10 seconds for the default full pass on the reference machine.
 
 During the full-document pass, connected clusters of PDF vector paths and substantial embedded images seed bounded figure regions that PDF.js renders to passive PNG assets inside the conversion worker. Image-seeded renders preserve the effective source-image resolution up to the configured pixel budget, include overlaid PDF labels or drawing commands, and suppress duplicate text inside the rendered region. Tiny icons remain independent assets. Figure surfaces are capped by the existing per-image and aggregate pixel budgets and are released immediately after PNG encoding. This deliberately favors ebook fidelity and passive output over exporting active SVG or fragmented text assembled from untrusted PDF drawing commands.
+
+Dense vector illustrations, such as process infographics with thousands of
+path operations, are slow to reconstruct and are often dropped by region
+detection because their bounds enclose surrounding prose. During the full pass,
+the worker counts path operations per page. At the first page that reaches the
+dense threshold, the SPA asks what the conversion is for: a readable document
+(page image plus headings and body text), every word (page image plus all
+text), the page look (page image only), or regular text extraction. The answer
+applies to every dense page in the document and is kept for reruns. Page images
+are rendered at up to 2× scale within the per-image pixel limit. Their position
+follows the first 10% of artwork paths, so leading headings stay before the
+image. The prose filter keeps multi-line blocks, blocks of at least eight
+words, text at least 1.2× the body size, and page-edge furniture; isolated
+labels remain only in the image. Users can opt in to remember the choice for a
+document. The choice is keyed by a SHA-256 fingerprint of the PDF bytes, never
+by filename, and can be changed or forgotten from the output-format stage. A
+page that misses its deadline is converted as a page image with all its text,
+or as text only when rendering also misses the deadline. Later pages then skip
+the learned layout model so abandoned work never shares it.
 
 The SPA offers enhanced figure and table detection as an explicit, per-document
 option because its document-wide model pass is expensive for long text-first

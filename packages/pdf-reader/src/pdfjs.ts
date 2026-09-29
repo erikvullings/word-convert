@@ -50,7 +50,35 @@ export interface PdfReaderLimits {
   maxImages: number;
   maxImagePixels: number;
   maxTotalImagePixels: number;
+  /** Vector path operations at which a page counts as a dense illustration. */
+  denseVectorPathsPerPage: number;
+  /** Per-page processing budget before the page falls back to a page image; 0 disables it. */
+  pageTimeoutMs: number;
 }
+
+/**
+ * How pages with dense vector illustrations are converted.
+ * `extract` keeps the regular figure/text reconstruction; the other modes
+ * render the whole page as one image and retain prose, all text, or no text.
+ */
+export type PdfDensePageMode =
+  'extract' | 'image-and-prose' | 'image-and-text' | 'image-only';
+
+export const PDF_DENSE_PAGE_MODES: readonly PdfDensePageMode[] = [
+  'image-and-prose',
+  'image-and-text',
+  'image-only',
+  'extract',
+];
+
+export interface PdfDensePage {
+  page: number;
+  vectorPaths: number;
+}
+
+export type PdfDensePageResolver = (
+  page: PdfDensePage,
+) => Promise<PdfDensePageMode>;
 
 export interface PdfExtractionOptions {
   limits: PdfReaderLimits;
@@ -62,6 +90,9 @@ export interface PdfExtractionOptions {
   formulaRecognizer?: PdfFormulaRecognizer;
   formulaLimits?: PdfFormulaLimits;
   manualFormulaRegions?: readonly PdfManualFormulaRegion[];
+  densePageMode?: PdfDensePageMode;
+  /** Asked once, at the first dense page, when `densePageMode` is not set. */
+  resolveDensePageMode?: PdfDensePageResolver;
 }
 
 type PdfOperatorList = Awaited<ReturnType<PDFPageProxy['getOperatorList']>>;
@@ -223,6 +254,8 @@ export async function extractPdfWithPdfJs(
       cropPixels: 0,
       recognized: 0,
     };
+    let densePageMode = options.densePageMode;
+    const guard = { timedOut: false };
     try {
       for (const [index, pageNumber] of pageNumbers.entries()) {
         throwIfCancelled(options.cancellation);
@@ -234,20 +267,16 @@ export async function extractPdfWithPdfJs(
         });
         const page = await document.getPage(pageNumber);
         try {
-          const extracted = await readPage(
-            page,
-            pageNumber,
-            options.limits,
+          const extracted = await readGuardedPage(page, pageNumber, {
+            options,
             imageBudget,
-            options.cancellation,
-            !isSample,
-            options.figureRasterizer,
-            options.layoutDetector,
-            options.formulaLimits,
-            options.manualFormulaRegions,
             formulaBudget,
-          );
-          textItems += extracted.spans.length;
+            includeImages: !isSample,
+            densePageMode,
+            guard,
+          });
+          if (extracted.denseMode) densePageMode = extracted.denseMode;
+          textItems += extracted.page.spans.length;
           if (textItems > options.limits.maxTextItems)
             throw new PdfReadError(
               'resource-limit',
@@ -260,7 +289,7 @@ export async function extractPdfWithPdfJs(
                 },
               },
             );
-          pages.push(extracted);
+          pages.push(extracted.page);
         } finally {
           page.cleanup();
         }
@@ -359,6 +388,538 @@ export function representativePageNumbers(
   );
 }
 
+export interface GuardedPageContext {
+  options: PdfExtractionOptions;
+  imageBudget: PdfImageBudget;
+  formulaBudget: PdfFormulaBudget;
+  includeImages: boolean;
+  densePageMode: PdfDensePageMode | undefined;
+  /** Set after the first page deadline; later pages no longer share the layout model with abandoned work. */
+  guard: { timedOut: boolean };
+}
+
+interface PageBudgets {
+  image: PdfImageBudget;
+  formula: PdfFormulaBudget;
+}
+
+type RasterPageMode = Exclude<PdfDensePageMode, 'extract'>;
+
+class PageDeadlineExceeded extends Error {}
+
+export async function readGuardedPage(
+  page: PDFPageProxy,
+  pageNumber: number,
+  context: GuardedPageContext,
+): Promise<{ page: RawPdfPage; denseMode?: PdfDensePageMode }> {
+  const { options, includeImages } = context;
+  const { limits, figureRasterizer, cancellation } = options;
+  let operators: PdfOperatorList | undefined;
+  try {
+    operators = await withPageDeadline(limits.pageTimeoutMs, cancellation, () =>
+      page.getOperatorList(),
+    );
+  } catch (cause) {
+    if (!(cause instanceof PageDeadlineExceeded)) throw cause;
+    context.guard.timedOut = true;
+  }
+  let dense = false;
+  let denseMode: PdfDensePageMode | undefined;
+  if (operators) {
+    const vectorPaths = includeImages ? countVectorPaths(operators) : 0;
+    dense = includeImages && vectorPaths >= limits.denseVectorPathsPerPage;
+    if (dense && figureRasterizer) {
+      denseMode =
+        context.densePageMode ??
+        (await options.resolveDensePageMode?.({
+          page: pageNumber,
+          vectorPaths,
+        })) ??
+        'extract';
+      throwIfCancelled(cancellation);
+    }
+    const loadedOperators = operators;
+    const rasterMode =
+      denseMode && denseMode !== 'extract' ? denseMode : undefined;
+    const extracted = await attemptPage(context, (signal, budgets) =>
+      rasterMode && figureRasterizer
+        ? readRasterizedPage(
+            page,
+            pageNumber,
+            loadedOperators,
+            rasterMode,
+            limits,
+            budgets.image,
+            figureRasterizer,
+            signal,
+          )
+        : readPage(
+            page,
+            pageNumber,
+            limits,
+            budgets.image,
+            signal,
+            includeImages,
+            figureRasterizer,
+            context.guard.timedOut ? undefined : options.layoutDetector,
+            options.formulaLimits,
+            options.manualFormulaRegions,
+            budgets.formula,
+            loadedOperators,
+          ),
+    );
+    const densePage = dense ? { dense: true } : {};
+    const resolved = denseMode ? { denseMode } : {};
+    if (extracted)
+      return {
+        page: {
+          ...extracted,
+          ...densePage,
+          ...(rasterMode
+            ? { fallback: { reason: 'dense', mode: rasterMode } }
+            : {}),
+        },
+        ...resolved,
+      };
+    if (figureRasterizer && !rasterMode) {
+      const rasterized = await attemptPage(context, (signal, budgets) =>
+        readRasterizedPage(
+          page,
+          pageNumber,
+          loadedOperators,
+          'image-and-text',
+          limits,
+          budgets.image,
+          figureRasterizer,
+          signal,
+        ),
+      );
+      if (rasterized)
+        return {
+          page: {
+            ...rasterized,
+            ...densePage,
+            fallback: { reason: 'timeout', mode: 'image-and-text' },
+          },
+          ...resolved,
+        };
+    }
+  }
+  const textOnly = await attemptPage(context, (signal) =>
+    readTextOnlyPage(page, pageNumber, limits, signal),
+  );
+  if (textOnly)
+    return {
+      page: {
+        ...textOnly,
+        ...(dense ? { dense: true } : {}),
+        fallback: { reason: 'timeout', mode: 'text-only' },
+      },
+      ...(denseMode ? { denseMode } : {}),
+    };
+  throw new PdfReadError(
+    'resource-limit',
+    'A PDF page could not be read within the page time limit.',
+    {
+      phase: 'read',
+      recoverable: true,
+      details: { page: pageNumber, limit: limits.pageTimeoutMs },
+    },
+  );
+}
+
+async function attemptPage<T>(
+  context: GuardedPageContext,
+  run: (
+    signal: CancellationSignal | undefined,
+    budgets: PageBudgets,
+  ) => Promise<T>,
+): Promise<T | undefined> {
+  // Abandoned attempts keep running until their next checkpoint, so they must
+  // not charge the shared budgets.
+  const budgets: PageBudgets = {
+    image: { ...context.imageBudget },
+    formula: { ...context.formulaBudget },
+  };
+  try {
+    const result = await withPageDeadline(
+      context.options.limits.pageTimeoutMs,
+      context.options.cancellation,
+      (signal) => run(signal, budgets),
+    );
+    Object.assign(context.imageBudget, budgets.image);
+    Object.assign(context.formulaBudget, budgets.formula);
+    return result;
+  } catch (cause) {
+    if (!(cause instanceof PageDeadlineExceeded)) throw cause;
+    context.guard.timedOut = true;
+    return undefined;
+  }
+}
+
+async function withPageDeadline<T>(
+  timeoutMs: number,
+  parent: CancellationSignal | undefined,
+  run: (signal: CancellationSignal | undefined) => Promise<T>,
+): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return run(parent);
+  let expired = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const signal: CancellationSignal = {
+    get cancelled() {
+      return expired || parent?.cancelled === true;
+    },
+  };
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      expired = true;
+      reject(new PageDeadlineExceeded());
+    }, timeoutMs);
+  });
+  const work = run(signal);
+  work.catch(() => undefined);
+  try {
+    return await Promise.race([work, deadline]);
+  } catch (cause) {
+    if (expired && parent?.cancelled !== true) throw new PageDeadlineExceeded();
+    throw cause;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function countVectorPaths(operators: PdfOperatorList): number {
+  let paths = 0;
+  for (const operation of operators.fnArray)
+    if (operation === OPS.constructPath) paths++;
+  return paths;
+}
+
+async function readPageText(
+  page: PDFPageProxy,
+  pageNumber: number,
+  limits: PdfReaderLimits,
+  cancellation?: CancellationSignal,
+): Promise<{ spans: RawPdfTextSpan[]; links: RawPdfLink[] }> {
+  const viewport = page.getViewport({ scale: 1 });
+  const [text, annotations] = await Promise.all([
+    page.getTextContent({
+      includeMarkedContent: true,
+      disableNormalization: false,
+    }),
+    page.getAnnotations({ intent: 'display' }),
+  ]);
+  throwIfCancelled(cancellation);
+  enforcePageTextLimit(text, limits);
+  const links = readLinks(annotations, viewport);
+  return {
+    spans: readSpans(
+      text,
+      links,
+      viewport.width,
+      viewport.height,
+      viewport.transform as Matrix,
+      pageNumber,
+    ),
+    links,
+  };
+}
+
+function enforcePageTextLimit(
+  text: TextContent,
+  limits: PdfReaderLimits,
+): void {
+  if (text.items.length > limits.maxTextItemsPerPage)
+    throw new PdfReadError(
+      'resource-limit',
+      'A PDF page exceeds the text item limit.',
+      {
+        phase: 'read',
+        details: {
+          limit: limits.maxTextItemsPerPage,
+          actual: text.items.length,
+        },
+      },
+    );
+}
+
+async function readTextOnlyPage(
+  page: PDFPageProxy,
+  pageNumber: number,
+  limits: PdfReaderLimits,
+  cancellation?: CancellationSignal,
+): Promise<RawPdfPage> {
+  const viewport = page.getViewport({ scale: 1 });
+  const { spans, links } = await readPageText(
+    page,
+    pageNumber,
+    limits,
+    cancellation,
+  );
+  return {
+    number: pageNumber,
+    width: viewport.width,
+    height: viewport.height,
+    rotation: viewport.rotation,
+    spans,
+    links,
+    images: [],
+  };
+}
+
+async function readRasterizedPage(
+  page: PDFPageProxy,
+  pageNumber: number,
+  operators: PdfOperatorList,
+  mode: RasterPageMode,
+  limits: PdfReaderLimits,
+  imageBudget: PdfImageBudget,
+  rasterizer: PdfFigureRasterizer,
+  cancellation?: CancellationSignal,
+): Promise<RawPdfPage> {
+  const viewport = page.getViewport({ scale: 1 });
+  const text =
+    mode === 'image-only'
+      ? { spans: [], links: [] }
+      : await readPageText(page, pageNumber, limits, cancellation);
+  const spans =
+    mode === 'image-and-prose' ? proseSpans(text.spans) : text.spans;
+  const linkIds = new Set(spans.map(({ linkId }) => linkId));
+  const placementTop = await artworkTop(
+    page,
+    operators,
+    viewport.transform as Matrix,
+    cancellation,
+  );
+  return {
+    number: pageNumber,
+    width: viewport.width,
+    height: viewport.height,
+    rotation: viewport.rotation,
+    spans,
+    links: text.links.filter(({ id }) => linkIds.has(id)),
+    images: [
+      await rasterizePage(
+        page,
+        pageNumber,
+        limits,
+        imageBudget,
+        rasterizer,
+        placementTop,
+        cancellation,
+      ),
+    ],
+  };
+}
+
+const PAGE_RASTER_SCALE = 2;
+
+async function rasterizePage(
+  page: PDFPageProxy,
+  pageNumber: number,
+  limits: PdfReaderLimits,
+  imageBudget: PdfImageBudget,
+  rasterizer: PdfFigureRasterizer,
+  placementTop: number,
+  cancellation?: CancellationSignal,
+): Promise<RawPdfImage> {
+  const base = page.getViewport({ scale: 1 });
+  const scale = Math.min(
+    PAGE_RASTER_SCALE,
+    Math.sqrt(limits.maxImagePixels / (base.width * base.height)),
+  );
+  const viewport = page.getViewport({ scale });
+  const pixelWidth = Math.max(1, Math.floor(viewport.width));
+  const pixelHeight = Math.max(1, Math.floor(viewport.height));
+  reserveImages(
+    { width: pixelWidth, height: pixelHeight },
+    1,
+    limits,
+    imageBudget,
+  );
+  const surface = rasterizer.createSurface(pixelWidth, pixelHeight);
+  try {
+    await renderFigureSurface(
+      page,
+      viewport,
+      { x: 0, top: 0, width: 1, height: 1 },
+      surface,
+    );
+    throwIfCancelled(cancellation);
+    const data = await surface.encodePng();
+    throwIfCancelled(cancellation);
+    return {
+      id: `pdf-page-${pageNumber}`,
+      x: 0,
+      top: 0,
+      width: 1,
+      height: 1,
+      placementTop,
+      pixelWidth,
+      pixelHeight,
+      mediaType: 'image/png',
+      data,
+      source: 'rendered-page',
+    };
+  } finally {
+    surface.dispose();
+  }
+}
+
+/**
+ * Estimates where the bulk of the page artwork starts, so a page image is
+ * placed after leading headings rather than before all page text.
+ */
+async function artworkTop(
+  page: PDFPageProxy,
+  operators: PdfOperatorList,
+  viewportTransform: Matrix,
+  cancellation?: CancellationSignal,
+): Promise<number> {
+  const viewport = page.getViewport({ scale: 1 });
+  const stack: Matrix[] = [];
+  let transform: Matrix = [1, 0, 0, 1, 0, 0];
+  const tops: number[] = [];
+  for (let index = 0; index < operators.fnArray.length; index++) {
+    if (index % 1_000 === 0) {
+      await yieldToEventLoop();
+      throwIfCancelled(cancellation);
+    }
+    const operation = operators.fnArray[index];
+    const args = operators.argsArray[index] as unknown[] | undefined;
+    if (operation === OPS.save) stack.push([...transform]);
+    else if (operation === OPS.restore) transform = stack.pop() ?? transform;
+    else if (operation === OPS.transform && isNumberArray(args, 6))
+      transform = multiply(transform, args);
+    else if (
+      operation === OPS.constructPath &&
+      isNumberSequence(args?.[2]) &&
+      args[2].length >= 4
+    ) {
+      const bounds = rectangleBounds(
+        multiply(viewportTransform, transform),
+        args[2][0]!,
+        args[2][1]!,
+        args[2][2]!,
+        args[2][3]!,
+        viewport.width,
+        viewport.height,
+      );
+      if (
+        bounds.width * bounds.height < 0.5 &&
+        bounds.top >= ARTWORK_FURNITURE_BAND &&
+        bounds.top + bounds.height <= 1 - ARTWORK_FURNITURE_BAND
+      )
+        tops.push(bounds.top);
+    }
+  }
+  if (tops.length === 0) return 0;
+  tops.sort((left, right) => left - right);
+  return tops[Math.floor((tops.length - 1) * ARTWORK_TOP_PERCENTILE)]!;
+}
+
+const ARTWORK_FURNITURE_BAND = 0.08;
+const ARTWORK_TOP_PERCENTILE = 0.1;
+
+/**
+ * Keeps headings and flowing prose while dropping short, isolated artwork
+ * labels that are already legible in the page image.
+ */
+export function proseSpans(spans: readonly RawPdfTextSpan[]): RawPdfTextSpan[] {
+  const visible = spans.filter(({ text }) => text.trim());
+  if (visible.length === 0) return [];
+  const bodySize = weightedMedianFontSize(visible);
+  const lines: RawPdfTextSpan[][] = [];
+  for (const span of [...visible].sort(
+    (left, right) => left.top - right.top || left.x - right.x,
+  )) {
+    const line = lines.find((candidate) => {
+      const last = candidate.at(-1)!;
+      return (
+        Math.abs(last.top - span.top) <=
+          Math.max(0.004, 0.3 * Math.min(last.height, span.height)) &&
+        span.x - (last.x + last.width) <= 0.05 &&
+        span.x + span.width >= last.x
+      );
+    });
+    if (line) line.push(span);
+    else lines.push([span]);
+  }
+  const blocks: RawPdfTextSpan[][][] = [];
+  for (const line of lines
+    .map((spansInLine) => spansInLine.sort((left, right) => left.x - right.x))
+    .sort((left, right) => left[0]!.top - right[0]!.top)) {
+    const bounds = spanUnion(line);
+    const block = blocks.find((candidate) => {
+      const previous = spanUnion(candidate.at(-1)!);
+      const gap = bounds.top - (previous.top + previous.height);
+      return (
+        gap >= -previous.height * 0.5 &&
+        gap <= Math.max(previous.height, bounds.height) &&
+        bounds.x < previous.x + previous.width &&
+        bounds.x + bounds.width > previous.x &&
+        Math.abs(line[0]!.fontSize - candidate.at(-1)![0]!.fontSize) <= 1.5
+      );
+    });
+    if (block) block.push(line);
+    else blocks.push([line]);
+  }
+  const retained = new Set<string>();
+  for (const block of blocks) {
+    const blockSpans = block.flat();
+    const bounds = spanUnion(blockSpans);
+    const words = blockSpans
+      .map(({ text }) => text.match(/\p{L}[\p{L}\p{N}'’-]*/gu)?.length ?? 0)
+      .reduce((total, count) => total + count, 0);
+    const largest = Math.max(...blockSpans.map(({ fontSize }) => fontSize));
+    if (
+      block.length >= 2 ||
+      words >= 8 ||
+      largest >= bodySize * 1.2 ||
+      bounds.top < ARTWORK_FURNITURE_BAND ||
+      bounds.top + bounds.height > 1 - ARTWORK_FURNITURE_BAND
+    )
+      for (const span of blockSpans) retained.add(span.id);
+  }
+  // Whitespace spans between retained words keep their line joins intact.
+  return spans.filter(
+    (span) =>
+      retained.has(span.id) ||
+      (!span.text.trim() &&
+        visible.some(
+          (other) =>
+            retained.has(other.id) &&
+            Math.abs(other.top - span.top) <= 0.004 &&
+            Math.abs(other.x + other.width - span.x) <= 0.02,
+        )),
+  );
+}
+
+function weightedMedianFontSize(spans: readonly RawPdfTextSpan[]): number {
+  const sizes = spans
+    .map(({ fontSize, text }) => ({ fontSize, weight: text.trim().length }))
+    .sort((left, right) => left.fontSize - right.fontSize);
+  const half = sizes.reduce((total, { weight }) => total + weight, 0) / 2;
+  let seen = 0;
+  for (const { fontSize, weight } of sizes) {
+    seen += weight;
+    if (seen >= half) return fontSize;
+  }
+  return sizes.at(-1)?.fontSize ?? 0;
+}
+
+function spanUnion(spans: readonly RawPdfTextSpan[]): NormalizedBounds {
+  return spans.reduce<NormalizedBounds>(
+    (bounds, span) => unionBounds(bounds, span),
+    {
+      x: spans[0]!.x,
+      top: spans[0]!.top,
+      width: spans[0]!.width,
+      height: spans[0]!.height,
+    },
+  );
+}
+
 async function readPage(
   page: PDFPageProxy,
   pageNumber: number,
@@ -375,6 +936,7 @@ async function readPage(
     cropPixels: 0,
     recognized: 0,
   },
+  preloadedOperators?: PdfOperatorList,
 ): Promise<RawPdfPage> {
   const viewport = page.getViewport({ scale: 1 });
   const [text, annotations, structure, operators] = await Promise.all([
@@ -384,21 +946,10 @@ async function readPage(
     }),
     page.getAnnotations({ intent: 'display' }),
     page.getStructTree(),
-    page.getOperatorList(),
+    preloadedOperators ?? page.getOperatorList(),
   ]);
   throwIfCancelled(cancellation);
-  if (text.items.length > limits.maxTextItemsPerPage)
-    throw new PdfReadError(
-      'resource-limit',
-      'A PDF page exceeds the text item limit.',
-      {
-        phase: 'read',
-        details: {
-          limit: limits.maxTextItemsPerPage,
-          actual: text.items.length,
-        },
-      },
-    );
+  enforcePageTextLimit(text, limits);
   const links = readLinks(annotations, viewport);
   const spans = readSpans(
     text,
@@ -1966,8 +2517,10 @@ function objectValue<T>(
   page: PDFPageProxy,
   id: string,
 ): Promise<T | undefined> {
+  // PDF.js stores images shared across pages in the document-wide pool.
+  const objects = id.startsWith('g_') ? page.commonObjs : page.objs;
   return new Promise((resolve) => {
-    page.objs.get(id, (value: unknown) =>
+    objects.get(id, (value: unknown) =>
       resolve(isRecord(value) ? (value as T) : undefined),
     );
   });

@@ -25,12 +25,17 @@ import {
 } from './formula/index.ts';
 import {
   extractPdfWithPdfJs,
+  type PdfDensePageMode,
+  type PdfDensePageResolver,
   type PdfFigureRasterizer,
   type PdfLayoutDetector,
   type PdfReaderLimits,
 } from './pdfjs.ts';
-export { configurePdfJsWorker } from './pdfjs.ts';
+export { configurePdfJsWorker, PDF_DENSE_PAGE_MODES } from './pdfjs.ts';
 export type {
+  PdfDensePage,
+  PdfDensePageMode,
+  PdfDensePageResolver,
   PdfFigureRasterizer,
   PdfLayoutDetector,
   PdfLayoutImage,
@@ -86,7 +91,15 @@ export interface RawPdfImage {
   pixelHeight: number;
   mediaType: 'image/png' | 'image/jpeg';
   data: Uint8Array;
-  source?: 'embedded' | 'rendered-figure' | 'rendered-equation';
+  source?:
+    'embedded' | 'rendered-figure' | 'rendered-equation' | 'rendered-page';
+  /** Page-relative top used for reading-order placement when it differs from `top`. */
+  placementTop?: number;
+}
+
+export interface RawPdfPageFallback {
+  reason: 'dense' | 'timeout';
+  mode: Exclude<PdfDensePageMode, 'extract'> | 'text-only';
 }
 
 export interface RawPdfPage {
@@ -95,6 +108,9 @@ export interface RawPdfPage {
   height: number;
   rotation: number;
   imageBacked?: boolean;
+  /** The page exceeded the dense vector illustration threshold. */
+  dense?: boolean;
+  fallback?: RawPdfPageFallback;
   spans: RawPdfTextSpan[];
   links: RawPdfLink[];
   images: RawPdfImage[];
@@ -170,6 +186,8 @@ export interface PdfAnalysisSummary {
   candidates: PdfFurnitureCandidate[];
   scannedPages: number[];
   imageBackedPages?: number[];
+  densePages?: number[];
+  fallbackPages?: Array<RawPdfPageFallback & { page: number }>;
   formulaCandidates?: PdfFormulaCandidate[];
   formulaImageRegions?: PdfFormulaImageRegion[];
 }
@@ -184,6 +202,8 @@ export interface PdfReaderOptions extends PdfAnalysisOptions {
   samplePageCount?: number;
   figureRasterizer?: PdfFigureRasterizer;
   layoutDetector?: PdfLayoutDetector;
+  densePageMode?: PdfDensePageMode;
+  resolveDensePageMode?: PdfDensePageResolver;
 }
 
 export interface PdfReader {
@@ -206,6 +226,8 @@ const DEFAULT_LIMITS: PdfReaderLimits = {
   maxImages: 10_000,
   maxImagePixels: 40_000_000,
   maxTotalImagePixels: 80_000_000,
+  denseVectorPathsPerPage: 2_500,
+  pageTimeoutMs: 60_000,
 };
 
 export const DEFAULT_PDF_FORMULA_LIMITS: PdfFormulaLimits = {
@@ -238,6 +260,12 @@ export const pdfJsReader: PdfReader = {
         : {}),
       ...(options.manualFormulaRegions
         ? { manualFormulaRegions: options.manualFormulaRegions }
+        : {}),
+      ...(options.densePageMode
+        ? { densePageMode: options.densePageMode }
+        : {}),
+      ...(options.resolveDensePageMode
+        ? { resolveDensePageMode: options.resolveDensePageMode }
         : {}),
       formulaLimits: {
         ...DEFAULT_PDF_FORMULA_LIMITS,
@@ -366,7 +394,7 @@ export async function analysePdf(
   const retainedPages: RawPdfPage[] = [];
   for (const page of raw.pages) {
     await analysisCheckpoint(options);
-    if (page.spans.every(({ text }) => !text.trim()))
+    if (!page.fallback && page.spans.every(({ text }) => !text.trim()))
       scannedPages.push(page.number);
     const spans = page.spans.filter((span) => {
       const cropped =
@@ -403,6 +431,7 @@ export async function analysePdf(
         'One or more PDF pages contain no extractable text. OCR is not supported yet.',
       details: { pages: scannedPages.length },
     });
+  warnings.push(...densePageWarnings(raw.pages));
   if (noisyOcrPages.length > 0)
     warnings.push({
       code: 'pdf-noisy-ocr-omitted',
@@ -641,10 +670,61 @@ export async function analysePdf(
             page.images.some(({ width, height }) => width * height >= 0.7),
         )
         .map(({ number }) => number),
+      densePages: raw.pages
+        .filter(({ dense }) => dense)
+        .map(({ number }) => number),
+      fallbackPages: raw.pages.flatMap(({ number, fallback }) =>
+        fallback ? [{ page: number, ...fallback }] : [],
+      ),
       formulaCandidates,
       formulaImageRegions,
     },
   };
+}
+
+function densePageWarnings(pages: readonly RawPdfPage[]): ConversionWarning[] {
+  const warnings: ConversionWarning[] = [];
+  const rasterized = pages.filter(
+    ({ fallback }) => fallback?.reason === 'dense',
+  );
+  if (rasterized.length > 0)
+    warnings.push({
+      code: 'pdf-dense-pages-rasterized',
+      severity: 'info',
+      message:
+        rasterized[0]!.fallback!.mode === 'image-only'
+          ? 'Pages with dense vector illustrations were converted to page images without selectable text.'
+          : rasterized[0]!.fallback!.mode === 'image-and-prose'
+            ? 'Pages with dense vector illustrations were converted to page images; their headings and body text were kept as text.'
+            : 'Pages with dense vector illustrations were converted to page images; all their text was kept as text.',
+      details: {
+        pages: rasterized.length,
+        firstPage: rasterized[0]!.number,
+        mode: rasterized[0]!.fallback!.mode,
+      },
+    });
+  const extracted = pages.filter(({ dense, fallback }) => dense && !fallback);
+  if (extracted.length > 0)
+    warnings.push({
+      code: 'pdf-dense-pages-extracted',
+      severity: 'info',
+      message:
+        'Pages with dense vector illustrations were converted with regular figure detection; parts of those illustrations may be missing.',
+      details: { pages: extracted.length, firstPage: extracted[0]!.number },
+    });
+  const timedOut = pages.filter(
+    ({ fallback }) => fallback?.reason === 'timeout',
+  );
+  if (timedOut.length > 0)
+    warnings.push({
+      code: 'pdf-page-timeout',
+      severity: 'warning',
+      message: timedOut.some(({ fallback }) => fallback?.mode === 'text-only')
+        ? 'One or more PDF pages took too long to analyse; only their text was kept.'
+        : 'One or more PDF pages took too long to analyse and were converted to page images with their text kept.',
+      details: { pages: timedOut.length, firstPage: timedOut[0]!.number },
+    });
+  return warnings;
 }
 
 function formulaWarning(
@@ -1530,8 +1610,10 @@ function imagePlacements(
 ): Map<number, RawPdfImage[]> {
   const placements = new Map<number, RawPdfImage[]>();
   for (const image of [...images].sort(
-    (left, right) => left.top - right.top || left.x - right.x,
+    (left, right) =>
+      placementTop(left) - placementTop(right) || left.x - right.x,
   )) {
+    const top = placementTop(image);
     const captionIndex = lines.findIndex(
       (line) =>
         /^fig(?:ure)?\s+\d+[.:]/i.test(line.text.trim()) &&
@@ -1549,8 +1631,8 @@ function imagePlacements(
           image.width >= 0.65 ||
           line.x + line.width / 2 < 0.5 === imageIsLeft,
       );
-    const following = sameColumn.find(({ line }) => line.top >= image.top);
-    const geometricIndex = lines.findIndex(({ top }) => top >= image.top);
+    const following = sameColumn.find(({ line }) => line.top >= top);
+    const geometricIndex = lines.findIndex((line) => line.top >= top);
     const index =
       captionIndex >= 0
         ? captionIndex
@@ -1565,6 +1647,10 @@ function imagePlacements(
     placements.set(index, group);
   }
   return placements;
+}
+
+function placementTop(image: RawPdfImage): number {
+  return image.placementTop ?? image.top;
 }
 
 function lineInlines(

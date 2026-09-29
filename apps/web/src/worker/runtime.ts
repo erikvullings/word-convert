@@ -9,8 +9,10 @@ import { writeMarkdown, writeMarkdownZip } from '@wordconvert/markdown-writer';
 import { writeEpub } from '@wordconvert/epub-writer';
 import {
   configurePdfJsWorker,
+  PDF_DENSE_PAGE_MODES,
   PdfReadError,
   pdfJsReader,
+  type PdfDensePageMode,
 } from '@wordconvert/pdf-reader';
 import { unzipSync } from 'fflate';
 
@@ -31,6 +33,10 @@ export interface WorkerRuntime {
 
 export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
   const operations = new Map<string, CancellationSignal>();
+  const densePageAnswers = new Map<
+    string,
+    { resolve(mode: PdfDensePageMode): void; reject(cause: unknown): void }
+  >();
   let layoutDetector:
     | Promise<
         import('./heron-layout-detector.ts').HeronLayoutDetector | undefined
@@ -44,6 +50,12 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
       if (request.type === 'cancel') {
         const signal = operations.get(request.operationId);
         if (signal) signal.cancelled = true;
+        densePageAnswers.get(request.operationId)?.reject(cancelledError());
+        return;
+      }
+      if (request.type === 'pdf-dense-page-answer') {
+        if (PDF_DENSE_PAGE_MODES.includes(request.mode))
+          densePageAnswers.get(request.operationId)?.resolve(request.mode);
         return;
       }
 
@@ -96,11 +108,32 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
               ? await (layoutDetector ??= loadHeronLayoutDetector())
               : undefined;
           if (signal.cancelled) throw cancelledError();
+          const { askDensePageMode, ...pdfOptions } = request.pdfOptions ?? {};
+          const resolveDensePageMode =
+            askDensePageMode && !pdfOptions.densePageMode
+              ? (dense: { page: number; vectorPaths: number }) =>
+                  new Promise<PdfDensePageMode>((resolve, reject) => {
+                    if (signal.cancelled) {
+                      reject(cancelledError());
+                      return;
+                    }
+                    densePageAnswers.set(request.operationId, {
+                      resolve,
+                      reject,
+                    });
+                    send({
+                      type: 'pdf-dense-page-question',
+                      operationId: request.operationId,
+                      ...dense,
+                    });
+                  }).finally(() => densePageAnswers.delete(request.operationId))
+              : undefined;
           const pdfResult =
             request.sourceFormat === 'pdf'
               ? await pdfJsReader.read(new Uint8Array(request.input), {
                   ...readerOptions,
-                  ...request.pdfOptions,
+                  ...pdfOptions,
+                  ...(resolveDensePageMode ? { resolveDensePageMode } : {}),
                   ...(figureRasterizer ? { figureRasterizer } : {}),
                   ...(detector ? { layoutDetector: detector } : {}),
                   ...(figureRasterizer &&
@@ -219,6 +252,7 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
         });
       } finally {
         operations.delete(request.operationId);
+        densePageAnswers.delete(request.operationId);
       }
     },
   };

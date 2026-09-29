@@ -148,8 +148,15 @@ rasterization is adapter-driven and may vary slightly between rendering engines.
 Conversion runs locally in a Web Worker. WordConvert has no analytics and does not
 send document bytes, text, metadata, filenames, images, or diagnostics over the
 network. Source data and generated output stay in memory; local storage contains
-only preferences and validated style presets. A static host can serve the app
-without a conversion service.
+only preferences, validated style presets, and dense-PDF-page choices the user
+asked to remember, keyed by a SHA-256 fingerprint of the file. A static host can
+serve the app without a conversion service.
+
+PDF pages with dense vector illustrations, such as detailed infographics, are
+detected during full conversion. WordConvert asks once per document whether to
+keep them as page images with their prose, all their text, or no text, or to
+convert them like other pages. A per-page time limit falls back to a page image
+or page text instead of stalling.
 
 Full PDF conversion uses the bundled Docling Heron layout model to identify
 pictures and tables before combining those proposals with PDF.js image, vector,

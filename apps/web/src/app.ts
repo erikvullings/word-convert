@@ -27,10 +27,12 @@ import { strFromU8, unzipSync } from 'fflate';
 import 'katex/dist/katex.min.css';
 
 import {
+  appliedDensePageMode,
   DOCX_MEDIA_TYPE,
   PDF_MEDIA_TYPE,
   WORKFLOW_STAGES,
   type AppState,
+  type PdfDensePagePrompt,
   type DownloadOutput,
   type EpubPreviewScope,
   type FormulaReviewFilter,
@@ -53,7 +55,10 @@ import {
 } from '@wordconvert/html-writer';
 import { previewSanitizeConfig, warningDestination } from './preview/index.ts';
 import type { HtmlOutputMode, MarkdownOutputMode } from './output.ts';
-import type { PdfFormulaDecision } from '@wordconvert/pdf-reader';
+import type {
+  PdfDensePageMode,
+  PdfFormulaDecision,
+} from '@wordconvert/pdf-reader';
 import type { PdfBounds } from '@wordconvert/pdf-reader';
 import {
   pointInPreview,
@@ -138,6 +143,12 @@ export interface AppController {
   setStyleMapping(styleId: string, mapping: StyleMapping): void;
   acceptHighConfidence(): void;
   rerunAnalysis(): void;
+  setPdfDensePagePrompt?(
+    update: Partial<Pick<PdfDensePagePrompt, 'mode' | 'remember'>>,
+  ): void;
+  confirmPdfDensePageMode?(): void;
+  changePdfDensePageMode?(): void;
+  dismissPdfDensePagePrompt?(): void;
   setPdfCrop?(edge: 'top' | 'bottom', value: number): void;
   setPdfPreviewPage?(pageNumber: number): void;
   retryPdfPreview?(): void;
@@ -434,12 +445,14 @@ function outputChooser(controller: AppController): m.Vnode {
     state.pdfAnalysis !== undefined &&
     state.pdfAnalysis.analysedPages.length < state.pdfAnalysis.pageCount;
   if (state.status === 'analysing')
-    return m(
-      '.analysis-status',
+    return m('.analysis-status', [
+      state.pdfDensePagePrompt?.operationId
+        ? densePagePrompt(controller, state.pdfDensePagePrompt)
+        : null,
       state.progress
         ? progress(controller)
         : m('p', 'Inspecting the document in the background…'),
-    );
+    ]);
   return m('.output-chooser', [
     m(
       'p',
@@ -448,6 +461,11 @@ function outputChooser(controller: AppController): m.Vnode {
         : 'Analysis is complete. Choose how you want to use the document.',
     ),
     requiresFullPdfAnalysis ? pdfImportEditor(controller) : null,
+    !requiresFullPdfAnalysis && state.pdfDensePagePrompt
+      ? densePagePrompt(controller, state.pdfDensePagePrompt)
+      : !requiresFullPdfAnalysis
+        ? densePageSummary(controller)
+        : null,
     !requiresFullPdfAnalysis && state.sourceFormat === 'pdf'
       ? m(
           'button.formula-review-entry',
@@ -539,6 +557,116 @@ function outputChooser(controller: AppController): m.Vnode {
             ]),
           ),
         ),
+  ]);
+}
+
+const DENSE_PAGE_MODE_OPTIONS: readonly (readonly [
+  PdfDensePageMode,
+  string,
+  string,
+])[] = [
+  [
+    'image-and-prose',
+    'Readable document: illustration as an image, keep headings and body text',
+    'Each page with a dense illustration becomes one image. Headings and paragraphs stay searchable text; short labels inside the illustration are only in the image.',
+  ],
+  [
+    'image-and-text',
+    'Keep every word: illustration as an image, plus all page text',
+    'Each page with a dense illustration becomes one image, and all of its text is kept as text. Labels from the illustration may appear twice.',
+  ],
+  [
+    'image-only',
+    'Keep the page look: whole page as one image',
+    'Each page with a dense illustration becomes one image. Its text is not searchable or selectable.',
+  ],
+  [
+    'extract',
+    'Text only: convert the page like any other page',
+    'Text is kept, but parts of the illustration may be missing.',
+  ],
+];
+
+function densePageModeLabel(mode: PdfDensePageMode): string {
+  return (
+    DENSE_PAGE_MODE_OPTIONS.find(([id]) => id === mode)?.[1] ??
+    DENSE_PAGE_MODE_OPTIONS[0]![1]
+  );
+}
+
+function densePagePrompt(
+  controller: AppController,
+  prompt: PdfDensePagePrompt,
+): m.Vnode {
+  const waiting = prompt.operationId !== undefined;
+  return m(
+    'section.pdf-dense-page-prompt[role="group"][aria-labelledby="pdf-dense-page-title"]',
+    [
+      m(
+        'h3#pdf-dense-page-title',
+        waiting
+          ? `Page ${prompt.page} contains a dense illustration`
+          : 'Pages with dense illustrations',
+      ),
+      m(
+        'p',
+        'Detailed diagrams and infographics are slow to take apart and rarely convert well into text. What is this conversion for?',
+      ),
+      m(RadioButtons<PdfDensePageMode>, {
+        className: 'pdf-dense-page-options',
+        options: DENSE_PAGE_MODE_OPTIONS.map(([id, label]) => ({ id, label })),
+        checkedId: prompt.mode,
+        onchange: (mode) => controller.setPdfDensePagePrompt?.({ mode }),
+      }),
+      m(
+        'small.pdf-dense-page-help',
+        DENSE_PAGE_MODE_OPTIONS.find(([id]) => id === prompt.mode)?.[2],
+      ),
+      m(InputCheckbox, {
+        className: 'pdf-dense-page-remember',
+        checked: prompt.remember,
+        onchange: (remember) =>
+          controller.setPdfDensePagePrompt?.({ remember }),
+        label: 'Remember this choice for this document',
+      }),
+      m(
+        'small.pdf-dense-page-help',
+        waiting
+          ? 'The choice applies to every page with a dense illustration in this document.'
+          : 'Changing the choice processes the whole document again.',
+      ),
+      m('.pdf-dense-page-actions', [
+        m(
+          'button.secondary-button',
+          {
+            type: 'button',
+            onclick: () => controller.confirmPdfDensePageMode?.(),
+          },
+          waiting ? 'Continue' : 'Apply and reprocess',
+        ),
+        waiting
+          ? null
+          : m(FlatButton, {
+              label: 'Keep current choice',
+              onclick: () => controller.dismissPdfDensePagePrompt?.(),
+            }),
+      ]),
+    ],
+  );
+}
+
+function densePageSummary(controller: AppController): m.Vnode | null {
+  const { state } = controller;
+  const pages = state.pdfAnalysis?.densePages ?? [];
+  const mode = appliedDensePageMode(state);
+  if (pages.length === 0 || !mode) return null;
+  return m('p#pdf-dense-pages.pdf-dense-page-summary', [
+    `${pages.length === 1 ? 'Page' : 'Pages'} ${pages.join(', ')} ${pages.length === 1 ? 'contains a dense illustration' : 'contain dense illustrations'}. Handling: ${densePageModeLabel(mode)}${state.pdfDensePageRemembered ? ' (remembered for this document)' : ''}. `,
+    m(FlatButton, {
+      className: 'pdf-dense-page-change',
+      label: 'Change',
+      onclick: () => controller.changePdfDensePageMode?.(),
+    }),
   ]);
 }
 
@@ -2126,7 +2254,10 @@ function warningReviewLabel(
   destination: NonNullable<ReturnType<typeof warningDestination>>,
 ): string {
   if (destination === 'formula') return 'Review formula output';
-  if (destination === 'pdf') return 'Review PDF cleanup';
+  if (destination === 'pdf')
+    return warning.code.startsWith('pdf-dense-pages')
+      ? 'Review dense page handling'
+      : 'Review PDF cleanup';
   if (destination === 'styles') {
     const styleId = warningStyleId(warning);
     const style = state.model?.styles.find(
@@ -2181,14 +2312,17 @@ export function navigateToWarning(
   delete state.review;
   state.stage = 1;
   queueMicrotask(() =>
-    document
-      .getElementById(
-        destination === 'pdf'
-          ? 'pdf-import-settings'
-          : 'formula-output-settings',
-      )
-      ?.querySelector<HTMLInputElement>('input')
-      ?.focus(),
+    (destination === 'pdf'
+      ? (document
+          .getElementById('pdf-import-settings')
+          ?.querySelector<HTMLElement>('input') ??
+        document
+          .getElementById('pdf-dense-pages')
+          ?.querySelector<HTMLElement>('button'))
+      : document
+          .getElementById('formula-output-settings')
+          ?.querySelector<HTMLElement>('input')
+    )?.focus(),
   );
 }
 

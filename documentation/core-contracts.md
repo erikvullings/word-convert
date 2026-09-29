@@ -56,8 +56,9 @@ receive document bytes and explicit options from their caller and do not perform
 network requests, use browser storage, access URLs, or log source data. The Web
 Worker owns transferred input and output buffers only for the duration of an
 operation and removes operation state after success, failure, or cancellation.
-The UI may persist preferences and validated style presets, but never document
-content, filenames, metadata, generated output, or diagnostics.
+The UI may persist preferences, validated style presets, and dense-PDF-page
+choices the user asked to remember, keyed by a SHA-256 content fingerprint, but
+never document content, filenames, metadata, generated output, or diagnostics.
 
 The DOCX reader validates package type, paths, XML, aggregate size, entry count,
 compression ratio, and individual image size before exposing semantic content.
@@ -70,6 +71,10 @@ in [hardening and browser verification](hardening.md).
 The PDF reader validates the signature before invoking bundled PDF.js, disables
 range, streaming, auto-fetch, system-font, and external WASM paths, and applies
 input, page, text-item, per-image, image-count, and aggregate image-pixel limits.
+Dense-page handling is an explicit `densePageMode` option or an injected
+`resolveDensePageMode` callback. The worker forwards that callback as a
+`pdf-dense-page-question` response and a `pdf-dense-page-answer` request keyed
+by operation ID. A per-page deadline bounds each extraction stage.
 Page coordinates are normalized after rotation. Raw extraction, semantic
 analysis, crop choices, and repeated
 page-furniture proposals remain separate typed stages.

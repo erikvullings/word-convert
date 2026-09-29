@@ -15,6 +15,7 @@ import type {
 } from './output.ts';
 import type {
   PdfAnalysisSummary,
+  PdfDensePageMode,
   PdfFormulaDecision,
   PdfManualFormulaRegion,
   PdfBounds,
@@ -46,6 +47,16 @@ export interface PdfImportSettings {
   retainedCandidateIds: string[];
   formulaDecisions: Record<string, PdfFormulaDecision>;
   manualFormulaRegions: PdfManualFormulaRegion[];
+  /** How pages with dense vector illustrations are converted for this document. */
+  densePageMode?: PdfDensePageMode;
+}
+
+export interface PdfDensePagePrompt {
+  /** Present while the worker waits for an answer; absent when changing a finished conversion. */
+  operationId?: string;
+  page: number;
+  mode: PdfDensePageMode;
+  remember: boolean;
 }
 
 export interface PdfPagePreviewState {
@@ -66,6 +77,8 @@ export interface Preferences {
   markdownIncludeInternalLinks: boolean;
   assetMode: AssetOutputMode;
   epubIncludeCover: boolean;
+  /** Dense-page choices the user asked to remember, keyed by SHA-256 of the PDF bytes. */
+  densePageModes?: Record<string, PdfDensePageMode>;
 }
 
 export interface DownloadOutput {
@@ -97,6 +110,9 @@ export interface AppState {
   pdfAnalysis?: PdfAnalysisSummary;
   pdfLayoutStatus?: 'loading' | 'ready' | 'unavailable';
   pdfImport: PdfImportSettings;
+  pdfDensePagePrompt?: PdfDensePagePrompt;
+  /** The current document's dense-page choice is stored in preferences. */
+  pdfDensePageRemembered?: boolean;
   pdfPreviewPage: number;
   pdfPreviewScale: number;
   pdfPreviewRequested?: boolean;
@@ -271,10 +287,66 @@ export function loadPreferences(storage: PreferenceStorage): Preferences {
       markdownIncludeInternalLinks: value.markdownIncludeInternalLinks ?? true,
       assetMode: value.assetMode ?? 'embedded',
       epubIncludeCover: value.epubIncludeCover ?? true,
+      ...(value.densePageModes !== undefined
+        ? { densePageModes: densePageModes(value.densePageModes) }
+        : {}),
     } as Preferences;
   } catch {
     return DEFAULT_PREFERENCES;
   }
+}
+
+export const MAX_REMEMBERED_DENSE_PAGE_MODES = 50;
+// Mirrors the reader's list without importing PDF.js into the main bundle.
+export const DENSE_PAGE_MODES = [
+  'image-and-prose',
+  'image-and-text',
+  'image-only',
+  'extract',
+] as const satisfies readonly PdfDensePageMode[];
+
+// Invalid remembered choices are dropped individually so they never reset other preferences.
+function densePageModes(value: unknown): Record<string, PdfDensePageMode> {
+  if (!isPlainRecord(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(
+        (entry): entry is [string, PdfDensePageMode] =>
+          /^[0-9a-f]{64}$/.test(entry[0]) &&
+          (DENSE_PAGE_MODES as readonly unknown[]).includes(entry[1]),
+      )
+      .slice(-MAX_REMEMBERED_DENSE_PAGE_MODES),
+  );
+}
+
+export function rememberDensePageMode(
+  preferences: Preferences,
+  fingerprint: string,
+  mode: PdfDensePageMode | undefined,
+): Preferences {
+  const { [fingerprint]: _previous, ...others } =
+    preferences.densePageModes ?? {};
+  const entries = Object.entries(others);
+  if (mode) entries.push([fingerprint, mode]);
+  return {
+    ...preferences,
+    densePageModes: Object.fromEntries(
+      entries.slice(-MAX_REMEMBERED_DENSE_PAGE_MODES),
+    ),
+  };
+}
+
+export function appliedDensePageMode(
+  state: AppState,
+): PdfDensePageMode | undefined {
+  const analysis = state.pdfAnalysis;
+  if (!analysis?.densePages?.length) return undefined;
+  const rasterized = analysis.fallbackPages?.find(
+    ({ reason }) => reason === 'dense',
+  )?.mode;
+  return rasterized && rasterized !== 'text-only'
+    ? rasterized
+    : (state.pdfImport.densePageMode ?? 'extract');
 }
 
 function isMappingPresets(

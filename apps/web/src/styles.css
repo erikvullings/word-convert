@@ -500,6 +500,38 @@ h1 {
   margin-block: 0 0.25rem;
 }
 
+.pdf-dense-page-prompt {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+}
+
+.pdf-dense-page-prompt h3 {
+  margin-block: 0 0.5rem;
+  font-size: 1.25rem;
+}
+
+.pdf-dense-page-help {
+  display: block;
+  margin-block: 0.25rem 0.75rem;
+  color: var(--muted);
+}
+
+.pdf-dense-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.pdf-dense-page-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  align-items: center;
+}
+
 .pdf-layout-status {
   margin-block: 0.25rem 0.5rem;
 }

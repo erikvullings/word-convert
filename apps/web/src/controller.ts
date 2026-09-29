@@ -19,6 +19,8 @@ import {
   createInitialState,
   loadPreferences,
   persistPreferences,
+  appliedDensePageMode,
+  rememberDensePageMode,
   validateSourceFile,
   type AppState,
   type ThemePreference,
@@ -121,6 +123,7 @@ export function createBrowserController(): AppController {
   });
   let sourceInput: ArrayBuffer | undefined;
   let sourceFilename: string | undefined;
+  let sourceFingerprint: Promise<string | undefined> | undefined;
   let autoPreviewOperationId: string | undefined;
   let pdfLayoutOperationId: string | undefined;
   let pdfCoverOperationId: string | undefined;
@@ -586,6 +589,17 @@ export function createBrowserController(): AppController {
       m.redraw();
       return;
     }
+    if (event.data.type === 'pdf-dense-page-question') {
+      if (event.data.operationId === state.operationId)
+        state.pdfDensePagePrompt = {
+          operationId: event.data.operationId,
+          page: event.data.page,
+          mode: state.pdfImport.densePageMode ?? 'image-and-prose',
+          remember: state.pdfDensePageRemembered ?? false,
+        };
+      m.redraw();
+      return;
+    }
     const shouldAutoPreview =
       event.data.type === 'analysed' &&
       event.data.operationId === autoPreviewOperationId;
@@ -688,6 +702,7 @@ export function createBrowserController(): AppController {
       replaceWorker();
       sourceInput = undefined;
       sourceFilename = undefined;
+      sourceFingerprint = undefined;
       autoPreviewOperationId = undefined;
       pdfLayoutOperationId = undefined;
       const freshState = createInitialState(
@@ -762,6 +777,10 @@ export function createBrowserController(): AppController {
       delete state.formulaExtractionMessage;
       delete state.pdfLayoutStatus;
       state.pdfImport.enhancedFigureDetection = false;
+      delete state.pdfImport.densePageMode;
+      delete state.pdfDensePagePrompt;
+      delete state.pdfDensePageRemembered;
+      sourceFingerprint = undefined;
       disposePdfPreview();
       state.pdfPreviewPage = 1;
       state.pdfPreviewScale = 1;
@@ -794,6 +813,18 @@ export function createBrowserController(): AppController {
           if (disposed || state.operationId !== analyseOperationId) return;
           sourceInput = input;
           sourceFilename = file.name;
+          if (sourceFormat === 'pdf') {
+            const fingerprint = documentFingerprint(input);
+            sourceFingerprint = fingerprint;
+            void fingerprint.then((value) => {
+              if (disposed || sourceFingerprint !== fingerprint || !value)
+                return;
+              const remembered = state.preferences.densePageModes?.[value];
+              if (!remembered || state.pdfImport.densePageMode) return;
+              state.pdfImport.densePageMode = remembered;
+              state.pdfDensePageRemembered = true;
+            });
+          }
           const request = {
             type: 'analyse',
             operationId: analyseOperationId,
@@ -836,6 +867,7 @@ export function createBrowserController(): AppController {
       } satisfies WorkerRequest);
       delete state.operationId;
       delete state.progress;
+      delete state.pdfDensePagePrompt;
       if (state.model) {
         state.status = 'ready';
         state.stage = 1;
@@ -1418,6 +1450,7 @@ export function createBrowserController(): AppController {
     },
     rerunAnalysis() {
       if (!sourceInput || !sourceFilename) return;
+      delete state.pdfDensePagePrompt;
       resetEpubPartState();
       delete state.epubSourceEdit;
       if (epubRefreshTimer !== undefined) clearTimeout(epubRefreshTimer);
@@ -1479,6 +1512,56 @@ export function createBrowserController(): AppController {
         } satisfies WorkerRequest,
         [input],
       );
+    },
+    setPdfDensePagePrompt(update) {
+      if (!state.pdfDensePagePrompt) return;
+      state.pdfDensePagePrompt = { ...state.pdfDensePagePrompt, ...update };
+    },
+    confirmPdfDensePageMode() {
+      const prompt = state.pdfDensePagePrompt;
+      if (!prompt) return;
+      delete state.pdfDensePagePrompt;
+      state.pdfImport.densePageMode = prompt.mode;
+      state.outputSaved = false;
+      if (prompt.remember || state.pdfDensePageRemembered) {
+        state.pdfDensePageRemembered = prompt.remember;
+        const fingerprint = sourceFingerprint;
+        void fingerprint?.then((value) => {
+          if (disposed || sourceFingerprint !== fingerprint || !value) return;
+          state.preferences = rememberDensePageMode(
+            state.preferences,
+            value,
+            prompt.remember ? prompt.mode : undefined,
+          );
+          persistPreferences(localStorage, state.preferences);
+        });
+      }
+      if (!prompt.operationId) {
+        controller.rerunAnalysis();
+        return;
+      }
+      if (prompt.operationId !== state.operationId) return;
+      worker.postMessage({
+        type: 'pdf-dense-page-answer',
+        operationId: prompt.operationId,
+        mode: prompt.mode,
+      } satisfies WorkerRequest);
+    },
+    changePdfDensePageMode() {
+      if (
+        state.status === 'analysing' ||
+        !state.pdfAnalysis?.densePages?.length
+      )
+        return;
+      state.pdfDensePagePrompt = {
+        page: state.pdfAnalysis.densePages[0]!,
+        mode: appliedDensePageMode(state) ?? 'image-and-prose',
+        remember: state.pdfDensePageRemembered ?? false,
+      };
+    },
+    dismissPdfDensePagePrompt() {
+      if (!state.pdfDensePagePrompt?.operationId)
+        delete state.pdfDensePagePrompt;
     },
     setPdfCrop(edge, value) {
       const amount = Math.min(0.45, Math.max(0, value));
@@ -2279,6 +2362,8 @@ function epubMetadataIssues(state: AppState): boolean {
 
 function applyResponse(state: AppState, response: WorkerResponse): void {
   if (response.operationId !== state.operationId) return;
+  if (response.type === 'analysed' || response.type === 'error')
+    delete state.pdfDensePagePrompt;
   if (response.type === 'progress') state.progress = response.progress;
   if (response.type === 'analysed') {
     const extractionId = state.formulaExtractionId;
@@ -2426,7 +2511,11 @@ function pdfWorkerOptions(
   return {
     formulaRecognitionEnabled: state.preferences.formulaRecognitionEnabled,
     layoutDetectionEnabled: state.pdfImport.enhancedFigureDetection,
-    ...(samplePageCount !== undefined ? { samplePageCount } : {}),
+    ...(samplePageCount !== undefined
+      ? { samplePageCount }
+      : state.pdfImport.densePageMode
+        ? { densePageMode: state.pdfImport.densePageMode }
+        : { askDensePageMode: true }),
     crop: {
       top: state.pdfImport.cropTop,
       bottom: state.pdfImport.cropBottom,
@@ -2442,6 +2531,20 @@ function pdfWorkerOptions(
       }),
     ),
   };
+}
+
+async function documentFingerprint(
+  input: ArrayBuffer,
+): Promise<string | undefined> {
+  if (typeof crypto === 'undefined' || !crypto.subtle) return undefined;
+  try {
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', input));
+    return Array.from(digest, (byte) =>
+      byte.toString(16).padStart(2, '0'),
+    ).join('');
+  } catch {
+    return undefined;
+  }
 }
 
 function operationId(prefix: string): string {

@@ -8,7 +8,9 @@ import {
   type DocumentModel,
 } from '@wordconvert/document-model';
 
-import { createWorkerRuntime } from './runtime.ts';
+import { pdfJsReader } from '@wordconvert/pdf-reader';
+
+import { createWorkerRuntime, type WorkerRuntime } from './runtime.ts';
 import type { WorkerResponse } from './protocol.ts';
 import { strFromU8, unzipSync } from 'fflate';
 
@@ -207,6 +209,125 @@ describe('worker runtime', () => {
       },
     });
     expect(runtime.activeOperationCount()).toBe(0);
+  });
+
+  it('asks the host how to convert dense PDF pages and forwards the answer', async () => {
+    const read = vi
+      .spyOn(pdfJsReader, 'read')
+      .mockImplementation(async (_input, options) => {
+        const mode = await options.resolveDensePageMode?.({
+          page: 22,
+          vectorPaths: 3_013,
+        });
+        return {
+          model: { ...model(), blocks: [] },
+          analysis: { densePageMode: mode } as never,
+        };
+      });
+    const sent: WorkerResponse[] = [];
+    let runtime: WorkerRuntime | undefined;
+    runtime = createWorkerRuntime((message) => {
+      sent.push(message);
+      if (message.type === 'pdf-dense-page-question')
+        void runtime?.handle({
+          type: 'pdf-dense-page-answer',
+          operationId: message.operationId,
+          mode: 'image-and-prose',
+        });
+    });
+
+    try {
+      await runtime.handle({
+        type: 'analyse',
+        sourceFormat: 'pdf',
+        operationId: 'dense-pdf',
+        input: await pdfBuffer(),
+        filename: 'fixture.pdf',
+        conversionDate: '2026-08-29',
+        pdfOptions: { askDensePageMode: true },
+      });
+
+      expect(sent).toContainEqual({
+        type: 'pdf-dense-page-question',
+        operationId: 'dense-pdf',
+        page: 22,
+        vectorPaths: 3_013,
+      });
+      expect(read.mock.calls[0]![1]).not.toHaveProperty('askDensePageMode');
+      expect(sent.at(-1)).toMatchObject({
+        type: 'analysed',
+        pdfAnalysis: { densePageMode: 'image-and-prose' },
+      });
+      expect(runtime.activeOperationCount()).toBe(0);
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it('cancels an analysis that waits for a dense-page answer', async () => {
+    const read = vi
+      .spyOn(pdfJsReader, 'read')
+      .mockImplementation(async (_input, options) => {
+        await options.resolveDensePageMode?.({ page: 1, vectorPaths: 3_000 });
+        throw new Error('The analysis should have been cancelled.');
+      });
+    const sent: WorkerResponse[] = [];
+    let runtime: WorkerRuntime | undefined;
+    runtime = createWorkerRuntime((message) => {
+      sent.push(message);
+      if (message.type === 'pdf-dense-page-question')
+        void runtime?.handle({
+          type: 'cancel',
+          operationId: message.operationId,
+        });
+    });
+
+    try {
+      await runtime.handle({
+        type: 'analyse',
+        sourceFormat: 'pdf',
+        operationId: 'dense-cancel',
+        input: await pdfBuffer(),
+        filename: 'fixture.pdf',
+        conversionDate: '2026-08-29',
+        pdfOptions: { askDensePageMode: true },
+      });
+
+      expect(sent.at(-1)).toMatchObject({
+        type: 'error',
+        operationId: 'dense-cancel',
+        error: { code: 'cancelled' },
+      });
+      expect(runtime.activeOperationCount()).toBe(0);
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it('does not ask when the dense-page mode is already known', async () => {
+    const read = vi
+      .spyOn(pdfJsReader, 'read')
+      .mockResolvedValue({ model: model(), analysis: {} as never });
+    const runtime = createWorkerRuntime(() => undefined);
+
+    try {
+      await runtime.handle({
+        type: 'analyse',
+        sourceFormat: 'pdf',
+        operationId: 'dense-known',
+        input: await pdfBuffer(),
+        filename: 'fixture.pdf',
+        conversionDate: '2026-08-29',
+        pdfOptions: { askDensePageMode: true, densePageMode: 'image-only' },
+      });
+
+      expect(read.mock.calls[0]![1]).toMatchObject({
+        densePageMode: 'image-only',
+      });
+      expect(read.mock.calls[0]![1]).not.toHaveProperty('resolveDensePageMode');
+    } finally {
+      read.mockRestore();
+    }
   });
 
   it('passes extracted PDF images through the existing Markdown writer', async () => {

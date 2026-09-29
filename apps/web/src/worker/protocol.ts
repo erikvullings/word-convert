@@ -11,6 +11,7 @@ import type { ConversionMode } from '../output.ts';
 import type {
   PdfAnalysisSummary,
   PdfCropOptions,
+  PdfDensePageMode,
   PdfFormulaDecision,
   PdfManualFormulaRegion,
 } from '@wordconvert/pdf-reader';
@@ -25,6 +26,9 @@ export interface PdfWorkerOptions {
   retainedCandidateIds?: string[];
   formulaDecisions?: Readonly<Record<string, PdfFormulaDecision>>;
   manualFormulaRegions?: readonly PdfManualFormulaRegion[];
+  densePageMode?: PdfDensePageMode;
+  /** Without a `densePageMode`, ask the host through `pdf-dense-page-question`. */
+  askDensePageMode?: boolean;
 }
 
 export type WorkerRequest =
@@ -53,6 +57,11 @@ export type WorkerRequest =
       includeInternalLinks?: boolean;
       sourceHtml?: { html: string; xhtml: string; css: string };
     }
+  | {
+      type: 'pdf-dense-page-answer';
+      operationId: string;
+      mode: PdfDensePageMode;
+    }
   | { type: 'cancel'; operationId: string };
 
 export type WorkerResponse =
@@ -61,6 +70,12 @@ export type WorkerResponse =
       type: 'pdf-layout-status';
       operationId: string;
       status: 'loading' | 'ready' | 'unavailable';
+    }
+  | {
+      type: 'pdf-dense-page-question';
+      operationId: string;
+      page: number;
+      vectorPaths: number;
     }
   | {
       type: 'analysed';
