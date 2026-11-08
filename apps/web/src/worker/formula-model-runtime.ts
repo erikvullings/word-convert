@@ -1,35 +1,17 @@
 import { isValidTex } from '@wordconvert/math-converter';
 import * as ort from 'onnxruntime-web/webgpu';
 
-export type FormulaTensorType = 'float32' | 'int64' | 'bool';
-export interface FormulaTensor {
-  type: FormulaTensorType;
-  data: Float32Array | BigInt64Array | Uint8Array;
-  dims: readonly number[];
-}
-
-export interface FormulaModelSession {
-  inputNames: readonly string[];
-  outputNames: readonly string[];
-  run(
-    feeds: Readonly<Record<string, FormulaTensor>>,
-  ): Promise<Record<string, FormulaTensor>>;
-  release(): void;
-}
-
-export interface FormulaRecognizerDependencies {
-  webGpuAvailable(): boolean;
-  createSession(
-    model: string | Uint8Array,
-    provider: 'webgpu' | 'wasm',
-  ): Promise<FormulaModelSession>;
-  createTensor(
-    type: FormulaTensorType,
-    data: FormulaTensor['data'],
-    dims: readonly number[],
-  ): FormulaTensor;
-  validateTex(tex: string): boolean;
-}
+import type {
+  FormulaTensor,
+  FormulaTensorType,
+  FormulaRecognizerDependencies,
+} from '@wordconvert/pdf-reader';
+export type {
+  FormulaTensor,
+  FormulaTensorType,
+  FormulaModelSession,
+  FormulaRecognizerDependencies,
+} from '@wordconvert/pdf-reader';
 
 export const browserFormulaRecognizerDependencies: FormulaRecognizerDependencies =
   {

@@ -85,7 +85,7 @@ export interface PdfFormulaRecognition {
   confidence?: number;
   diagnostics?: {
     tokens?: number;
-    backend?: 'webgpu' | 'wasm';
+    backend?: 'webgpu' | 'wasm' | 'cpu' | 'coreml';
   };
 }
 

@@ -1,6 +1,13 @@
 export const DOCUMENT_MODEL_SCHEMA = 'wordconvert.document' as const;
 export const DOCUMENT_MODEL_VERSION = 1 as const;
 
+export {
+  STYLE_MAPPINGS,
+  exportStylePreset,
+  importStylePreset,
+  type StylePresetImportResult,
+} from './style-preset.ts';
+
 export type Confidence = 'low' | 'medium' | 'high' | 'certain';
 
 export interface Provenance {

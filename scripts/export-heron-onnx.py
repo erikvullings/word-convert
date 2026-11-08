@@ -120,7 +120,12 @@ def main() -> None:
     )
     logits, pred_boxes = session.run(
         ["logits", "pred_boxes"],
-        {"pixel_values": np.zeros((1, 3, INPUT_SIZE, INPUT_SIZE), dtype=np.float16)},
+        {
+            "pixel_values": np.zeros(
+                (1, 3, INPUT_SIZE, INPUT_SIZE),
+                dtype=np.float32 if args.fp32 else np.float16,
+            )
+        },
     )
     if logits.shape != (1, 300, 17) or pred_boxes.shape != (1, 300, 4):
         raise RuntimeError(

@@ -10,6 +10,20 @@ export {
   PDF_FORMULA_WEIGHTS,
 } from './features.ts';
 export { reconstructSimpleTex } from './reconstruct.ts';
+export {
+  createTexTellerRecognizer,
+  normalizeTexTellerLatex,
+  prepareTexTellerInput,
+  splitTexTellerRows,
+  type TexTellerBenchmarkRecognizer,
+  type TexTellerModelAssets,
+} from './texteller.ts';
+export type {
+  FormulaTensorType,
+  FormulaTensor,
+  FormulaModelSession,
+  FormulaRecognizerDependencies,
+} from './runtime-types.ts';
 export type {
   PdfBounds,
   PdfFormulaCandidate,

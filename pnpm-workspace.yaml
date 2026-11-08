@@ -3,6 +3,7 @@ packages:
   - packages/*
 
 allowBuilds:
+  onnxruntime-node: false
   protobufjs: false
   simple-git-hooks: true
 
@@ -15,3 +16,6 @@ minimumReleaseAgeExclude:
   - mithril-materialized@3.17.10 || 3.17.11
 
 onlyBuiltDependencies: []
+
+patchedDependencies:
+  pdfjs-dist@6.3.289: patches/pdfjs-dist@6.3.289.patch

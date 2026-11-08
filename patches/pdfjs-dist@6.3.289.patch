@@ -1,0 +1,13 @@
+diff --git a/legacy/build/pdf.mjs b/legacy/build/pdf.mjs
+index 993f35056cbb76d09d83c25dccd96fe1916ee372..b46a1fe2fe2c9a2b51291929085534965922712c 100644
+--- a/legacy/build/pdf.mjs
++++ b/legacy/build/pdf.mjs
+@@ -16096,7 +16096,7 @@ function blend(fg, bg, alpha) {
+ 
+ 
+ 
+-if (isNodeJS) {
++if (isNodeJS && (!globalThis.DOMMatrix || !globalThis.Path2D || !globalThis.ImageData)) {
+   let canvas;
+   try {
+     const require = process.getBuiltinModule("module").createRequire(import.meta.url);

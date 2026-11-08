@@ -1,6 +1,6 @@
 # WordConvert
 
-WordConvert is a privacy-preserving, browser-only document conversion
+WordConvert is a privacy-preserving, local document conversion
 workspace. It accepts local DOCX and PDF files plus remote HTML, Markdown,
 plain-text, and PDF documents, including arXiv links. Document processing stays
 on the device and uses a typed neutral document model.
@@ -15,6 +15,37 @@ standalone HTML, an HTML ZIP, single-file Markdown, a Markdown ZIP, or a
 reflowable EPUB 3 publication. HTTPS URLs may point to HTML, XHTML, Markdown,
 plain text, or PDF content. Legacy `.doc`, encrypted documents, and
 macro-enabled `.docm` files are rejected.
+
+## Local CLI
+
+The CLI reuses the same semantic DOCX/PDF readers and HTML, Markdown, and EPUB
+writers. It accepts local files and processes documents on-device. PDF conversion
+defaults to native rendering, Heron layout analysis, and automatic GPU selection
+(CoreML on macOS, otherwise WebGPU when bundled, with reported CPU fallback).
+Missing models are downloaded once with a warning and cached; `--offline`
+prohibits downloads, `--no-layout` enables basic PDF conversion, and
+`--clear-model-cache` removes cached models. Formula OCR is optional via
+`--formula-ocr`. Missing document language defaults to English.
+Output defaults to EPUB, or is inferred from a recognized `--output` extension;
+an explicit `--format` takes precedence.
+
+With [Bun 1.3.11](https://bun.sh/) installed for development:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm cli document.docx --format epub --output document.epub
+pnpm cli:build
+```
+
+The build creates `apps/cli/dist/<target>/wordconvert` (`wordconvert.exe` on
+Windows). The executable does not require Bun or Node on the destination
+machine. Keep its `runtime/` folder alongside it for optional PDF rendering and
+model inference; DOCX and basic PDF conversion (`--no-layout`) can use the executable alone.
+Native bundles are built on their destination OS/architecture, and the CLI
+workflow publishes macOS, Linux, and Windows build artifacts.
+
+See [CLI usage and optional models](documentation/cli.md) for installation,
+cross-compilation, presets, deterministic output, model setup, and limitations.
 
 ## Browser workflow
 

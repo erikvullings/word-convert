@@ -37,6 +37,74 @@ conversion worker launches the bundled PDF.js module worker; conversion does not
 load optional CMaps, standard fonts, image decoders, or WASM from remote URLs.
 Source-page previews load only the bundled, same-origin PDF.js image decoders.
 
+## CLI boundaries
+
+The [CLI](cli.md) accepts regular local DOCX/PDF files only. It checks the
+50 MiB input limit before allocation and enforces it while reading, preserving
+the core readers' expansion, entry, compression-ratio, page, image, and formula
+budgets. SPA presets use the shared complete mapping validator and have a
+1 MiB CLI input cap. Output is staged beside the destination and atomically
+published without replacing existing files unless `--force` was requested.
+Source documents, presets, and model inputs are protected, including aliases;
+temporary output is removed on failure. CLI I/O and overwrite assertions live
+in `apps/cli/src/cli.test.ts`.
+
+Native rendering and Heron layout inference are enabled by default for PDF;
+formula OCR is opt-in. `--no-layout` preserves the model-free PDF path, while
+`--offline` prohibits network fetches. Missing/invalid language defaults to
+English with typed default provenance and a warning, preserving valid source
+language and explicit user overrides. The runtime folder and ONNX
+models are trusted executable dependencies, not untrusted document content.
+Model files must be regular, nonempty files of at most 1 GiB each; tokenizer
+JSON has a 10 MiB file-size check. These checks do not bound the native
+runtime's peak memory or make arbitrary ONNX graphs safe. Missing managed
+models are downloaded on first use from pinned HTTPS Hugging Face URLs with a
+warning naming source, byte budget, cache location, and cleanup command.
+No document content is sent. Downloads have a ten-minute deadline, exact
+byte limits, streamed SHA-256 validation, private temporary files, and atomic
+publication. Cache hits are size/checksum-verified before native loading;
+corrupt entries fail with cleanup instructions. Explicit local model paths
+remain trusted user inputs, not checksum-constrained default assets.
+`--clear-model-cache` unlinks only four known model filenames, preserves
+unrelated files, and rejects symlinked cache roots; model cache and native
+runtime are separate. Interrupted downloads never become usable cache entries.
+Both Heron and TexTeller sessions
+are released on success and failure; native tests cover requested-model
+failure, rendering, and opt-in real inference. FP32 Heron adds about 164 MiB
+and TexTeller q4 about 245 MiB of model files; inference needs additional memory.
+The representative combined CPU run on macOS used approximately 1.2 GiB peak
+RSS, so browser-only memory budgets must not be applied to native ML mode.
+
+Portable builds include Bun and optional native ONNX/Skia libraries, with
+licence notices. They enable package-manifest resolution for these libraries,
+disable automatic `.env` and `bunfig.toml` loading, and never require a browser
+or a locally installed JavaScript runtime. Basic PDF mode can emit PDF.js
+diagnostics about absent optional canvas polyfills; native adapters provide
+their own canvas when rendering is enabled. A pinned pnpm PDF.js patch skips
+redundant Node canvas discovery only when all three native polyfills already
+exist. It does not filter warnings or change missing-runtime failures, and
+does not affect PDF.js's browser path. Compiled smoke checks require native
+rasterization without the misleading canvas warning and explicit errors for
+a missing runtime. Native rendering may differ in
+pixels and system font metrics between OSes. Supported build targets and
+unsigned-binary caveats are listed in the CLI guide. Native resolution follows
+the real executable through PATH symlinks to its sibling runtime directory;
+temporary runtime extraction and working-directory-dependent lookup are not
+required. Default `auto` selection prefers CoreML on macOS, WebGPU elsewhere,
+then CPU, warning when no GPU is bundled or GPU initialization fails.
+`--execution-provider` can explicitly select CPU, CoreML or WebGPU with
+compatible hardware. Unavailable explicit providers produce errors, while unsupported
+operators within a supported provider still use ONNX Runtime's CPU kernels.
+CoreML uses MLProgram/static-shape partitions on CPU/GPU rather than the
+invalid dynamic-shape partitions of the default configuration. It may create
+temporary compiled-model files containing model weights, not source documents.
+WebGPU keeps full validation enabled. Native model sessions are awaited and
+released serially in reverse creation order on completion and load failure.
+Provider options and lifecycle order have non-model regression tests; optional
+real-model tests plus repeated compiled smoke processes cover CoreML/WebGPU
+inference and shutdown. GPU numeric results may vary from CPU. This does not
+change the independent SPA runtime or its browser GPU assumptions.
+
 ## Determinism and performance budget
 
 The representative `standard-comprehensive.docx` fixture is parsed twice and both `DocumentModel` values must be deeply equal. The two reads share a 1,000 ms regression budget in Vitest. The 16 July 2026 local run completed the pair in approximately 2 ms; the generous CI threshold is intended to catch large regressions without making shared runners flaky. Writer suites separately assert byte-identical deterministic HTML, Markdown ZIP, EPUB, and cover output.

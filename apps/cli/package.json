@@ -1,0 +1,26 @@
+{
+  "name": "@wordconvert/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/main.ts",
+    "build": "bun scripts/build.ts",
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.8",
+    "@wordconvert/document-model": "workspace:*",
+    "@wordconvert/docx-reader": "workspace:*",
+    "@wordconvert/epub-writer": "workspace:*",
+    "@wordconvert/html-writer": "workspace:*",
+    "@wordconvert/markdown-writer": "workspace:*",
+    "@wordconvert/math-converter": "workspace:*",
+    "@wordconvert/pdf-reader": "workspace:*",
+    "onnxruntime-node": "1.29.0",
+    "pdfjs-dist": "^6.3.289"
+  },
+  "devDependencies": {
+    "fflate": "^0.8.3"
+  }
+}

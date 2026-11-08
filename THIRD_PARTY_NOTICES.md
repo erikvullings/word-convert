@@ -3,7 +3,45 @@
 This audit covers the direct third-party runtime dependencies bundled by the
 WordConvert web application at `pnpm-lock.yaml` as reviewed on 9 September 2026.
 Workspace packages are part of WordConvert; development-only dependencies are not
-distributed in its browser bundle.
+distributed in its browser bundle. The CLI additionally distributes the native
+runtime dependencies described below.
+
+## CLI runtime
+
+The CLI reuses fflate, KaTeX (including its embedded font), PDF.js, and the
+workspace readers/writers. Its optional models have the same pinned upstream
+TexTeller revision and Apache-2.0 licensing as the SPA. Default CLI layout
+analysis downloads the official Docling Heron ONNX export at revision
+`40bde044036bb181c130ddf6c51792187268748f` from
+<https://huggingface.co/docling-project/docling-layout-heron-onnx>.
+Its reviewed model card specifies Apache-2.0 and attributes the base model
+to Docling/IBM; the repository contains no separate licence or NOTICE file.
+The existing `LICENSES/Apache-2.0.txt` accompanies CLI builds. The CLI pins the
+download's SHA-256 and byte count; its cached weights are not bundled in
+the executable.
+
+| Component | Reviewed version | Licence | Attribution / reviewed source |
+| --- | --- | --- | --- |
+| Bun runtime | 1.3.11 | MIT plus linked-library terms, including LGPL-2 for JavaScriptCore/WebKit | The stamped runtime's upstream [`LICENSE.md`](https://github.com/oven-sh/bun/blob/bun-v1.3.11/LICENSE.md), copied to `LICENSES/Bun.txt`, lists linked libraries, polyfills, and relinking instructions |
+| ONNX Runtime Node/Common | 1.29.0 | MIT plus native third-party terms | Microsoft Corporation; installed binding sources and package manifests, upstream `LICENSE` and `ThirdPartyNotices.txt` at tag `v1.29.0`; preserved in `LICENSES/ONNX-Runtime-MIT.txt` and `LICENSES/ONNX-Runtime-ThirdPartyNotices.txt` |
+| `@napi-rs/canvas` and its platform binary | 1.0.8 | MIT | Copyright (c) 2020 lynweklm@gmail.com; reviewed installed `LICENSE`, `package.json`, and native-loader source |
+| Skia linked by canvas | revision `7219df0fb0ff64f26adad448f94e8c001b964e6a` | BSD-3-Clause | Copyright (c) 2011 Google Inc.; canvas tag `v1.0.8` pins this submodule, whose `LICENSE` is copied to `LICENSES/Skia.txt` |
+
+The native ONNX npm distribution does not include its own standalone licence
+or third-party notice files, so the version-matched upstream copies accompany
+each CLI build. Canvas's installed MIT licence remains in the portable runtime
+folder. Build output includes this notice, the WordConvert licence, and all
+`LICENSES/` files. Bun's JavaScriptCore/WebKit source and relinking instructions
+are linked in its copied notice; WordConvert's CLI source and reproducible build
+instructions are available in this repository. Keep these materials with
+redistributed executable/runtime bundles.
+
+PDF.js 6.3.289's legacy Node initialization is modified by
+`patches/pdfjs-dist@6.3.289.patch`: skip optional canvas polyfill discovery when
+`DOMMatrix`, `Path2D`, and `ImageData` are already present. This local modification
+does not change the browser path or remove the upstream licence notices.
+
+## Browser runtime
 
 | Package | Reviewed version | Licence | Copyright / attribution | Source |
 | --- | --- | --- | --- | --- |

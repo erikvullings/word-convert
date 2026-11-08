@@ -46,6 +46,15 @@ export type { PdfManualFormulaRegion } from './formula/index.ts';
 export * from './formula/index.ts';
 
 export { PdfReadError } from './error.ts';
+export {
+  createHeronLayoutDetector,
+  decodeHeronDetections,
+  float16ToFloat32,
+  float32ToFloat16,
+  rgbaToHeronInput,
+  type HeronLayoutDetector,
+  type HeronSession,
+} from './heron.ts';
 
 export interface RawPdfTextSpan {
   id: string;
