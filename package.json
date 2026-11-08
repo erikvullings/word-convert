@@ -12,6 +12,7 @@
     "build": "pnpm --filter @wordconvert/web build",
     "cli": "bun apps/cli/src/main.ts",
     "cli:build": "pnpm --filter @wordconvert/cli build",
+    "cli:install": "pnpm cli:build && bun apps/cli/scripts/install.ts",
     "benchmark:formula:generate": "node scripts/generate-formula-benchmark-corpus.mjs",
     "benchmark:formula:run": "node scripts/run-formula-benchmark-browser.mjs",
     "benchmark:formula:report": "node scripts/formula-benchmark.mjs tests/fixtures/formula-benchmark/corpus.json documentation/formula-benchmarks/texteller-run.json documentation/formula-benchmarks/texteller-report.json",

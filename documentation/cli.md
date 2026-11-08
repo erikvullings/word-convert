@@ -82,6 +82,22 @@ Keep the licence and notice files with redistributed executables and libraries.
 
 ### Put the CLI on PATH
 
+From a source checkout, build and install the native bundle with:
+
+```sh
+pnpm cli:install
+pnpm cli:install -- --force # Update a previous script-managed installation
+```
+
+The installer copies the complete bundle to `~/.local/share/wordconvert` and
+links `~/.local/bin/wordconvert` on macOS/Linux. On Windows it installs to
+`%LOCALAPPDATA%/wordconvert` and prints the directory to add to your user PATH.
+It does not edit shell profiles or overwrite unrelated commands/installations.
+`--force` updates only directories carrying its installation marker.
+Use `--prefix <directory>` and `--bin-dir <directory>` to override destinations,
+or run `bun apps/cli/scripts/install.ts --bundle <extracted-bundle>` to install
+an existing bundle without rebuilding (requires Bun for the installer only).
+
 The command is `wordconvert`, not `word-convert` or `wc` (the latter is the
 standard word-count utility). On macOS/Linux, copy the complete bundle to a
 stable directory and symlink its executable into a directory on your PATH:
@@ -115,7 +131,13 @@ For binary formats, use an output file rather than capturing stdout as text.
 This guide contains the more detailed model setup and platform restrictions.
 
 The **Build portable CLI** GitHub Actions workflow builds and smoke-checks
-native bundles on each platform. Download its target-specific artifact. On
+native bundles on each platform. Pushing a `cli-v<version>` tag publishes all
+five archives and `SHA256SUMS.txt` as a GitHub release only after every target
+passes. Unix archives are `.tar.gz` to preserve executable permissions; Windows
+uses `.zip`. Extract the complete target directory and keep its runtime and
+licence files. Models are not bundled. Linux requires glibc; macOS and Windows
+binaries are unsigned. Download the release archive or its target-specific
+workflow artifact. On
 macOS/Linux, restore the executable bit with `chmod +x wordconvert` if the
 artifact downloader did not preserve it. These are unsigned binaries and
 normal OS download/security policies still apply.

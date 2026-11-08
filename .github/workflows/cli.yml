@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags: ['cli-v*']
   workflow_dispatch:
 
 permissions:
@@ -49,8 +50,42 @@ jobs:
       - run: pnpm exec vitest run apps/cli/src
       - run: pnpm cli:build
       - run: bun apps/cli/scripts/smoke.ts apps/cli/dist/${{ matrix.target }}/${{ matrix.executable }}
+      - name: Package release bundle
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p release
+          if [[ "$TARGET" == *windows* ]]; then
+            python -c 'import shutil, os; t=os.environ["TARGET"]; shutil.make_archive("release/wordconvert-"+t, "zip", "apps/cli/dist", t)'
+          else
+            tar -czf "release/wordconvert-$TARGET.tar.gz" -C apps/cli/dist "$TARGET"
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: wordconvert-${{ matrix.target }}
-          path: apps/cli/dist/${{ matrix.target }}/
+          path: release/
           if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/cli-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish portable bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          gh run download "$RUN_ID" --pattern 'wordconvert-*' --dir artifacts
+          mkdir release
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} release/ \;
+          test "$(find release -type f | wc -l)" -eq 5
+          (cd release && sha256sum * > SHA256SUMS.txt)
+          gh release create "$RELEASE_TAG" release/* --verify-tag \
+            --title "WordConvert CLI ${RELEASE_TAG#cli-v}" \
+            --notes "Portable CLI bundles for macOS arm64/x64, Linux glibc arm64/x64, and Windows x64. Extract the complete archive and keep runtime/ beside wordconvert. No Bun or Node installation is needed. Model files download on first PDF use with a warning; use --offline or --no-layout to control downloads. Default output is EPUB. Binaries are unsigned. SHA-256 checksums are included."

@@ -35,6 +35,7 @@ With [Bun 1.3.11](https://bun.sh/) installed for development:
 pnpm install --frozen-lockfile
 pnpm cli document.docx --format epub --output document.epub
 pnpm cli:build
+pnpm cli:install
 ```
 
 The build creates `apps/cli/dist/<target>/wordconvert` (`wordconvert.exe` on
@@ -42,7 +43,10 @@ Windows). The executable does not require Bun or Node on the destination
 machine. Keep its `runtime/` folder alongside it for optional PDF rendering and
 model inference; DOCX and basic PDF conversion (`--no-layout`) can use the executable alone.
 Native bundles are built on their destination OS/architecture, and the CLI
-workflow publishes macOS, Linux, and Windows build artifacts.
+workflow publishes macOS, Linux, and Windows build artifacts, and `cli-v*`
+tags publish all five portable bundles with checksums as GitHub releases.
+`pnpm cli:install` copies the local bundle and creates a PATH symlink on Unix;
+use `pnpm cli:install -- --force` to upgrade a script-managed installation.
 
 See [CLI usage and optional models](documentation/cli.md) for installation,
 cross-compilation, presets, deterministic output, model setup, and limitations.
