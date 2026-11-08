@@ -69,6 +69,10 @@ if (result.status !== 0)
 
 if (!values['no-runtime']) {
   const require = createRequire(join(cli, 'package.json'));
+  const ortPackage =
+    process.platform === 'darwin' && process.arch === 'x64'
+      ? 'wordconvert-onnxruntime-intel'
+      : 'onnxruntime-node';
   const runtime = join(output, 'runtime/node_modules');
   const canvasPlatform =
     process.platform === 'linux'
@@ -84,11 +88,15 @@ if (!values['no-runtime']) {
   ]) {
     const resolver =
       name === 'onnxruntime-common'
-        ? createRequire(require.resolve('onnxruntime-node'))
+        ? createRequire(require.resolve(ortPackage))
         : name.startsWith('@napi-rs/canvas-')
           ? createRequire(require.resolve('@napi-rs/canvas'))
           : require;
-    const source = dirname(resolver.resolve(`${name}/package.json`));
+    const source = dirname(
+      resolver.resolve(
+        `${name === 'onnxruntime-node' ? ortPackage : name}/package.json`,
+      ),
+    );
     const destination = join(runtime, name);
     if (name === 'onnxruntime-node')
       await rm(join(destination, 'bin'), { recursive: true, force: true });

@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { unzipSync } from 'fflate';
 import { runCli } from './cli.ts';
+import { version } from '../package.json';
 
 const fixture = fileURLToPath(
   new URL(
@@ -109,7 +110,7 @@ describe('CLI arguments and output', () => {
     expect((await invoke(['--help'])).output[0]).toContain(
       'Usage: wordconvert',
     );
-    expect((await invoke(['--version'])).output[0]).toBe('0.1.0\n');
+    expect((await invoke(['--version'])).output[0]).toBe(`${version}\n`);
   });
 
   it.each([

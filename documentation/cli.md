@@ -152,6 +152,9 @@ pnpm cli:build -- --target bun-linux-arm64 --no-runtime
 Native runtime bundles must be built on the destination OS/architecture, not
 combined with another platform's native libraries. Linux bundles target glibc,
 not Alpine/musl. Windows arm64 is not currently a bundle target.
+Intel macOS uses pinned ONNX Runtime 1.23.2, which still includes x64 native
+bindings; other targets use 1.29.0. GPU availability follows each bundled
+runtime and compatible local hardware.
 
 ## PDF defaults and optional formula OCR
 

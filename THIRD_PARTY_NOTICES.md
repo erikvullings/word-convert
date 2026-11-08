@@ -24,6 +24,7 @@ the executable.
 | --- | --- | --- | --- |
 | Bun runtime | 1.3.11 | MIT plus linked-library terms, including LGPL-2 for JavaScriptCore/WebKit | The stamped runtime's upstream [`LICENSE.md`](https://github.com/oven-sh/bun/blob/bun-v1.3.11/LICENSE.md), copied to `LICENSES/Bun.txt`, lists linked libraries, polyfills, and relinking instructions |
 | ONNX Runtime Node/Common | 1.29.0 | MIT plus native third-party terms | Microsoft Corporation; installed binding sources and package manifests, upstream `LICENSE` and `ThirdPartyNotices.txt` at tag `v1.29.0`; preserved in `LICENSES/ONNX-Runtime-MIT.txt` and `LICENSES/ONNX-Runtime-ThirdPartyNotices.txt` |
+| ONNX Runtime Node/Common, Intel macOS compatibility bundle | 1.23.2 | MIT plus native third-party terms | Microsoft Corporation; version-matched package and upstream `ThirdPartyNotices.txt` at tag `v1.23.2`, preserved in `LICENSES/ONNX-Runtime-1.23.2-ThirdPartyNotices.txt`; newer releases no longer ship macOS x64 bindings |
 | `@napi-rs/canvas` and its platform binary | 1.0.8 | MIT | Copyright (c) 2020 lynweklm@gmail.com; reviewed installed `LICENSE`, `package.json`, and native-loader source |
 | Skia linked by canvas | revision `7219df0fb0ff64f26adad448f94e8c001b964e6a` | BSD-3-Clause | Copyright (c) 2011 Google Inc.; canvas tag `v1.0.8` pins this submodule, whose `LICENSE` is copied to `LICENSES/Skia.txt` |
 

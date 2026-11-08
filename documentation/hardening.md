@@ -104,6 +104,9 @@ Provider options and lifecycle order have non-model regression tests; optional
 real-model tests plus repeated compiled smoke processes cover CoreML/WebGPU
 inference and shutdown. GPU numeric results may vary from CPU. This does not
 change the independent SPA runtime or its browser GPU assumptions.
+Intel macOS bundles use ONNX Runtime 1.23.2 because 1.29.0 omits macOS x64
+native bindings; its matching notices accompany the bundle. Other targets
+retain 1.29.0. Native smoke tests run on each target before release publication.
 
 ## Determinism and performance budget
 

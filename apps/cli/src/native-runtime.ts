@@ -16,7 +16,13 @@ export function loadNativeRuntime(directory?: string) {
   let ort: typeof import('onnxruntime-node');
   try {
     canvas = require('@napi-rs/canvas');
-    ort = require('onnxruntime-node');
+    const intelSource =
+      typeof __WORDCONVERT_CLI_COMPILED__ === 'undefined' &&
+      process.platform === 'darwin' &&
+      process.arch === 'x64';
+    ort = require(
+      intelSource ? 'wordconvert-onnxruntime-intel' : 'onnxruntime-node',
+    );
   } catch (error) {
     const message =
       typeof error === 'object' && error !== null && 'message' in error

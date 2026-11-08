@@ -1,6 +1,6 @@
 {
   "name": "@wordconvert/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -18,6 +18,7 @@
     "@wordconvert/math-converter": "workspace:*",
     "@wordconvert/pdf-reader": "workspace:*",
     "onnxruntime-node": "1.29.0",
+    "wordconvert-onnxruntime-intel": "npm:onnxruntime-node@1.23.2",
     "pdfjs-dist": "^6.3.289"
   },
   "devDependencies": {

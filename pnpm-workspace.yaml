@@ -4,6 +4,7 @@ packages:
 
 allowBuilds:
   onnxruntime-node: false
+  wordconvert-onnxruntime-intel: false
   protobufjs: false
   simple-git-hooks: true
 
