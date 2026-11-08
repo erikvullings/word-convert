@@ -11,6 +11,7 @@ const { values } = parseArgs({
   options: {
     target: { type: 'string' },
     'no-runtime': { type: 'boolean' },
+    'compile-executable-path': { type: 'string' },
   },
 });
 const nativeTargets: Record<string, string> = {
@@ -56,6 +57,12 @@ const result = spawnSync(
     'onnxruntime-node',
     '--target',
     target,
+    ...(values['compile-executable-path']
+      ? [
+          '--compile-executable-path',
+          resolve(values['compile-executable-path']),
+        ]
+      : []),
     '--define',
     '__WORDCONVERT_CLI_COMPILED__=true',
     '--outfile',
