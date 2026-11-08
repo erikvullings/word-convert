@@ -1,0 +1,19 @@
+{
+  "name": "@wordconvert/text-reader",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./content-editor": "./src/content-editor.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "dependencies": {
+    "@wordconvert/document-model": "workspace:*",
+    "@wordconvert/markdown-writer": "workspace:*",
+    "marked": "^18.0.11",
+    "parse5": "^8.0.0"
+  }
+}

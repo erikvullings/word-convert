@@ -175,6 +175,9 @@ importers:
       '@wordconvert/pdf-reader':
         specifier: workspace:*
         version: link:../../packages/pdf-reader
+      '@wordconvert/text-reader':
+        specifier: workspace:*
+        version: link:../../packages/text-reader
       onnxruntime-node:
         specifier: 1.29.0
         version: 1.29.0
@@ -227,6 +230,9 @@ importers:
       '@wordconvert/pdf-reader':
         specifier: workspace:*
         version: link:../../packages/pdf-reader
+      '@wordconvert/text-reader':
+        specifier: workspace:*
+        version: link:../../packages/text-reader
       codemirror:
         specifier: ^6.0.2
         version: 6.0.2
@@ -357,6 +363,21 @@ importers:
         version: 6.3.289(patch_hash=dbad016e0951b857448f208fd2924348f75d52521a6213cb264c0e921c2b01e0)
 
   packages/shared: {}
+
+  packages/text-reader:
+    dependencies:
+      '@wordconvert/document-model':
+        specifier: workspace:*
+        version: link:../document-model
+      '@wordconvert/markdown-writer':
+        specifier: workspace:*
+        version: link:../markdown-writer
+      marked:
+        specifier: ^18.0.11
+        version: 18.0.11
+      parse5:
+        specifier: ^8.0.0
+        version: 8.0.1
 
 packages:
 

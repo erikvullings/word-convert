@@ -2696,14 +2696,16 @@ async function readMetadata(
   const result = await document.getMetadata();
   const info = isRecord(result.info) ? result.info : {};
   const metadata = result.metadata;
-  const title = stringValue(info.Title) ?? metadata?.get('dc:title');
-  const author = stringValue(info.Author) ?? metadata?.get('dc:creator');
-  const subject = stringValue(info.Subject) ?? metadata?.get('dc:description');
+  const title = stringValue(info.Title) ?? xmpText(metadata?.get('dc:title'));
+  const author =
+    stringValue(info.Author) ?? xmpText(metadata?.get('dc:creator'), ', ');
+  const subject =
+    stringValue(info.Subject) ?? xmpText(metadata?.get('dc:description'));
   const keywords = stringValue(info.Keywords)
     ?.split(/[,;]/)
     .map((keyword) => keyword.trim())
     .filter(Boolean);
-  const language = metadata?.get('dc:language');
+  const language = xmpText(metadata?.get('dc:language'));
   return {
     ...(title ? { title } : {}),
     ...(author ? { author } : {}),
@@ -2833,6 +2835,16 @@ function isNumberSequence(
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function xmpText(value: unknown, separator?: string): string | undefined {
+  if (!Array.isArray(value)) return stringValue(value);
+  const entries = value
+    .map((entry: unknown) => stringValue(entry))
+    .filter((entry): entry is string => entry !== undefined);
+  return separator === undefined
+    ? entries[0]
+    : stringValue(entries.join(separator));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

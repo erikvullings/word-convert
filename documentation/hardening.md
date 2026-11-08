@@ -39,7 +39,7 @@ Source-page previews load only the bundled, same-origin PDF.js image decoders.
 
 ## CLI boundaries
 
-The [CLI](cli.md) accepts regular local DOCX/PDF files only. It checks the
+The [CLI](cli.md) accepts regular local DOCX/PDF/Markdown/HTML files only. It checks the
 50 MiB input limit before allocation and enforces it while reading, preserving
 the core readers' expansion, entry, compression-ratio, page, image, and formula
 budgets. SPA presets use the shared complete mapping validator and have a
@@ -48,6 +48,44 @@ published without replacing existing files unless `--force` was requested.
 Source documents, presets, and model inputs are protected, including aliases;
 temporary output is removed on failure. CLI I/O and overwrite assertions live
 in `apps/cli/src/cli.test.ts`.
+
+Text input is fatal-decoded UTF-8 under the same 50 MiB bound. parse5 parses
+HTML inertly without scripting, resource requests, or XML external entities.
+The semantic reader drops active elements, styles and unsafe destinations
+with warnings, limits traversed nesting to 128 levels, and uses the existing
+Markdown-to-model parser shared with the SPA. Local image loads are confined
+to the source directory after both lexical and realpath checks, with signature
+validation and passive raster types only. At most 100 images, 10 MiB per image,
+and 50 MiB total may be imported; data URIs share these limits. Remote images
+are disabled by default; absolute and escaped local image paths retain alternative
+text with a warning and are never fetched. These checks assume a trusted local filesystem (not adversarial
+concurrent symlink mutation). Included image sources are protected against
+output overwrite. Text import tests cover model fidelity, output ZIP entries,
+non-execution, and directory/symlink boundaries.
+Content selection recognizes enclosing main/ARIA landmarks and conventional
+`main`/`content` IDs before individual article cards. This preserves sibling
+publisher sections and main content nested inside server form wrappers; form
+controls and active markup remain omitted.
+
+CLI `--include-external-images` explicitly enables image downloads for local
+Markdown/HTML input. Only HTTPS on port 443 without URL credentials is allowed.
+All DNS results must be public; private, loopback, link-local, reserved, multicast,
+IPv4-mapped IPv6, and transition addresses are rejected. Connections use a pinned
+validated address with the original host's TLS certificate verification and Host
+header, preventing DNS rebinding. Each redirect is independently validated;
+at most three redirects and a 15-second per-image deadline cover DNS, connection,
+and streamed response reads. Only passive raster content types with identity
+encoding pass to the shared signature validator, under the existing image byte
+and count limits. Requests send no cookies, authorization, or referrer, but hosts
+can observe the user's IP and image URL; enabling the flag emits a warning.
+Download failures, unsupported types, invalid signatures, and blocked destinations
+skip only the affected remote image with an explicit per-image warning and retained
+alternative text. Local-image validation and aggregate resource limits remain fatal.
+Images stay in memory and are
+embedded under generated asset paths, never hotlinked or cached to disk.
+`--offline` and the flag are mutually exclusive. Deterministic tests cover
+address ranges, DNS pinning, private redirect rejection, media/size checks,
+and opt-in EPUB asset inclusion.
 
 Native rendering and Heron layout inference are enabled by default for PDF;
 formula OCR is opt-in. `--no-layout` preserves the model-free PDF path, while

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +20,26 @@ try {
   });
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /Usage: wordconvert/);
+  for (const extension of ['md', 'html']) {
+    const input = join(temporary, `text-source.${extension}`);
+    const output = join(temporary, `text-source-${extension}.epub`);
+    await writeFile(
+      input,
+      extension === 'md'
+        ? '# Text book\n\nA **bold** paragraph.\n'
+        : '<html lang="en"><head><title>Text book</title></head><body><h1>Chapter</h1><p>A <strong>bold</strong> paragraph.</p></body></html>',
+    );
+    const converted = spawnSync(executable, [input, '-o', output], {
+      cwd: temporary,
+      encoding: 'utf8',
+    });
+    assert.equal(converted.status, 0, converted.stderr);
+    assert.ok((await readFile(output)).byteLength > 0);
+    assert.doesNotMatch(
+      converted.stderr,
+      /Downloading|native runtime|Inference provider/,
+    );
+  }
   for (const format of [
     'html',
     'html-zip',

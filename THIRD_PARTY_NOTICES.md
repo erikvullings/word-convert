@@ -9,7 +9,10 @@ runtime dependencies described below.
 ## CLI runtime
 
 The CLI reuses fflate, KaTeX (including its embedded font), PDF.js, and the
-workspace readers/writers. Its optional models have the same pinned upstream
+workspace readers/writers. Text conversion also reuses Marked (18.0.11,
+licence terms below) and bundles parse5 8.0.1 (MIT, Ivan Nikulin) with entities
+8.0.0 (BSD-2-Clause, Felix Böhm). Their installed `LICENSE` files were reviewed
+and copied to `LICENSES/parse5.txt` and `LICENSES/entities.txt`. Its optional models have the same pinned upstream
 TexTeller revision and Apache-2.0 licensing as the SPA. Default CLI layout
 analysis downloads the official Docling Heron ONNX export at revision
 `40bde044036bb181c130ddf6c51792187268748f` from

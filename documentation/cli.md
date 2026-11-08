@@ -1,13 +1,82 @@
 # Local command-line conversion
 
 WordConvert's CLI shares the SPA's semantic readers and writers instead of
-maintaining a separate conversion engine. It accepts **local DOCX and PDF**
+maintaining a separate conversion engine. It accepts **local DOCX, PDF, Markdown, and HTML**
 files and produces standalone HTML, HTML ZIP, Markdown, Markdown ZIP, or EPUB.
 Remote imports, interactive editors, and full-page text OCR are not included.
 PDF layout analysis and GPU selection are automatic. Missing model assets are
 downloaded once with a warning, then cached; document content stays on-device.
-Use `--offline` to prohibit model downloads, or `--no-layout` for basic PDF
+Use `--offline` to prohibit all network requests, or `--no-layout` for basic PDF
 conversion without a model or native runtime.
+
+## Markdown and HTML input
+
+```sh
+wordconvert notes.md                 # notes.epub
+wordconvert article.html -o book.epub
+wordconvert notes.markdown -f html -o notes.html
+```
+
+Inputs `.md`, `.markdown`, `.html`, `.htm`, and `.xhtml` are UTF-8 text under
+the same 50 MiB input limit. They use the semantic model and existing writers,
+so all five output formats work without native libraries or model downloads.
+Headings, emphasis, lists, quotes, code, GFM tables, and Markdown TeX formulas
+are retained. HTML title, language and author metadata are read when present;
+otherwise title derives from the first H1/filename, language defaults to
+English, and a deterministic source SHA-256 identifier is generated.
+
+Local images must be relative to the input directory (including subfolders).
+Symlink and `..` escapes, absolute paths, and `file:` URLs are not loaded.
+Remote image URLs are disabled by default. PNG, JPEG, GIF, WebP, and AVIF images are checked by signature,
+limited to 100 images, 10 MiB each, and 50 MiB total, and embedded using
+generated writer asset paths. Valid bounded data-URI images are supported.
+Unavailable images retain alternative text and a warning. Output cannot
+overwrite an included source image, even with `--force`.
+
+To embed external images, opt in explicitly:
+
+```sh
+wordconvert article.html --include-external-images -o article.epub
+wordconvert notes.md --include-external-images
+```
+
+Only credential-free HTTPS on port 443 is allowed, including protocol-relative
+URLs. DNS must resolve exclusively to public addresses, and the connection is
+pinned to a validated address with normal TLS certificate verification.
+Private/local networks, insecure redirects, active image types, and compressed
+responses are rejected. Each image has a 15-second deadline (including at most
+three redirects) and the same streaming byte and signature limits as local
+images. No cookies, authorization, or referrer are sent; image hosts can still
+observe your IP address and requested URLs. Images are embedded, not hotlinked,
+and never cached to disk. A rejected or failed opted-in download is skipped with
+a per-image warning; alternative text and the rest of the article are retained.
+Local image validation and aggregate image budgets remain strict.
+The flag is for Markdown/HTML only and cannot be combined with
+`--offline`; it does not relax local-file containment.
+
+HTML is parsed inertly without script execution, network requests, or external
+entity loading. Scripts, active embeds, SVG, forms, CSS, and event handlers are
+omitted with warnings. Relative/unsafe link destinations are omitted, while
+safe links and text remain. HTML is a semantic import, not a pixel/style-preserving
+copy: table spans are flattened with a warning, and MathML requires a TeX
+`alttext` alternative for equation preservation. Inline/raw HTML in Markdown
+may be retained as escaped text rather than interpreted as source styling.
+
+Content selection prefers the first enclosing `<main>`, ARIA `role="main"`, or
+`id="main"` landmark, then `id="content"`, `<article>`, and the document body.
+This includes sibling publisher sections inside a larger main container and
+content inside a page-wide server form without importing form controls.
+Nested Avada/Fusion columns inside that container are retained. Publisher pages
+with unusual markup or content absent from the saved HTML can still under-capture.
+For Avada/Fusion pages where pandoc extracts the full report more reliably, use:
+
+```sh
+pandoc report.html -f html -t gfm -o report.md
+wordconvert report.md -o report.epub
+```
+
+Pandoc is an optional, separately installed fallback, not a CLI dependency.
+Neither path executes JavaScript to load missing page content.
 
 ## Run from source
 
@@ -36,6 +105,9 @@ Conversion warnings, runtime diagnostics, and file-write confirmations go to
 stderr. Exit codes are `0` for success, `1` for conversion/I/O failure, and `2`
 for invalid arguments. Formula recognition warnings can accompany a successful
 conversion: uncertain or invalid recognition retains source content.
+PDF XMP creator sequences are normalized before analysis: empty entries are
+ignored and nonempty names are joined in source order. Document-info author
+metadata retains precedence, and `--author` overrides the analysed result.
 
 ```sh
 pnpm cli document.docx --format markdown --output notes.md

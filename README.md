@@ -19,7 +19,12 @@ macro-enabled `.docm` files are rejected.
 ## Local CLI
 
 The CLI reuses the same semantic DOCX/PDF readers and HTML, Markdown, and EPUB
-writers. It accepts local files and processes documents on-device. PDF conversion
+writers. It also accepts local Markdown and HTML/XHTML for EPUB or other output
+formats, preserving semantic structure and bounded relative raster images.
+`--include-external-images` optionally embeds public HTTPS raster images in
+Markdown/HTML; private networks remain blocked and `--offline` forbids downloads.
+Text imports need no native runtime or model downloads. It accepts local files
+and processes documents on-device. PDF conversion
 defaults to native rendering, Heron layout analysis, and automatic GPU selection
 (CoreML on macOS, otherwise WebGPU when bundled, with reported CPU fallback).
 Missing models are downloaded once with a warning and cached; `--offline`

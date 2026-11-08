@@ -22,6 +22,7 @@
     "@wordconvert/markdown-writer": "workspace:*",
     "@wordconvert/math-converter": "workspace:*",
     "@wordconvert/pdf-reader": "workspace:*",
+    "@wordconvert/text-reader": "workspace:*",
     "codemirror": "^6.0.2",
     "css-tree": "^3.2.1",
     "dompurify": "^3.4.15",

@@ -47,9 +47,9 @@ const EXTENSIONS: Record<Format, string> = {
   epub: '.epub',
 };
 const MAX_INPUT_BYTES = 50 * 1024 * 1024;
-const HELP = `WordConvert ${version} - local DOCX/PDF conversion
+const HELP = `WordConvert ${version} - local DOCX/PDF/Markdown/HTML conversion
 
-Usage: wordconvert <input.docx|input.pdf> [options]
+Usage: wordconvert <input.docx|input.pdf|input.md|input.html> [options]
        wordconvert --clear-model-cache [--model-cache-dir <dir>]
 
   -f, --format <format>        epub (default), html, html-zip, markdown, markdown-zip
@@ -74,7 +74,9 @@ Usage: wordconvert <input.docx|input.pdf> [options]
       --execution-provider <name> auto (default), cpu, coreml (macOS), webgpu
                               GPU providers require compatible drivers/hardware
       --runtime-dir <dir>     Override native runtime (auto-resolved beside real executable)
-      --offline               Never download models; missing cached models are errors
+      --include-external-images Download public HTTPS raster images in Markdown/HTML
+                              Disabled by default; never accesses private networks
+      --offline               Never use the network; missing cached models are errors
       --model-cache-dir <dir>  Override OS model cache directory
       --clear-model-cache     Delete only managed cached models, then exit
   -h, --help                  Show this help
@@ -90,6 +92,9 @@ Auto prefers CoreML on macOS, WebGPU elsewhere, with a warning on CPU fallback.
 Explicit GPU choices fail rather than silently fall back; unsupported operators use CPU.
 
 Examples:
+  wordconvert notes.md -o notes.epub
+  wordconvert article.html -o article.epub
+  wordconvert article.html --include-external-images -o article.epub
   wordconvert book.pdf -f epub -o book.epub
   wordconvert paper.pdf --formula-ocr -f markdown
   wordconvert book.pdf --no-layout --offline -f html
@@ -138,15 +143,42 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     const input = positionals[0];
     if (!input || positionals.length !== 1)
       throw new UsageError(
-        'Provide exactly one local DOCX or PDF input. See --help.',
+        'Provide exactly one local DOCX, PDF, Markdown, or HTML input. See --help.',
       );
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input))
       throw new UsageError(
         'Only local files are supported; remote URLs are not accepted.',
       );
     const extension = extname(input).toLowerCase();
-    if (extension !== '.docx' && extension !== '.pdf')
-      throw new UsageError('Only local .docx and .pdf files are supported.');
+    if (values['include-external-images'] && values.offline)
+      throw new UsageError(
+        '--include-external-images cannot be combined with --offline.',
+      );
+    if (
+      values['include-external-images'] &&
+      ['.docx', '.pdf'].includes(extension)
+    )
+      throw new UsageError(
+        '--include-external-images is supported only for Markdown/HTML input.',
+      );
+    if (
+      ![
+        '.docx',
+        '.pdf',
+        '.md',
+        '.markdown',
+        '.html',
+        '.htm',
+        '.xhtml',
+      ].includes(extension)
+    )
+      throw new UsageError(
+        'Only local DOCX, PDF, Markdown (.md/.markdown), and HTML (.html/.htm/.xhtml) files are supported.',
+      );
+    if (values['include-external-images'])
+      io.stderr(
+        'warning: External image downloads are enabled. Image hosts can observe your IP address and requested URLs; documents are not uploaded.\n',
+      );
     const format = values.format ?? inferOutputFormat(values.output) ?? 'epub';
     if (!isFormat(format))
       throw new UsageError(`Unknown format. Choose ${FORMATS.join(', ')}.`);
@@ -280,19 +312,33 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
             filename,
             ...(stylePreset ? { stylePreset } : {}),
           })
-        : await (
-            await import('./pdf.ts')
-          ).readPdf(bytes, filename, {
-            ...options,
-            executionProvider: provider,
-            onDiagnostic: io.stderr,
-            ...(values.rasterize ? { rasterize: true } : {}),
-            ...(layoutModel ? { layoutModel } : {}),
-            ...(formulaModelDir ? { formulaModelDir } : {}),
-            ...(values['runtime-dir']
-              ? { runtimeDir: values['runtime-dir'] }
-              : {}),
-          });
+        : extension !== '.pdf'
+          ? await (
+              await import('./text.ts')
+            ).readLocalText(
+              bytes,
+              input,
+              ['.md', '.markdown'].includes(extension) ? 'markdown' : 'html',
+              conversionDate,
+              output === '-'
+                ? undefined
+                : (path) => protectSource(path, output),
+              values['include-external-images'] ?? false,
+              io.stderr,
+            )
+          : await (
+              await import('./pdf.ts')
+            ).readPdf(bytes, filename, {
+              ...options,
+              executionProvider: provider,
+              onDiagnostic: io.stderr,
+              ...(values.rasterize ? { rasterize: true } : {}),
+              ...(layoutModel ? { layoutModel } : {}),
+              ...(formulaModelDir ? { formulaModelDir } : {}),
+              ...(values['runtime-dir']
+                ? { runtimeDir: values['runtime-dir'] }
+                : {}),
+            });
     if (values.title !== undefined)
       model.metadata.title = userValue(values.title);
     if (values.language !== undefined)
@@ -368,6 +414,7 @@ function parseArguments(argv: string[]) {
         'no-layout': { type: 'boolean' },
         'formula-ocr': { type: 'boolean' },
         offline: { type: 'boolean' },
+        'include-external-images': { type: 'boolean' },
         'model-cache-dir': { type: 'string' },
         'clear-model-cache': { type: 'boolean' },
         'layout-model': { type: 'string' },
