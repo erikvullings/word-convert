@@ -3,6 +3,8 @@
 WordConvert's CLI shares the SPA's semantic readers and writers instead of
 maintaining a separate conversion engine. It accepts **local DOCX, PDF, Markdown, and HTML**
 files and produces standalone HTML, HTML ZIP, Markdown, Markdown ZIP, or EPUB.
+Existing local EPUB files support image optimization, missing-TOC repair, and
+optional chapter organization without rebuilding through the semantic model.
 Remote imports, interactive editors, and full-page text OCR are not included.
 PDF layout analysis and GPU selection are automatic. Missing model assets are
 downloaded once with a warning, then cached; document content stays on-device.
@@ -101,6 +103,85 @@ wordconvert article.html --image-format preserve -o lossless-png.epub
 <1-100>` controls JPEG/WebP encoding quality, not pixel dimensions. Both apply
 only to EPUB. `--max-image-size 0` disables all image optimization, including
 format changes. Original source documents and their images are never modified.
+
+## Shrink an existing EPUB
+
+```sh
+wordconvert large.epub                      # large.shrunk.epub
+wordconvert large.epub --max-image-size 1200 --image-quality 70 -o compact.epub
+wordconvert large.epub --image-format preserve -o lossless.epub
+wordconvert large.epub --split-chapters -o chapters.epub
+```
+
+The same default 1600 px / JPEG quality 80 policy applies to manifest-declared
+PNG, JPEG, and WebP images, including covers. Transparency stays lossless;
+animated PNG/WebP, GIF/AVIF, SVG, fonts, and other resources are untouched.
+Chapter structure, navigation labels, styles, and metadata are preserved by
+default. Converted image filenames receive the matching suffix without
+overwriting existing resources. Manifest MIME types and static XHTML, SVG,
+CSS, NCX, SMIL, and OPF references are updated together, including percent-encoded
+paths, fragments, inline styles, and `srcset`.
+Resource relocation and chapter splitting are rejected for scripted books:
+JavaScript-generated references cannot be rewritten safely. Use
+`--image-format preserve` or `--max-image-size 0`, without `--split-chapters`,
+to avoid relocation.
+
+An existing TOC is retained. If missing, an EPUB 3 navigation document or EPUB 2
+NCX is generated from spine headings, adding collision-free heading IDs as
+needed. With no usable headings, the TOC lists existing spine documents and a
+warning explains the fallback. No readable XHTML spine means a warning instead
+of a fabricated TOC.
+
+`--split-chapters` is opt-in for existing EPUBs. Each XHTML spine document splits
+at H1 headings when there are at least two; otherwise repeated H2 headings are
+used (one H1 often represents the book title). Preceding content remains a
+front-matter file. Nested wrappers are retained, and manifest/spine order, TOCs,
+and cross-chapter fragment links are updated. Without recognizable boundaries
+the file stays intact. This is heading-based organization, not inference of
+chapters from font size, plain paragraphs, or page breaks.
+
+The input is capped at **256 MiB** (instead of the normal 50 MiB source cap);
+ZIP limits are 10,000 entries, 64 MiB per expanded entry, 512 MiB total, and
+1000:1 maximum expansion per entry. Raster decoding checks the signature and
+dimensions first: 40 megapixels per image and 1 gigapixel total. XML is UTF-8,
+capped at 4 MiB per container/OPF and 32 MiB per content document.
+Custom DTD/entity declarations and `xml:base`/HTML base elements are rejected;
+content documents may retain a simple external DOCTYPE without fetching it.
+ZIP64, split archives, unsafe/duplicate ZIP paths, encrypted/font-obfuscated
+packages, and signed books are rejected explicitly.
+
+This mode uses the native canvas binding but no models or network; a missing
+binding is an error when there are images to optimize. Codec failures produce
+warnings and retain the original image, while invalid signatures or exceeded
+resource limits fail the operation. Only smaller image encodings are used.
+For image-only changes, if repacking would increase its size, the original
+package is written with a warning. A book with no useful image savings is copied
+unchanged unless a missing TOC is added or chapter splitting is requested.
+Those structural changes are retained even if the package becomes larger.
+Byte counts and percentage savings go to stderr.
+
+Output defaults to `<name>.shrunk.epub`, not the input path. Existing output
+files need `--force`; even with it, source files and their symlink/hard-link
+aliases cannot be overwritten. `--output -` streams binary output.
+`--max-image-size 0` disables image changes; TOC repair and optional chapter
+splitting still apply.
+Metadata, formula, model, and external-image import options are rejected rather
+than silently ignored. EPUB input cannot produce HTML or Markdown. This is a
+repackaging tool, not a sanitizer: existing scripts, remote references, metadata,
+and private content are preserved, not executed or fetched.
+
+### PDF page numbers, running headers, and footers
+
+The CLI uses the shared PDF reader's automatic page-furniture detection. On
+documents of at least four pages, high-confidence repeated headers, footers, and
+page numbers (including odd/even variants) are omitted from extracted text.
+Medium/low-confidence candidates remain to avoid deleting real content.
+The cleanup warning is reported on stderr. Text baked into page images remains
+visible; full-page OCR or image erasure is not performed.
+
+EPUB shrinking and chapter organization preserve body text. They do not strip
+paragraphs that resemble page numbers or headers: without reliable PDF geometry
+that would risk deleting genuine content.
 
 ## Run from source
 

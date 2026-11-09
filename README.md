@@ -41,6 +41,29 @@ lossless PNG. Only smaller encodings are used. Override with
 `--image-format preserve` or `--image-quality <1-100>` (EPUB only).
 Pixel dimensions, not DPI metadata, determine the reading resolution.
 
+Existing EPUBs can also be shrunk without rebuilding their chapters, navigation,
+styles, or metadata:
+
+```sh
+wordconvert large.epub                 # Writes large.shrunk.epub
+wordconvert large.epub --max-image-size 1200 --image-quality 70 -o compact.epub
+wordconvert large.epub --split-chapters -o chapters.epub
+```
+
+EPUB input is optimization-only (not conversion to other formats), accepts up to
+256 MiB with bounded ZIP expansion, requires the native canvas runtime for image
+optimization, and never overwrites the source. Encrypted, font-obfuscated, and
+signed EPUBs are rejected. Image filenames, MIME types, and book references
+are updated together. Existing TOCs are preserved; a missing TOC is generated
+from headings (or existing spine documents). `--split-chapters` optionally
+organizes XHTML into one file per detected chapter; otherwise existing chapter
+files stay intact.
+
+PDF imports automatically remove high-confidence repeated page numbers, running
+headers, and footers. This is heuristic, not removal of text baked into images.
+Existing EPUB body text is preserved rather than guessing which lines are page
+furniture.
+
 With [Bun 1.3.11](https://bun.sh/) installed for development:
 
 ```sh
@@ -68,7 +91,7 @@ cross-compilation, presets, deterministic output, model setup, and limitations.
 The optional [fetch-to-epub skill](skills/fetch-to-epub/SKILL.md) guides an agent
 through downloading authorized web articles or PDFs, converting them with
 `wordconvert`, and checking EPUB completeness and image size. It also documents
-privacy precautions for browser captures.
+privacy precautions for browser captures and shrinking existing EPUB files.
 
 Copy `skills/fetch-to-epub/` into your agent's supported skills directory
 (for example, `~/.agents/skills/`), then invoke `fetch-to-epub` explicitly.

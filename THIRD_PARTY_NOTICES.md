@@ -9,7 +9,16 @@ runtime dependencies described below.
 ## CLI runtime
 
 The CLI reuses fflate, KaTeX (including its embedded font), PDF.js, and the
-workspace readers/writers. Text conversion also reuses Marked (18.0.11,
+workspace readers/writers. EPUB shrinking bundles `@xmldom/xmldom` 0.9.12
+(MIT, copyright 2019-present Christopher J. Brody and contributors;
+2012-2017 @jindw and contributors), and image metadata inspection bundles
+`image-size` 2.1.0 (MIT, copyright 2013-present Aditya Yadav).
+Their installed `LICENSE` files were reviewed and copied to
+`LICENSES/xmldom.txt` and `LICENSES/image-size.txt`.
+Static EPUB reference rewriting reuses css-tree (terms in the browser-runtime
+table below) and bundles srcset 5.0.3 (MIT, copyright Sindre Sorhus); its installed
+`license` was reviewed and copied to `LICENSES/srcset.txt`.
+Text conversion also reuses Marked (18.0.11,
 licence terms below) and bundles parse5 8.0.1 (MIT, Ivan Nikulin) with entities
 8.0.0 (BSD-2-Clause, Felix Böhm). Their installed `LICENSE` files were reviewed
 and copied to `LICENSES/parse5.txt` and `LICENSES/entities.txt`. Its optional models have the same pinned upstream

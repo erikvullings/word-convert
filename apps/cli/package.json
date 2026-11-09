@@ -18,11 +18,16 @@
     "@wordconvert/math-converter": "workspace:*",
     "@wordconvert/pdf-reader": "workspace:*",
     "@wordconvert/text-reader": "workspace:*",
+    "@xmldom/xmldom": "^0.9.12",
+    "css-tree": "^3.2.1",
+    "fflate": "^0.8.3",
+    "image-size": "^2.1.0",
+    "srcset": "^5.0.3",
     "onnxruntime-node": "1.29.0",
     "wordconvert-onnxruntime-intel": "npm:onnxruntime-node@1.23.2",
     "pdfjs-dist": "^6.3.289"
   },
   "devDependencies": {
-    "fflate": "^0.8.3"
+    "@types/css-tree": "^3.2.0"
   }
 }

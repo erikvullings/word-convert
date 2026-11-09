@@ -119,6 +119,7 @@ describe('CLI arguments and output', () => {
     [fixture, '--format', 'pdf'],
     [fixture, '--formula-mode', 'unsafe'],
     [fixture, '--max-image-size', '-5'],
+    [fixture, '--split-chapters'],
     [fixture, '--max-image-size', '800', '--format', 'html'],
     [fixture, '--image-format', 'webp'],
     [fixture, '--image-format', 'jpeg', '--format', 'html'],
@@ -194,6 +195,8 @@ describe('CLI arguments and output', () => {
     ]);
     expect(result.code).toBe(0);
     expect(result.output[0]).toContain('A Practical Book');
+    expect(result.output[0]).not.toMatch(/Page \d+ of 6/);
+    expect(result.errors).toContain('pdf-repeated-page-furniture');
     expect(result.errors).toContain('cli-pdf-geometry-only');
   });
 

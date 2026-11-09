@@ -1,7 +1,7 @@
 ---
 name: fetch-to-epub
 disable-model-invocation: true
-description: Retrieve web articles/PDFs and save them as source documents plus EPUBs. Use when the user wants to download papers/articles from URLs, archive them as PDF or HTML, and/or convert them to epub — especially paywalled, Akamai-, Cloudflare-, or JS-rendered pages that a plain curl fetch can't get.
+description: Retrieve authorized web articles/PDFs, convert downloaded documents to EPUB, or shrink existing EPUB files with wordconvert.
 ---
 
 # Fetch to EPUB
@@ -10,6 +10,8 @@ End-to-end: a list of URLs → downloaded source files (PDF/HTML) → validated 
 folder. Captures the hard-won bits: getting past bot protection, choosing the best source format,
 converting with the `wordconvert` CLI, and verifying the epub actually holds the full article (not
 markup noise).
+For an existing EPUB, skip retrieval and use the optimization-only workflow
+under step 3.
 
 Prereqs: `wordconvert` on PATH, and the `browser-tools` scripts for protected pages.
 Set `BROWSER_TOOLS_DIR` to the installed scripts directory (Chrome on `:9222`).
@@ -90,20 +92,67 @@ wordconvert INPUT -f epub --language en --title "Article Title" \
 - **Markdown route** for content that only exists as HTML you've already cleaned: `pandoc file.html -t gfm
   --wrap=none > /tmp/x.md` then `wordconvert /tmp/x.md -f epub …`.
 
+#### Existing EPUB input
+
+The CLI also shrinks an already-built EPUB without reconstructing the book:
+
+```bash
+wordconvert large.epub --max-image-size 1200 --image-quality 70
+# Writes large.shrunk.epub; optionally select a different output:
+wordconvert large.epub --output compact.epub
+# Optional: organize existing XHTML into chapter files:
+wordconvert large.epub --split-chapters --output chapters.epub
+```
+
+Defaults are the same 1600 px / JPEG quality 80 policy. Keep the native
+`runtime/` beside the executable; no models or network are needed. Chapters,
+navigation labels, styles, and metadata stay intact. Converted image suffixes,
+manifest MIME types, and static book references are updated together, including
+CSS, SVG, and percent-encoded paths. Animated and unsupported image formats are
+untouched. Only smaller image encodings are used. Read stderr for byte savings
+and warnings; codec failures retain the original image rather than dropping it.
+Scripted books reject image-path relocation and chapter splitting because
+dynamic references cannot be rewritten safely. Retry with `--image-format preserve`
+or `--max-image-size 0`, without `--split-chapters`.
+
+Existing TOCs are preserved; a missing TOC is generated from headings, falling
+back to spine documents with a warning when no headings are usable.
+`--split-chapters` is opt-in: it splits at repeated H1 headings, or repeated H2
+headings when H1 is only the book title, preserving front matter and updating
+spine order, TOCs, and cross-chapter links. Without recognizable boundaries the
+file stays intact. Existing chapter files remain unchanged by default.
+TOC/chapter changes may make small books larger even when images shrink.
+
+Input limit: 256 MiB, with bounded ZIP expansion. Encrypted, font-obfuscated,
+signed, ZIP64, and malformed packages are rejected. EPUB input supports only
+EPUB output; metadata/model/formula overrides are rejected. `--max-image-size 0`
+disables image changes but still allows missing-TOC repair and chapter splitting.
+`--force` replaces an existing output, never the
+input or its aliases. Shrinking is not sanitization: review retained private
+content, scripts, remote references, and metadata before sharing.
+
+For PDF input, high-confidence repeated page numbers, running headers, and
+footers are automatically omitted from extracted text (requires at least four
+pages). Review the cleanup warning; medium/low-confidence candidates and text
+baked into images remain. EPUB input preserves body text instead of guessing
+which paragraphs are page furniture.
+
 ### 4. Verify — this is the step that catches real defects
 
 A bigger file is **not** more complete. For each epub check three things:
 
 ```bash
 f="slug.epub"
+epub_content() {
+  unzip -Z1 "$f" | grep -Ei '\.(xhtml|html|htm)$' |
+    while IFS= read -r entry; do unzip -p "$f" "$entry"; done
+}
 # (a) valid epub
 unzip -p "$f" mimetype | grep -q "application/epub+zip" && echo ok
-# (b) body present — grep for phrases you KNOW are in the article
-for x in $(unzip -l "$f"|grep -oE 'EPUB/chapter-[0-9]+\.xhtml'); do unzip -p "$f" "$x"; done \
-  | sed 's/<[^>]*>//g' | grep -oE "known phrase|another phrase" | sort -u
+# (b) body present — use passages from the article, not only headings or TOC labels
+epub_content | sed 's/<[^>]*>//g' | grep -oE "known phrase|another phrase" | sort -u
 # (c) markup-noise scan — literal HTML shown as reading text (the #1 failure mode, see gotchas)
-for x in $(unzip -l "$f"|grep -oE 'EPUB/chapter-[0-9]+\.xhtml'); do unzip -p "$f" "$x"; done \
-  | grep -oE '&lt;(div|img|span|section|article)[ "^][^&]*&gt;' | wc -l   # must be 0
+epub_content | grep -oE '&lt;(div|img|span|section|article)[ "^][^&]*&gt;' | wc -l   # must be 0
 ```
 Report word count + image count + chapter count per file.
 
@@ -121,7 +170,7 @@ Report word count + image count + chapter count per file.
 - **Image-format footgun:** `--image-format preserve` can retain large lossless figures, and
   `--max-image-size 0` disables image optimization. For a compact EPUB set `--max-image-size`
   and use JPEG (default).
-  A corrupt/unreadable source image can't be embedded — the CLI drops it and notes it in stderr.
+  Review image warnings and verify that expected figures remain before sharing.
 - **`dc:creator` array bug (older CLI):** a PDF with an empty `<rdf:Seq>` author array crashed the CLI
   on `author?.trim`. Fixed in 0.1.4; if it recurs, strip the element via `qpdf --qdf` → perl remove
   `<dc:creator>…</dc:creator>` → `qpdf --object-streams=generate`, or `gs -sDEVICE=pdfwrite` to
@@ -136,6 +185,7 @@ Report word count + image count + chapter count per file.
 | Source | Best path |
 | --- | --- |
 | Direct PDF (report, paper) | `wordconvert file.pdf -f epub --max-image-size 1200 --image-quality 70` (Heron layout → headings + figures, small JPEG) |
+| Existing EPUB | `wordconvert large.epub --max-image-size 1200 --image-quality 70` (writes `large.shrunk.epub`) |
 | Landing page with a PDF link | download the PDF (§2), then the PDF path |
 | Server-rendered article HTML | `wordconvert file.html -f epub` (raw-HTML semantic extraction) |
 | JS/SPA article | Chrome rendered-DOM capture (§1) → `wordconvert file.html` |

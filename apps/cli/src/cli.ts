@@ -51,15 +51,16 @@ const EXTENSIONS: Record<Format, string> = {
   epub: '.epub',
 };
 const MAX_INPUT_BYTES = 50 * 1024 * 1024;
-const HELP = `WordConvert ${version} - local DOCX/PDF/Markdown/HTML conversion
+const HELP = `WordConvert ${version} - local document conversion and EPUB shrinking
 
-Usage: wordconvert <input.docx|input.pdf|input.md|input.html> [options]
+Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [options]
        wordconvert --clear-model-cache [--model-cache-dir <dir>]
 
   -f, --format <format>        epub (default), html, html-zip, markdown, markdown-zip
                               Inferred from --output extension unless explicitly set
   -o, --output <path>          Default: beside input, with the format's extension
                               Use "-" for stdout (including binary ZIP/EPUB)
+                              EPUB input: repack only, defaults to <name>.shrunk.epub
       --force                 Replace an existing output, never the input/preset
       --style-preset <path>    Version 1 JSON preset exported by the SPA (DOCX only)
       --title <text>           Override inferred title
@@ -72,6 +73,8 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html> [options]
                               images are downscaled. Default 1600, 0 disables
       --image-format <format> EPUB opaque images: jpeg (default) or preserve
       --image-quality <1-100> EPUB JPEG/WebP quality (default 80)
+      --split-chapters        EPUB input: split at chapter headings (opt-in)
+                              A missing TOC is generated automatically
       --conversion-date <ISO>  Fixed date or UTC timestamp for reproducible output
       --rasterize             Render PDF vectors/pages using the native runtime
       --layout-model <path>   Use a local Heron ONNX model instead of the cached default
@@ -105,6 +108,7 @@ Examples:
   wordconvert article.html --include-external-images -o article.epub
   wordconvert book.pdf -f epub -o book.epub
   wordconvert article.html --max-image-size 1200 -o small.epub
+  wordconvert large.epub --max-image-size 1200 --image-quality 70
   wordconvert paper.pdf --formula-ocr -f markdown
   wordconvert book.pdf --no-layout --offline -f html
   wordconvert --clear-model-cache
@@ -152,7 +156,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     const input = positionals[0];
     if (!input || positionals.length !== 1)
       throw new UsageError(
-        'Provide exactly one local DOCX, PDF, Markdown, or HTML input. See --help.',
+        'Provide exactly one local DOCX, PDF, Markdown, HTML, or EPUB input. See --help.',
       );
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input))
       throw new UsageError(
@@ -165,7 +169,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       );
     if (
       values['include-external-images'] &&
-      ['.docx', '.pdf'].includes(extension)
+      ['.docx', '.pdf', '.epub'].includes(extension)
     )
       throw new UsageError(
         '--include-external-images is supported only for Markdown/HTML input.',
@@ -179,10 +183,11 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         '.html',
         '.htm',
         '.xhtml',
+        '.epub',
       ].includes(extension)
     )
       throw new UsageError(
-        'Only local DOCX, PDF, Markdown (.md/.markdown), and HTML (.html/.htm/.xhtml) files are supported.',
+        'Only local DOCX, PDF, Markdown (.md/.markdown), HTML (.html/.htm/.xhtml), and EPUB files are supported.',
       );
     if (values['include-external-images'])
       io.stderr(
@@ -191,6 +196,30 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     const format = values.format ?? inferOutputFormat(values.output) ?? 'epub';
     if (!isFormat(format))
       throw new UsageError(`Unknown format. Choose ${FORMATS.join(', ')}.`);
+    if (values['split-chapters'] && extension !== '.epub')
+      throw new UsageError(
+        '--split-chapters applies only to existing EPUB input.',
+      );
+    if (extension === '.epub') {
+      if (format !== 'epub')
+        throw new UsageError('EPUB input supports shrinking to EPUB only.');
+      const allowed = new Set([
+        'format',
+        'output',
+        'force',
+        'max-image-size',
+        'image-format',
+        'image-quality',
+        'split-chapters',
+        'runtime-dir',
+        'offline',
+      ]);
+      for (const key of Object.keys(values))
+        if (!allowed.has(key))
+          throw new UsageError(
+            `--${key} is not supported when shrinking EPUB input; book content and metadata are preserved.`,
+          );
+    }
     const formulaMode =
       values['formula-mode'] ?? (format === 'epub' ? 'mathml' : 'source');
     if (!isFormulaMode(formulaMode))
@@ -263,8 +292,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         values['formula-model-dir'] ||
         values['formula-ocr'] ||
         values['no-layout'] ||
-        values['execution-provider'] ||
-        values['runtime-dir'])
+        values['execution-provider'])
     )
       throw new UsageError(
         'PDF rendering and model options require PDF input.',
@@ -275,7 +303,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       values.output ??
       join(
         dirname(input),
-        `${basename(input, extname(input))}${EXTENSIONS[format]}`,
+        `${basename(input, extname(input))}${extension === '.epub' ? '.shrunk' : ''}${EXTENSIONS[format]}`,
       );
     if (output !== '-') {
       await protectSource(input, output);
@@ -294,6 +322,36 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       if (!preset.ok || !preset.mappings)
         throw new UsageError(preset.error ?? 'Invalid style preset.');
       stylePreset = preset.mappings;
+    }
+    if (extension === '.epub') {
+      const { shrinkEpub, MAX_EPUB_INPUT_BYTES } =
+        await import('./shrink-epub.ts');
+      const bytes = await readBounded(input, MAX_EPUB_INPUT_BYTES);
+      const { createImageResizer } = await import('./image-resizer.ts');
+      const resize =
+        maxImageSize > 0
+          ? createImageResizer(values['runtime-dir'])
+          : undefined;
+      const data = await shrinkEpub(bytes, {
+        maxDimension: maxImageSize,
+        format: imageFormat,
+        quality: imageQuality,
+        splitChapters: values['split-chapters'] ?? false,
+        ...(resize ? { resize } : {}),
+        warn: io.stderr,
+      });
+      if (output === '-') await io.stdout(data);
+      else {
+        await saveOutput(output, data, values.force ?? false);
+        io.stderr(`Written ${output}\n`);
+      }
+      const percent = Math.abs(100 * (1 - data.length / bytes.length)).toFixed(
+        1,
+      );
+      io.stderr(
+        `EPUB size: ${bytes.length} -> ${data.length} bytes (${percent}% ${data.length <= bytes.length ? 'smaller' : 'larger'}).\n`,
+      );
+      return 0;
     }
     const bytes = await readBounded(input, MAX_INPUT_BYTES);
     let layoutModel = values['layout-model'];
@@ -449,6 +507,7 @@ function parseArguments(argv: string[]) {
         'max-image-size': { type: 'string' },
         'image-format': { type: 'string' },
         'image-quality': { type: 'string' },
+        'split-chapters': { type: 'boolean' },
         rasterize: { type: 'boolean' },
         'no-layout': { type: 'boolean' },
         'formula-ocr': { type: 'boolean' },

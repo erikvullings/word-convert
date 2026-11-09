@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 
 const executable = resolve(process.argv[2] ?? '');
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -39,6 +40,72 @@ try {
       converted.stderr,
       /Downloading|native runtime|Inference provider/,
     );
+    const optimized = spawnSync(
+      executable,
+      [output, '--max-image-size', '0', '--split-chapters'],
+      { cwd: temporary, encoding: 'utf8' },
+    );
+    assert.equal(optimized.status, 0, optimized.stderr);
+    assert.match(optimized.stderr, /EPUB size:/);
+    assert.ok(
+      (await readFile(output.replace(/\.epub$/, '.shrunk.epub'))).byteLength >
+        0,
+    );
+  }
+  const parts = unzipSync(
+    await readFile(join(temporary, 'text-source-md.epub')),
+  );
+  const packagePath = 'EPUB/package.opf';
+  const manifest = strFromU8(parts[packagePath]!);
+  assert.match(manifest, /properties="nav"/);
+  parts[packagePath] = strToU8(
+    manifest.replace(/<item\b[^>]*\bproperties="nav"[^>]*\/>/, ''),
+  );
+  delete parts['EPUB/nav.xhtml'];
+  parts['EPUB/chapter-001.xhtml'] = strToU8(
+    '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapters</title></head><body><h1 id="one">Chapter One</h1><p>First chapter. <a href="#two">Next</a></p><h1 id="two">Chapter Two</h1><p>Second chapter. <a href="#one">Back</a></p></body></html>',
+  );
+  const incomplete = join(temporary, 'missing-toc.epub');
+  await writeFile(
+    incomplete,
+    zipSync({
+      ...parts,
+      mimetype: [parts.mimetype!, { level: 0 }],
+    }),
+  );
+  for (const split of [false, true]) {
+    const output = join(temporary, split ? 'chapters.epub' : 'repaired.epub');
+    const repaired = spawnSync(
+      executable,
+      [incomplete, '-o', output, ...(split ? ['--split-chapters'] : [])],
+      { cwd: temporary, encoding: 'utf8' },
+    );
+    assert.equal(repaired.status, 0, repaired.stderr);
+    const entries = unzipSync(await readFile(output));
+    const navigation = strFromU8(entries['EPUB/wordconvert-nav.xhtml']!);
+    assert.match(navigation, />Chapter One</);
+    assert.match(navigation, />Chapter Two</);
+    const second = 'EPUB/chapter-001-chapter-002.xhtml';
+    assert.equal(Boolean(entries[second]), split);
+    if (split) {
+      assert.match(
+        strFromU8(entries['EPUB/chapter-001.xhtml']!),
+        /href="chapter-001-chapter-002.xhtml#two"/,
+      );
+      assert.match(strFromU8(entries[second]!), /href="chapter-001.xhtml#one"/);
+    }
+    if (process.env.WORDCONVERT_TEST_EPUBCHECK === '1') {
+      const validated = spawnSync('epubcheck', [output], {
+        cwd: temporary,
+        encoding: 'utf8',
+      });
+      assert.ifError(validated.error);
+      assert.equal(validated.status, 0, validated.stdout + validated.stderr);
+      assert.doesNotMatch(
+        validated.stdout + validated.stderr,
+        /^(?:ERROR|WARNING|FATAL)\(/m,
+      );
+    }
   }
   for (const format of [
     'html',

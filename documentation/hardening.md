@@ -382,3 +382,39 @@ GIF/AVIF are untouched. `--max-image-size 0` disables optimization in the CLI;
 format and quality overrides affect EPUB only. The original model is not mutated.
 Canvas/decoder errors fail conversion instead of silently embedding oversized
 images. A missing CLI canvas binding emits an explicit original-size warning.
+
+CLI EPUB-to-EPUB shrinking is a separate, non-semantic repackaging path. It reads
+at most 256 MiB, checks the classic ZIP central directory before decompression
+(10,000 entries, 64 MiB/entry, 512 MiB expanded total, 1000:1 per-entry ratio),
+and rejects ZIP64, split/encrypted archives, symlinks, duplicate/unsafe paths, and
+inconsistent local headers. Entries are never extracted to the filesystem.
+Container and OPF XML use a non-fetching XML parser with fatal diagnostics,
+UTF-8 decoding, and 4 MiB/document bounds. Content XML is capped at 32 MiB,
+permits simple external DOCTYPE declarations without fetching them, and rejects
+custom DTD/entity declarations. `xml:base` and HTML base elements are unsupported.
+Existing literal Unicode replacement characters are preserved with a warning;
+invalid UTF-8 still fails decoding.
+Encrypted/font-obfuscated and signed books are rejected before edits.
+Native raster decoding verifies signatures and dimensions first, with 64 MiB
+encoded and 40-megapixel limits per image, plus 1 gigapixel aggregate for an EPUB.
+Animated PNG/WebP images are preserved. Codec failures retain the original with
+an explicit warning; format/limit violations are fatal. A missing canvas binding
+is fatal if optimization is enabled and images are present.
+
+Book content and metadata remain intact; converted image suffixes and manifest
+media types (across renditions) change together. URI-aware XML, CSS, SVG, NCX,
+SMIL, inline-style, and srcset rewriting reconnects static references, retaining
+remote/data URLs without fetching them. Existing TOCs are preserved; missing
+EPUB 3 nav/EPUB 2 NCX is generated from headings or existing spine documents.
+Chapter splitting is opt-in, heading-based, and updates spine and fragment
+references; generated paths and heading IDs are collision-checked. The
+resource relocation/chapter-splitting path rejects script resources and handlers
+because dynamic references cannot be safely rewritten. Format-preserving image
+optimization can avoid these relocations. The stored
+`mimetype` remains first when repacking; ZIP timestamps are fixed independently
+of preserved OPF metadata. Without structural edits, no useful image savings or
+larger repacking returns the original bytes. Requested chapter splits or missing
+TOC repair are retained even if total size grows. This mode does not sanitize existing scripts,
+remote URLs, or private metadata; it never executes or fetches them. Output uses
+the same staged writes and source-alias protection as other CLI formats.
+`apps/cli/src/shrink-epub.test.ts` covers these boundaries and inputs above 50 MiB.
