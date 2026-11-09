@@ -20,7 +20,10 @@ import {
 import { secureDocxReader } from '@wordconvert/docx-reader';
 import { writeHtml, writeHtmlZip } from '@wordconvert/html-writer';
 import { writeMarkdown, writeMarkdownZip } from '@wordconvert/markdown-writer';
-import { writeEpub } from '@wordconvert/epub-writer';
+import {
+  DEFAULT_EPUB_MAX_IMAGE_DIMENSION,
+  writeEpub,
+} from '@wordconvert/epub-writer';
 import type { MathOutputMode } from '@wordconvert/math-converter';
 import { version } from '../package.json';
 import { isExecutionProvider } from './inference-options.ts';
@@ -64,6 +67,8 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html> [options]
       --identifier <text>      Override publication identifier
       --formula-mode <mode>   source, mathml, katex, disabled
                               Default: mathml for EPUB, source otherwise
+      --max-image-size <px>   Longest image edge in EPUB output; larger JPEG/PNG/WebP
+                              images are downscaled. Default 1600, 0 disables
       --conversion-date <ISO>  Fixed date or UTC timestamp for reproducible output
       --rasterize             Render PDF vectors/pages using the native runtime
       --layout-model <path>   Use a local Heron ONNX model instead of the cached default
@@ -96,6 +101,7 @@ Examples:
   wordconvert article.html -o article.epub
   wordconvert article.html --include-external-images -o article.epub
   wordconvert book.pdf -f epub -o book.epub
+  wordconvert article.html --max-image-size 1200 -o small.epub
   wordconvert paper.pdf --formula-ocr -f markdown
   wordconvert book.pdf --no-layout --offline -f html
   wordconvert --clear-model-cache
@@ -188,6 +194,9 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       throw new UsageError(
         'Formula mode must be source, mathml, katex, or disabled.',
       );
+    const maxImageSize = parseMaxImageSize(values['max-image-size']);
+    if (values['max-image-size'] !== undefined && format !== 'epub')
+      throw new UsageError('--max-image-size applies only to EPUB output.');
     const conversionDate =
       values['conversion-date'] ?? new Date().toISOString();
     if (!isIsoDate(conversionDate))
@@ -367,7 +376,11 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       model.metadata.identifier = userValue(values.identifier);
     if (values.author !== undefined)
       model.metadata.authors = values.author.map((name) => userValue({ name }));
-    const data = await render(model, format, conversionDate, formulaMode);
+    const data = await render(model, format, conversionDate, formulaMode, {
+      maxImageSize,
+      runtimeDir: values['runtime-dir'],
+      warn: io.stderr,
+    });
     for (const warning of model.warnings)
       io.stderr(`${warning.severity} [${warning.code}]: ${warning.message}\n`);
     if (output === '-') await io.stdout(data);
@@ -410,6 +423,7 @@ function parseArguments(argv: string[]) {
         identifier: { type: 'string' },
         'formula-mode': { type: 'string' },
         'conversion-date': { type: 'string' },
+        'max-image-size': { type: 'string' },
         rasterize: { type: 'boolean' },
         'no-layout': { type: 'boolean' },
         'formula-ocr': { type: 'boolean' },
@@ -538,11 +552,25 @@ async function saveOutput(
   }
 }
 
+function parseMaxImageSize(value: string | undefined): number {
+  if (value === undefined) return DEFAULT_EPUB_MAX_IMAGE_DIMENSION;
+  if (!/^\d+$/.test(value) || Number(value) > 32768)
+    throw new UsageError(
+      '--max-image-size must be a whole number of pixels from 0 to 32768.',
+    );
+  return Number(value);
+}
+
 async function render(
   model: DocumentModel,
   format: Format,
   conversionDate: string,
   formulaMode: MathOutputMode,
+  images: {
+    maxImageSize: number;
+    runtimeDir: string | undefined;
+    warn: (message: string) => void;
+  },
 ): Promise<string | Uint8Array> {
   const options = { conversionDate, formulaMode };
   const markdownOptions = {
@@ -559,7 +587,22 @@ async function render(
       return writeMarkdown(model, markdownOptions);
     case 'markdown-zip':
       return writeMarkdownZip(model, markdownOptions);
-    case 'epub':
-      return writeEpub(model, options);
+    case 'epub': {
+      const imageResizer =
+        images.maxImageSize > 0
+          ? (await import('./image-resizer.ts')).createImageResizer(
+              images.runtimeDir,
+            )
+          : undefined;
+      if (images.maxImageSize > 0 && !imageResizer)
+        images.warn(
+          'warning: Native image runtime unavailable; images are embedded at original size.\n',
+        );
+      return writeEpub(model, {
+        ...options,
+        maxImageDimension: images.maxImageSize,
+        ...(imageResizer ? { imageResizer } : {}),
+      });
+    }
   }
 }

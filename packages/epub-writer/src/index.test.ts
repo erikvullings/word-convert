@@ -39,6 +39,32 @@ function model(blocks: DocumentModel['blocks'] = []): DocumentModel {
   };
 }
 
+describe('writeEpub image shrinking', () => {
+  it('uses the injected resizer with the default 1600px limit', async () => {
+    const input = model();
+    input.assets.a = {
+      id: 'a',
+      mediaType: 'image/png',
+      data: new Uint8Array(100),
+    };
+    const calls: number[] = [];
+    const zip = unzipSync(
+      await writeEpub(input, {
+        conversionDate: '2026-07-15',
+        identifier: 'urn:test:1',
+        title: 'T',
+        language: 'en',
+        imageResizer: async (_data, _type, max) => {
+          calls.push(max);
+          return new Uint8Array(10);
+        },
+      }),
+    );
+    expect(calls).toEqual([1600]);
+    expect(zip['EPUB/images/image-001.png']?.byteLength).toBe(10);
+  });
+});
+
 describe('writeEpub', () => {
   it('packages supplied source XHTML without Markdown reconstruction', async () => {
     const sourceXhtml =

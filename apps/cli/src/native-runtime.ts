@@ -5,6 +5,22 @@ import { fileURLToPath } from 'node:url';
 
 declare const __WORDCONVERT_CLI_COMPILED__: boolean;
 
+function runtimeRoot(directory?: string): string {
+  const defaultDirectory =
+    typeof __WORDCONVERT_CLI_COMPILED__ !== 'undefined'
+      ? join(dirname(realpathSync(process.execPath)), 'runtime')
+      : fileURLToPath(new URL('../', import.meta.url));
+  return resolve(directory ?? defaultDirectory);
+}
+
+/** Loads only the canvas binding; used for image resizing without ONNX. */
+export function loadCanvas(
+  directory?: string,
+): typeof import('@napi-rs/canvas') {
+  const root = runtimeRoot(directory);
+  return createRequire(join(root, 'package.json'))('@napi-rs/canvas');
+}
+
 export function loadNativeRuntime(directory?: string) {
   const defaultDirectory =
     typeof __WORDCONVERT_CLI_COMPILED__ !== 'undefined'

@@ -6,6 +6,7 @@ import {
 import { DocxReadError, secureDocxReader } from '@wordconvert/docx-reader';
 import { writeHtml, writeHtmlZip } from '@wordconvert/html-writer';
 import { writeMarkdown, writeMarkdownZip } from '@wordconvert/markdown-writer';
+import { resizeRasterImage } from './image-resizer';
 import { writeEpub } from '@wordconvert/epub-writer';
 import {
   configurePdfJsWorker,
@@ -167,6 +168,7 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
               ? await writeEpub(request.model, {
                   conversionDate: request.conversionDate,
                   formulaMode: request.formulaMode ?? 'mathml',
+                  imageResizer: resizeRasterImage,
                   ...(request.cover ? { cover: request.cover } : {}),
                   ...(request.coverPng ? { coverPng: request.coverPng } : {}),
                   ...(request.sourceHtml

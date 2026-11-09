@@ -32,7 +32,10 @@ prohibits downloads, `--no-layout` enables basic PDF conversion, and
 `--clear-model-cache` removes cached models. Formula OCR is optional via
 `--formula-ocr`. Missing document language defaults to English.
 Output defaults to EPUB, or is inferred from a recognized `--output` extension;
-an explicit `--format` takes precedence.
+an explicit `--format` takes precedence. EPUB output downscales JPEG, PNG, and
+WebP images larger than 1600 px on the longest edge (to keep website
+conversions small); use `--max-image-size <px>` to change the limit or `0` to
+embed original images.
 
 With [Bun 1.3.11](https://bun.sh/) installed for development:
 

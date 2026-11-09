@@ -118,6 +118,8 @@ describe('CLI arguments and output', () => {
     [fixture, fixture],
     [fixture, '--format', 'pdf'],
     [fixture, '--formula-mode', 'unsafe'],
+    [fixture, '--max-image-size', '-5'],
+    [fixture, '--max-image-size', '800', '--format', 'html'],
     [fixture, '--conversion-date', '2026-02-30'],
     [fixture, '--conversion-date', '2026-01-01T24:00:00Z'],
     [fixture, '--language', 'not a language'],

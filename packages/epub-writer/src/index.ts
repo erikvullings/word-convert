@@ -28,6 +28,48 @@ export interface EpubWriterOptions extends WriterOptions {
   formulaMode?: MathOutputMode;
   sourceXhtml?: string;
   sourceCss?: string;
+  /** Longest image edge in pixels; larger raster images are downscaled. Default 1600. */
+  maxImageDimension?: number;
+  /** Injected raster resizer; without it images are embedded unchanged. */
+  imageResizer?: EpubImageResizer;
+}
+
+export const DEFAULT_EPUB_MAX_IMAGE_DIMENSION = 1600;
+
+/** Returns re-encoded data (same media type) or undefined to keep the original. */
+export type EpubImageResizer = (
+  data: Uint8Array,
+  mediaType: string,
+  maxDimension: number,
+) => Promise<Uint8Array | undefined>;
+
+const RESIZABLE_MEDIA_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]);
+
+async function shrinkAssets(
+  model: DocumentModel,
+  options: EpubWriterOptions,
+): Promise<DocumentModel> {
+  const resize = options.imageResizer;
+  const max = options.maxImageDimension ?? DEFAULT_EPUB_MAX_IMAGE_DIMENSION;
+  if (!resize || !(max > 0)) return model;
+  const assets: DocumentModel['assets'] = {};
+  for (const [key, asset] of Object.entries(model.assets)) {
+    const mediaType = asset.mediaType.toLowerCase();
+    let next = asset;
+    if (RESIZABLE_MEDIA_TYPES.has(mediaType)) {
+      const data = await resize(asset.data, mediaType, max).catch(
+        () => undefined,
+      );
+      if (data && data.byteLength < asset.data.byteLength)
+        next = { ...asset, data };
+    }
+    assets[key] = next;
+  }
+  return { ...model, assets };
 }
 
 interface Chapter {
@@ -135,6 +177,7 @@ export async function writeEpub(
   model: DocumentModel,
   options: EpubWriterOptions,
 ): Promise<Uint8Array> {
+  model = await shrinkAssets(model, options);
   const metadata = resolveMetadata(model, options);
   const chapters = options.sourceXhtml
     ? [{ id: 'chapter-001', path: 'chapter-001.xhtml', blocks: [] }]

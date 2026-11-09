@@ -78,6 +78,20 @@ wordconvert report.md -o report.epub
 Pandoc is an optional, separately installed fallback, not a CLI dependency.
 Neither path executes JavaScript to load missing page content.
 
+## EPUB image size
+
+EPUB output downscales JPEG, PNG, and WebP images whose longest edge exceeds
+**1600 px** (JPEG/WebP re-encoded at quality 85), which is sharp on e-readers
+and tablets while keeping converted websites small. Smaller images, GIF/AVIF,
+and images that would not shrink are kept unchanged. Override with
+`--max-image-size <px>` (0-32768; `0` embeds originals). The option is valid only
+for EPUB output. Resizing uses the native canvas binding in `runtime/`; if it
+is unavailable, a warning is printed and images are embedded unchanged.
+
+```sh
+wordconvert article.html --include-external-images --max-image-size 1200 -o small.epub
+```
+
 ## Run from source
 
 Install Node 24+, the repository's pinned pnpm, and Bun 1.3.11:
