@@ -424,6 +424,21 @@ function filePicker(
         ),
       ],
     ),
+    m('p.secondary-actions', [
+      'Prefer the command line? ',
+      m('code', 'wordconvert'),
+      ' converts local DOCX, PDF, Markdown, and HTML files on your device. ',
+      m(
+        'a',
+        {
+          href: 'https://github.com/erikvullings/word-convert/releases',
+          target: '_blank',
+          rel: 'noopener noreferrer',
+        },
+        'Download the CLI from GitHub Releases',
+      ),
+      '.',
+    ]),
   ]);
 }
 

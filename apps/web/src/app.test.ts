@@ -271,6 +271,11 @@ describe('App', () => {
     expect(rendered).toContain('Go to WordConvert home');
     expect(rendered).toContain('All processing stays on this device');
     expect(rendered).toContain('Choose a DOCX or PDF document');
+    expect(rendered).toContain('Prefer the command line?');
+    expect(rendered).toContain('Download the CLI from GitHub Releases');
+    expect(rendered).toContain(
+      'https://github.com/erikvullings/word-convert/releases',
+    );
     expect(rendered).toContain('"className":"document-file-picker"');
     expect(rendered).toContain(
       '"id":"document-input","className":"document-file-input"',

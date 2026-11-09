@@ -57,3 +57,7 @@ These improvements are intentionally outside the initial production path.
 - [x] 0027 Add workflow routes
 - [x] 0028 Refine backend-free EPUB sharing
 - [x] 0029 Add part-based book editor *(needs 0014)*
+
+## Command-line distribution
+
+- [x] 0030 Add portable CLI and release bundles
