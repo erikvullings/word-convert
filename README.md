@@ -63,6 +63,19 @@ use `pnpm cli:install -- --force` to upgrade a script-managed installation.
 See [CLI usage and optional models](documentation/cli.md) for installation,
 cross-compilation, presets, deterministic output, model setup, and limitations.
 
+### Agent skill: fetch-to-epub
+
+The optional [fetch-to-epub skill](skills/fetch-to-epub/SKILL.md) guides an agent
+through downloading authorized web articles or PDFs, converting them with
+`wordconvert`, and checking EPUB completeness and image size. It also documents
+privacy precautions for browser captures.
+
+Copy `skills/fetch-to-epub/` into your agent's supported skills directory
+(for example, `~/.agents/skills/`), then invoke `fetch-to-epub` explicitly.
+Install `wordconvert` separately; browser-assisted capture also requires the
+`browser-tools` scripts and `BROWSER_TOOLS_DIR` as described in the skill.
+Those scripts are not bundled here.
+
 ## Browser workflow
 
 The Mithril SPA presents the conversion workflow from document selection
