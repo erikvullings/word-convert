@@ -40,6 +40,64 @@ function model(blocks: DocumentModel['blocks'] = []): DocumentModel {
 }
 
 describe('writeEpub image shrinking', () => {
+  it('updates manifest, generated extension and source XHTML for JPEG output without mutating input', async () => {
+    const input = model();
+    input.assets.photo = {
+      id: 'photo',
+      mediaType: 'image/png',
+      data: new Uint8Array(100),
+    };
+    const files = unzipSync(
+      await writeEpub(input, {
+        identifier: 'test',
+        title: 'Test',
+        language: 'en',
+        conversionDate: '2026-07-15',
+        sourceXhtml: '<img src="wordconvert-asset:photo" alt="Photo"/>',
+        imageResizer: async (_data, _type, max, encoding) => {
+          expect(max).toBe(1600);
+          expect(encoding).toEqual({ format: 'jpeg', quality: 80 });
+          return { data: new Uint8Array(10), mediaType: 'image/jpeg' };
+        },
+      }),
+    );
+    expect(files['EPUB/images/image-001.jpg']?.length).toBe(10);
+    expect(strFromU8(files['EPUB/package.opf']!)).toContain(
+      'media-type="image/jpeg"',
+    );
+    expect(strFromU8(files['EPUB/chapter-001.xhtml']!)).toContain(
+      'images/image-001.jpg',
+    );
+    expect(input.assets.photo.mediaType).toBe('image/png');
+    expect(input.assets.photo.data.length).toBe(100);
+  });
+
+  it.each([0, 100, 200])(
+    'keeps originals when disabled or encoding is not smaller (%i)',
+    async (size) => {
+      const input = model();
+      input.assets.photo = {
+        id: 'photo',
+        mediaType: 'image/png',
+        data: new Uint8Array(100),
+      };
+      const files = unzipSync(
+        await writeEpub(input, {
+          identifier: 'test',
+          title: 'Test',
+          language: 'en',
+          conversionDate: '2026-07-15',
+          maxImageDimension: size === 0 ? 0 : 1600,
+          imageResizer: async () => {
+            if (size === 0) throw new Error('Must not optimize when disabled');
+            return { data: new Uint8Array(size), mediaType: 'image/jpeg' };
+          },
+        }),
+      );
+      expect(files['EPUB/images/image-001.png']?.length).toBe(100);
+    },
+  );
+
   it('uses the injected resizer with the default 1600px limit', async () => {
     const input = model();
     input.assets.a = {

@@ -1,10 +1,11 @@
 import type { EpubImageResizer } from '@wordconvert/epub-writer';
 
-/** Downscales raster images with OffscreenCanvas; returns undefined when unsupported or already small. */
+/** Resizes and encodes raster images; returns undefined when canvas is unavailable. */
 export const resizeRasterImage: EpubImageResizer = async (
   data,
   mediaType,
   maxDimension,
+  encoding,
 ) => {
   if (
     typeof OffscreenCanvas === 'undefined' ||
@@ -15,8 +16,10 @@ export const resizeRasterImage: EpubImageResizer = async (
     new Blob([data as BlobPart], { type: mediaType }),
   );
   try {
-    const scale = maxDimension / Math.max(bitmap.width, bitmap.height);
-    if (scale >= 1) return undefined;
+    const scale = Math.min(
+      1,
+      maxDimension / Math.max(bitmap.width, bitmap.height),
+    );
     const width = Math.max(1, Math.round(bitmap.width * scale));
     const height = Math.max(1, Math.round(bitmap.height * scale));
     const canvas = new OffscreenCanvas(width, height);
@@ -24,11 +27,27 @@ export const resizeRasterImage: EpubImageResizer = async (
     if (!context) return undefined;
     context.imageSmoothingQuality = 'high';
     context.drawImage(bitmap, 0, 0, width, height);
+    let outputType = mediaType;
+    if (encoding.format === 'jpeg') {
+      const pixels = context.getImageData(0, 0, width, height).data;
+      let transparent = false;
+      for (let i = 3; i < pixels.length; i += 4)
+        if (pixels[i] !== 255) {
+          transparent = true;
+          break;
+        }
+      outputType = transparent ? 'image/png' : 'image/jpeg';
+    }
     const blob = await canvas.convertToBlob({
-      type: mediaType,
-      ...(mediaType === 'image/png' ? {} : { quality: 0.85 }),
+      type: outputType,
+      ...(outputType === 'image/png'
+        ? {}
+        : { quality: encoding.quality / 100 }),
     });
-    return new Uint8Array(await blob.arrayBuffer());
+    return {
+      data: new Uint8Array(await blob.arrayBuffer()),
+      mediaType: blob.type,
+    };
   } finally {
     bitmap.close();
   }

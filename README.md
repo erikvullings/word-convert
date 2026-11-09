@@ -35,7 +35,11 @@ Output defaults to EPUB, or is inferred from a recognized `--output` extension;
 an explicit `--format` takes precedence. EPUB output downscales JPEG, PNG, and
 WebP images larger than 1600 px on the longest edge (to keep website
 conversions small); use `--max-image-size <px>` to change the limit or `0` to
-embed original images.
+embed original images. Opaque images are encoded as JPEG at quality **80** by
+default, even if already below the dimension limit; transparent images retain
+lossless PNG. Only smaller encodings are used. Override with
+`--image-format preserve` or `--image-quality <1-100>` (EPUB only).
+Pixel dimensions, not DPI metadata, determine the reading resolution.
 
 With [Bun 1.3.11](https://bun.sh/) installed for development:
 

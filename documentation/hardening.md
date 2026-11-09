@@ -373,3 +373,12 @@ Screenshots:
 The UI defines no motion animation or transition that needs a reduced-motion alternative. Light and dark palettes were visually checked for readable text, focus controls, and status contrast. The browser accessibility tree and keyboard controls were inspected; a full VoiceOver/NVDA reading-order pass was not available and remains part of a human release check.
 
 The browser fixture endpoint is registered only by the Vite development server and is enabled in application code only when `import.meta.env.DEV` is true. It is absent from the static production deployment.
+
+EPUB image optimization runs sequentially with injected native/browser canvas
+adapters: longest edge 1600 px, no upscaling, opaque JPEG quality 80, transparent
+PNG. Smaller images are also re-encoded; only byte-saving results replace assets.
+Generated asset extensions and manifest media types follow the actual encoding.
+GIF/AVIF are untouched. `--max-image-size 0` disables optimization in the CLI;
+format and quality overrides affect EPUB only. The original model is not mutated.
+Canvas/decoder errors fail conversion instead of silently embedding oversized
+images. A missing CLI canvas binding emits an explicit original-size warning.

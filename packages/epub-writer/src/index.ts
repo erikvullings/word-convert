@@ -30,18 +30,24 @@ export interface EpubWriterOptions extends WriterOptions {
   sourceCss?: string;
   /** Longest image edge in pixels; larger raster images are downscaled. Default 1600. */
   maxImageDimension?: number;
+  /** Opaque raster encoding. Default jpeg; preserve keeps the source format. */
+  imageFormat?: 'jpeg' | 'preserve';
+  /** JPEG/WebP quality from 1 to 100. Default 80. */
+  imageQuality?: number;
   /** Injected raster resizer; without it images are embedded unchanged. */
   imageResizer?: EpubImageResizer;
 }
 
 export const DEFAULT_EPUB_MAX_IMAGE_DIMENSION = 1600;
+export const DEFAULT_EPUB_IMAGE_QUALITY = 80;
 
-/** Returns re-encoded data (same media type) or undefined to keep the original. */
+/** Byte-only results retain the source type; typed results may change encoding. */
 export type EpubImageResizer = (
   data: Uint8Array,
   mediaType: string,
   maxDimension: number,
-) => Promise<Uint8Array | undefined>;
+  encoding: { format: 'jpeg' | 'preserve'; quality: number },
+) => Promise<Uint8Array | { data: Uint8Array; mediaType: string } | undefined>;
 
 const RESIZABLE_MEDIA_TYPES = new Set([
   'image/jpeg',
@@ -55,17 +61,39 @@ async function shrinkAssets(
 ): Promise<DocumentModel> {
   const resize = options.imageResizer;
   const max = options.maxImageDimension ?? DEFAULT_EPUB_MAX_IMAGE_DIMENSION;
+  const quality = options.imageQuality ?? DEFAULT_EPUB_IMAGE_QUALITY;
+  if (!Number.isInteger(max) || max < 0 || max > 32768)
+    throw new TypeError(
+      'EPUB image dimension must be an integer from 0 to 32768.',
+    );
+  if (!Number.isInteger(quality) || quality < 1 || quality > 100)
+    throw new TypeError('EPUB image quality must be an integer from 1 to 100.');
+  if (
+    options.imageFormat !== undefined &&
+    options.imageFormat !== 'jpeg' &&
+    options.imageFormat !== 'preserve'
+  )
+    throw new TypeError('EPUB image format must be jpeg or preserve.');
   if (!resize || !(max > 0)) return model;
   const assets: DocumentModel['assets'] = {};
   for (const [key, asset] of Object.entries(model.assets)) {
     const mediaType = asset.mediaType.toLowerCase();
     let next = asset;
     if (RESIZABLE_MEDIA_TYPES.has(mediaType)) {
-      const data = await resize(asset.data, mediaType, max).catch(
-        () => undefined,
-      );
-      if (data && data.byteLength < asset.data.byteLength)
-        next = { ...asset, data };
+      const result = await resize(asset.data, mediaType, max, {
+        format: options.imageFormat ?? 'jpeg',
+        quality,
+      });
+      const data = result instanceof Uint8Array ? result : result?.data;
+      const outputType =
+        result instanceof Uint8Array ? mediaType : result?.mediaType;
+      if (
+        data &&
+        outputType &&
+        RESIZABLE_MEDIA_TYPES.has(outputType) &&
+        data.byteLength < asset.data.byteLength
+      )
+        next = { ...asset, data, mediaType: outputType };
     }
     assets[key] = next;
   }

@@ -81,16 +81,26 @@ Neither path executes JavaScript to load missing page content.
 ## EPUB image size
 
 EPUB output downscales JPEG, PNG, and WebP images whose longest edge exceeds
-**1600 px** (JPEG/WebP re-encoded at quality 85), which is sharp on e-readers
-and tablets while keeping converted websites small. Smaller images, GIF/AVIF,
-and images that would not shrink are kept unchanged. Override with
+**1600 px**, and encodes opaque raster images as **JPEG at quality 80**,
+including PNGs and images already below that dimension limit. This avoids
+embedding large lossless photo PNGs. Transparency is preserved using PNG;
+GIF/AVIF and images that would not shrink are kept unchanged. Pixel dimensions,
+not DPI metadata, determine the reading resolution. Override with
 `--max-image-size <px>` (0-32768; `0` embeds originals). The option is valid only
 for EPUB output. Resizing uses the native canvas binding in `runtime/`; if it
 is unavailable, a warning is printed and images are embedded unchanged.
 
 ```sh
 wordconvert article.html --include-external-images --max-image-size 1200 -o small.epub
+wordconvert article.html --image-quality 70 -o compact.epub
+wordconvert article.html --image-format preserve -o lossless-png.epub
 ```
+
+`--image-format jpeg|preserve` selects the opaque-image encoding policy;
+`preserve` retains the source format (PNG stays lossless). `--image-quality
+<1-100>` controls JPEG/WebP encoding quality, not pixel dimensions. Both apply
+only to EPUB. `--max-image-size 0` disables all image optimization, including
+format changes. Original source documents and their images are never modified.
 
 ## Run from source
 

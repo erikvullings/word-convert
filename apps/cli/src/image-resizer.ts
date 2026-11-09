@@ -11,22 +11,35 @@ export function createImageResizer(
   } catch {
     return undefined;
   }
-  return async (data, mediaType, maxDimension) => {
+  return async (data, mediaType, maxDimension, encoding) => {
     const image = await canvasModule.loadImage(Buffer.from(data));
-    const scale = maxDimension / Math.max(image.width, image.height);
-    if (scale >= 1) return undefined;
+    const scale = Math.min(
+      1,
+      maxDimension / Math.max(image.width, image.height),
+    );
     const width = Math.max(1, Math.round(image.width * scale));
     const height = Math.max(1, Math.round(image.height * scale));
     const canvas = canvasModule.createCanvas(width, height);
     const context = canvas.getContext('2d');
     context.imageSmoothingQuality = 'high';
     context.drawImage(image, 0, 0, width, height);
+    let outputType = mediaType;
+    if (encoding.format === 'jpeg') {
+      const pixels = context.getImageData(0, 0, width, height).data;
+      let transparent = false;
+      for (let i = 3; i < pixels.length; i += 4)
+        if (pixels[i] !== 255) {
+          transparent = true;
+          break;
+        }
+      outputType = transparent ? 'image/png' : 'image/jpeg';
+    }
     const buffer =
-      mediaType === 'image/png'
+      outputType === 'image/png'
         ? canvas.toBuffer('image/png')
-        : mediaType === 'image/webp'
-          ? canvas.toBuffer('image/webp', 85)
-          : canvas.toBuffer('image/jpeg', 85);
-    return new Uint8Array(buffer);
+        : outputType === 'image/webp'
+          ? canvas.toBuffer('image/webp', encoding.quality)
+          : canvas.toBuffer('image/jpeg', encoding.quality);
+    return { data: new Uint8Array(buffer), mediaType: outputType };
   };
 }

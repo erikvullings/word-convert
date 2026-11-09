@@ -21,6 +21,7 @@ import { secureDocxReader } from '@wordconvert/docx-reader';
 import { writeHtml, writeHtmlZip } from '@wordconvert/html-writer';
 import { writeMarkdown, writeMarkdownZip } from '@wordconvert/markdown-writer';
 import {
+  DEFAULT_EPUB_IMAGE_QUALITY,
   DEFAULT_EPUB_MAX_IMAGE_DIMENSION,
   writeEpub,
 } from '@wordconvert/epub-writer';
@@ -69,6 +70,8 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html> [options]
                               Default: mathml for EPUB, source otherwise
       --max-image-size <px>   Longest image edge in EPUB output; larger JPEG/PNG/WebP
                               images are downscaled. Default 1600, 0 disables
+      --image-format <format> EPUB opaque images: jpeg (default) or preserve
+      --image-quality <1-100> EPUB JPEG/WebP quality (default 80)
       --conversion-date <ISO>  Fixed date or UTC timestamp for reproducible output
       --rasterize             Render PDF vectors/pages using the native runtime
       --layout-model <path>   Use a local Heron ONNX model instead of the cached default
@@ -195,8 +198,26 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         'Formula mode must be source, mathml, katex, or disabled.',
       );
     const maxImageSize = parseMaxImageSize(values['max-image-size']);
-    if (values['max-image-size'] !== undefined && format !== 'epub')
-      throw new UsageError('--max-image-size applies only to EPUB output.');
+    const imageFormat = values['image-format'] ?? 'jpeg';
+    if (imageFormat !== 'jpeg' && imageFormat !== 'preserve')
+      throw new UsageError('--image-format must be jpeg or preserve.');
+    const imageQuality = Number(
+      values['image-quality'] ?? DEFAULT_EPUB_IMAGE_QUALITY,
+    );
+    if (
+      !/^\d+$/.test(values['image-quality'] ?? '80') ||
+      !Number.isInteger(imageQuality) ||
+      imageQuality < 1 ||
+      imageQuality > 100
+    )
+      throw new UsageError('--image-quality must be an integer from 1 to 100.');
+    if (
+      (values['max-image-size'] !== undefined ||
+        values['image-format'] !== undefined ||
+        values['image-quality'] !== undefined) &&
+      format !== 'epub'
+    )
+      throw new UsageError('Image encoding options apply only to EPUB output.');
     const conversionDate =
       values['conversion-date'] ?? new Date().toISOString();
     if (!isIsoDate(conversionDate))
@@ -378,6 +399,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       model.metadata.authors = values.author.map((name) => userValue({ name }));
     const data = await render(model, format, conversionDate, formulaMode, {
       maxImageSize,
+      imageFormat,
+      imageQuality,
       runtimeDir: values['runtime-dir'],
       warn: io.stderr,
     });
@@ -424,6 +447,8 @@ function parseArguments(argv: string[]) {
         'formula-mode': { type: 'string' },
         'conversion-date': { type: 'string' },
         'max-image-size': { type: 'string' },
+        'image-format': { type: 'string' },
+        'image-quality': { type: 'string' },
         rasterize: { type: 'boolean' },
         'no-layout': { type: 'boolean' },
         'formula-ocr': { type: 'boolean' },
@@ -568,6 +593,8 @@ async function render(
   formulaMode: MathOutputMode,
   images: {
     maxImageSize: number;
+    imageFormat: 'jpeg' | 'preserve';
+    imageQuality: number;
     runtimeDir: string | undefined;
     warn: (message: string) => void;
   },
@@ -601,6 +628,8 @@ async function render(
       return writeEpub(model, {
         ...options,
         maxImageDimension: images.maxImageSize,
+        imageFormat: images.imageFormat,
+        imageQuality: images.imageQuality,
         ...(imageResizer ? { imageResizer } : {}),
       });
     }
