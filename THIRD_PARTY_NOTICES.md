@@ -51,8 +51,11 @@ redistributed executable/runtime bundles.
 
 PDF.js 6.3.289's legacy Node initialization is modified by
 `patches/pdfjs-dist@6.3.289.patch`: skip optional canvas polyfill discovery when
-`DOMMatrix`, `Path2D`, and `ImageData` are already present. This local modification
-does not change the browser path or remove the upstream licence notices.
+`DOMMatrix`, `Path2D`, and `ImageData` are already present. Its legacy worker also
+invalidates the inherited font-name shortcut when a Form XObject introduces
+local resources, so text extraction resolves that form's font encoding rather
+than reusing a same-named parent font. This worker fix applies to the CLI and
+browser. These modifications retain the upstream licence notices.
 
 ## Browser runtime
 

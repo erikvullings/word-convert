@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { PDFDocument, PDFName } from 'pdf-lib';
 
 import {
   analysePdf,
@@ -71,6 +72,83 @@ function rawDocument(
 }
 
 describe('PDF layout analysis', () => {
+  it('resolves fonts in each Form XObject resource scope and restores the parent font', async () => {
+    const document = await PDFDocument.create();
+    const page = document.addPage([600, 800]);
+    const font = (word: string) => {
+      const mappings = [...word]
+        .map(
+          (character, index) =>
+            `<${(65 + index).toString(16)}> <${character.charCodeAt(0).toString(16).padStart(4, '0')}>`,
+        )
+        .join('\n');
+      const unicode = document.context.register(
+        document.context.flateStream(
+          `/CIDInit /ProcSet findresource begin
+12 dict begin begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Test def /CMapType 2 def
+1 begincodespacerange <00> <FF> endcodespacerange
+5 beginbfchar
+${mappings}
+endbfchar
+endcmap CMapName currentdict /CMap defineresource pop end end`,
+        ),
+      );
+      return document.context.register(
+        document.context.obj({
+          Type: 'Font',
+          Subtype: 'Type1',
+          BaseFont: 'Helvetica',
+          Encoding: 'WinAnsiEncoding',
+          ToUnicode: unicode,
+        }),
+      );
+    };
+    const parentFont = font('Outer');
+    const childFont = font('Clean');
+    const form = document.context.register(
+      document.context.flateStream(
+        'BT /F1 12 Tf 1 0 0 1 60 600 Tm (ABCDE) Tj ET',
+        {
+          Type: 'XObject',
+          Subtype: 'Form',
+          BBox: [0, 0, 600, 800],
+          Resources: { Font: { F1: childFont } },
+        },
+      ),
+    );
+    const inheritedForm = document.context.register(
+      document.context.flateStream('BT 1 0 0 1 60 500 Tm (ABCDE) Tj ET', {
+        Type: 'XObject',
+        Subtype: 'Form',
+        BBox: [0, 0, 600, 800],
+        Resources: {},
+      }),
+    );
+    page.node.set(
+      PDFName.of('Resources'),
+      document.context.obj({
+        Font: { F1: parentFont },
+        XObject: { Form: form, Inherited: inheritedForm },
+      }),
+    );
+    page.node.addContentStream(
+      document.context.register(
+        document.context.flateStream(
+          'BT /F1 12 Tf 1 0 0 1 60 700 Tm (ABCDE) Tj ET /Form Do /Inherited Do BT 1 0 0 1 60 400 Tm (ABCDE) Tj ET',
+        ),
+      ),
+    );
+    const raw = await pdfJsReader.readRaw(await document.save(), {});
+    expect(raw.pages[0]!.spans.map(({ text }) => text)).toEqual([
+      'Outer',
+      'Clean',
+      'Outer',
+      'Outer',
+    ]);
+  });
+
   it('recognizes complex formulas from bounded rendered pixels and disposes the crop', async () => {
     const formula = span('x = √y', 0.22, 0.3, { width: 0.1 });
     const candidate = createFormulaCandidates({

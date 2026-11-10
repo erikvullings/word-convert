@@ -3,6 +3,100 @@ import { readTextDocument } from './index.ts';
 
 const options = { filename: 'document.html', conversionDate: '2026-01-02' };
 describe('semantic text reader', () => {
+  it.each([
+    ['html', '<p><strong>Abstract: </strong>In this paper...</p>'],
+    ['html', '<p><b>Abstract:</b>In this paper...</p>'],
+    ['markdown', '**Abstract: **In this paper...'],
+    ['markdown', '**Abstract:**In this paper...'],
+  ] as const)(
+    'retains abstract emphasis from %s input: %s',
+    async (format, source) => {
+      const model = await readTextDocument(source, format, options);
+      const paragraph = model.blocks[0];
+      expect(paragraph?.type).toBe('paragraph');
+      if (paragraph?.type !== 'paragraph') throw new Error('Missing paragraph');
+      expect(paragraph.children[0]).toMatchObject({
+        type: 'text',
+        text: expect.stringMatching(/^Abstract:\s*$/),
+        marks: [{ type: 'bold' }],
+      });
+      expect(paragraph.children.at(-1)).toMatchObject({
+        type: 'text',
+        text: 'In this paper...',
+      });
+      expect(JSON.stringify(model.blocks)).not.toContain('**');
+    },
+  );
+
+  it('preserves nested HTML emphasis, adjacent words, and whitespace without leaking delimiters', async () => {
+    const model = await readTextDocument(
+      '<p><strong> bold <em>and italic </em></strong>tail <em>suffix</em>word <del> old </del>new</p>',
+      'html',
+      options,
+    );
+    expect(JSON.stringify(model.blocks)).not.toMatch(/\*\*|~~|<strong>/);
+    const paragraph = model.blocks[0];
+    if (paragraph?.type !== 'paragraph') throw new Error('Missing paragraph');
+    expect(paragraph.children).toEqual(
+      expect.arrayContaining([
+        { type: 'text', text: ' bold ', marks: [{ type: 'bold' }] },
+        {
+          type: 'text',
+          text: 'and italic ',
+          marks: [{ type: 'bold' }, { type: 'italic' }],
+        },
+        { type: 'text', text: 'suffix', marks: [{ type: 'italic' }] },
+        { type: 'text', text: ' old ', marks: [{ type: 'strikethrough' }] },
+      ]),
+    );
+  });
+
+  it('does not interpret escaped emphasis or code as formatting', async () => {
+    const model = await readTextDocument(
+      '\\*\\*Abstract: \\*\\*literal\n\n`**Abstract: **In code`\n\n```\n**Abstract: **In fenced code\n```\n\n**bold *nested italic* text**',
+      'markdown',
+      options,
+    );
+    const literal = model.blocks[0];
+    if (literal?.type !== 'paragraph') throw new Error('Missing paragraph');
+    expect(
+      literal.children
+        .map((node) => (node.type === 'text' ? node.text : ''))
+        .join(''),
+    ).toBe('**Abstract: **literal');
+    expect(
+      literal.children.every(
+        (node) => node.type === 'text' && !node.marks?.length,
+      ),
+    ).toBe(true);
+    expect(model.blocks[1]).toMatchObject({
+      type: 'paragraph',
+      children: [
+        {
+          type: 'text',
+          text: '**Abstract: **In code',
+          marks: [{ type: 'code' }],
+        },
+      ],
+    });
+    expect(model.blocks[2]).toMatchObject({
+      type: 'codeBlock',
+      text: '**Abstract: **In fenced code',
+    });
+    expect(model.blocks[3]).toEqual({
+      type: 'paragraph',
+      children: [
+        { type: 'text', text: 'bold ', marks: [{ type: 'bold' }] },
+        {
+          type: 'text',
+          text: 'nested italic',
+          marks: [{ type: 'italic' }, { type: 'bold' }],
+        },
+        { type: 'text', text: ' text', marks: [{ type: 'bold' }] },
+      ],
+    });
+  });
+
   it('imports HTML headings, lists, emphasis, tables and code without executing active content', async () => {
     const model = await readTextDocument(
       `<!doctype html><html lang="nl"><head><title>My book</title><meta name="author" content="Alice"></head><body>

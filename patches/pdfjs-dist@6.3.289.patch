@@ -11,3 +11,18 @@ index 993f35056cbb76d09d83c25dccd96fe1916ee372..b46a1fe2fe2c9a2b5129192908553496
    let canvas;
    try {
      const require = process.getBuiltinModule("module").createRequire(import.meta.url);
+diff --git a/legacy/build/pdf.worker.mjs b/legacy/build/pdf.worker.mjs
+index c4b622a51f092f4765ffd9dbf2989c2662944f30..b822c2da1fc1e5404d2acd669bba694184dbd85b 100644
+--- a/legacy/build/pdf.worker.mjs
++++ b/legacy/build/pdf.worker.mjs
+@@ -42532,6 +42532,10 @@ class PartialEvaluator {
+                 xObjStateManager.transform(matrix);
+               }
+               const localResources = dict.get("Resources");
++              // A form can bind the inherited font name to a different encoding.
++              if (localResources instanceof Dict && localResources !== resources) {
++                currentState.fontName = null;
++              }
+               enqueueChunk();
+               const sinkWrapper = textSinkWrapper(sink);
+               self.getTextContent({

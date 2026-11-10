@@ -320,10 +320,18 @@ function normalizeModified(value: string): string {
 function splitChapters(blocks: BlockNode[]): Chapter[] {
   const groups: BlockNode[][] = [];
   let current: BlockNode[] = [];
+  let hasChapterHeading = false;
+  let wordsSinceHeading = 0;
   for (const block of blocks) {
-    if (block.type === 'heading' && block.level === 2 && current.length > 0) {
-      groups.push(current);
-      current = [];
+    if (block.type === 'heading' && block.level === 2) {
+      if (hasChapterHeading && wordsSinceHeading >= 50) {
+        groups.push(current);
+        current = [];
+      }
+      hasChapterHeading = true;
+      wordsSinceHeading = 0;
+    } else if (hasChapterHeading) {
+      wordsSinceHeading += wordCount(blockText(block));
     }
     current.push(block);
   }
@@ -337,6 +345,38 @@ function splitChapters(blocks: BlockNode[]): Chapter[] {
       blocks: chapterBlocks,
     };
   });
+}
+
+function wordCount(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function blockText(block: BlockNode): string {
+  switch (block.type) {
+    case 'paragraph':
+    case 'heading':
+      return plainText(block.children);
+    case 'list':
+      return block.items
+        .flatMap((item) => item.blocks.map(blockText))
+        .join(' ');
+    case 'table':
+      return [
+        ...(block.caption ? [plainText(block.caption)] : []),
+        ...block.rows.flatMap((row) =>
+          row.cells.flatMap((cell) => cell.blocks.map(blockText)),
+        ),
+      ].join(' ');
+    case 'blockquote':
+      return block.blocks.map(blockText).join(' ');
+    case 'codeBlock':
+      return block.text;
+    case 'equationBlock':
+    case 'imageBlock':
+    case 'thematicBreak':
+    case 'pageBreak':
+      return '';
+  }
 }
 
 function createAssetRegistry(model: DocumentModel): AssetEntry[] {

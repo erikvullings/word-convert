@@ -60,9 +60,9 @@ organizes XHTML into one file per detected chapter; otherwise existing chapter
 files stay intact.
 
 PDF imports automatically remove high-confidence repeated page numbers, running
-headers, and footers. This is heuristic, not removal of text baked into images.
-Existing EPUB body text is preserved rather than guessing which lines are page
-furniture.
+headers, and footers. EPUB shrinking removes page numbers and repeated running
+matter only when explicit page-break markers support that classification.
+Text baked into images remains.
 
 With [Bun 1.3.11](https://bun.sh/) installed for development:
 

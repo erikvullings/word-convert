@@ -28,10 +28,17 @@ export function rewriteUri(
   const base = `https://epub.invalid/${source.split('/').map(encodeURIComponent).join('/')}`;
   const url = new URL(value, base);
   const path = decodeURIComponent(url.pathname.slice(1));
-  const target =
-    moves.anchors.get(path)?.get(decodeURIComponent(url.hash.slice(1))) ??
-    moves.files.get(path) ??
-    path;
+  const fragment = decodeURIComponent(url.hash.slice(1));
+  let target = path;
+  const visited = new Set<string>();
+  while (!visited.has(target)) {
+    visited.add(target);
+    const next =
+      (fragment ? moves.anchors.get(target)?.get(fragment) : undefined) ??
+      moves.files.get(target);
+    if (!next || next === target) break;
+    target = next;
+  }
   if (target === path && source === destination) return value;
   return relativeUri(destination, target) + url.search + url.hash;
 }

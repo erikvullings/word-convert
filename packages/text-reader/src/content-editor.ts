@@ -6,7 +6,41 @@ import type {
   TextMark,
 } from '@wordconvert/document-model';
 import { writeMarkdown } from '@wordconvert/markdown-writer';
-import { Lexer, type Token, type Tokens } from 'marked';
+import { Lexer, Marked, type Token, type Tokens } from 'marked';
+
+const contentMarkdown = new Marked({
+  gfm: true,
+  extensions: [
+    {
+      name: 'strong',
+      level: 'inline',
+      start: (source: string) => source.indexOf('**'),
+      tokenizer(source) {
+        // Accept exported labels such as "**Abstract: **In..." without
+        // rewriting escapes, code, or ordinary nested Markdown emphasis.
+        const match = /^\*\*(?=[^\s*])((?:\\.|[^*\\\n])+?)\*\*(?!\*)/.exec(
+          source,
+        );
+        if (!match) return;
+        const text = match[1]!;
+        if (
+          !/\s$/.test(text) &&
+          !(
+            /[\p{P}\p{S}]$/u.test(text) &&
+            /^[\p{L}\p{N}]/u.test(source.slice(match[0].length))
+          )
+        )
+          return;
+        return {
+          type: 'strong',
+          raw: match[0],
+          text,
+          tokens: this.lexer.inlineTokens(text),
+        };
+      },
+    },
+  ],
+});
 
 export interface ContentPartState {
   starts: number[];
@@ -699,7 +733,7 @@ export function markdownToBlocks(
   );
   return removePageBoundaryNoise(
     applyHeadingAnchors(
-      blockTokens(Lexer.lex(editable.markdown, { gfm: true }), assets, model),
+      blockTokens(contentMarkdown.lexer(editable.markdown), assets, model),
       editable.ids,
     ),
   );
@@ -1044,16 +1078,34 @@ function inlineTokens(
 
 function inlineMarkTag(value: string):
   | {
-      type: 'underline' | 'subscript' | 'superscript';
+      type:
+        | 'underline'
+        | 'subscript'
+        | 'superscript'
+        | 'bold'
+        | 'italic'
+        | 'strikethrough';
       opening: boolean;
     }
   | undefined {
-  const match = /^<\s*(\/)?\s*(u|sub|sup)\s*>$/i.exec(value.trim());
+  const match = /^<\s*(\/)?\s*(u|sub|sup|strong|em|del)\s*>$/i.exec(
+    value.trim(),
+  );
   const name = match?.[2]?.toLowerCase();
   if (!name) return undefined;
   return {
     type:
-      name === 'u' ? 'underline' : name === 'sub' ? 'subscript' : 'superscript',
+      name === 'u'
+        ? 'underline'
+        : name === 'sub'
+          ? 'subscript'
+          : name === 'sup'
+            ? 'superscript'
+            : name === 'strong'
+              ? 'bold'
+              : name === 'em'
+                ? 'italic'
+                : 'strikethrough',
     opening: match?.[1] === undefined,
   };
 }

@@ -294,7 +294,7 @@ describe('writeEpub', () => {
     expect(strFromU8(output.slice(30, 30 + firstNameLength))).toBe('mimetype');
   });
 
-  it('splits only at top-level document-section boundaries and builds heading navigation', async () => {
+  it('keeps preamble with the first chapter and splits only after substantive sections', async () => {
     const input = model([
       { type: 'heading', level: 1, children: [{ type: 'text', text: 'Book' }] },
       {
@@ -312,6 +312,15 @@ describe('writeEpub', () => {
         level: 2,
         numbering: '1',
         children: [{ type: 'text', text: 'One' }],
+      },
+      {
+        type: 'paragraph',
+        children: [
+          {
+            type: 'text',
+            text: 'This chapter contains enough substantive text to establish a real section boundary rather than a preamble heading. It includes several complete sentences that explain the topic, give useful context, and help readers understand why the material matters. The section continues with more detail so the next chapter boundary is based on actual content, not a short title or a single line.',
+          },
+        ],
       },
       {
         type: 'list',
@@ -348,25 +357,21 @@ describe('writeEpub', () => {
 
     expect(
       Object.keys(files).filter((path) => /chapter-\d+/.test(path)),
-    ).toEqual([
-      'EPUB/chapter-001.xhtml',
-      'EPUB/chapter-002.xhtml',
-      'EPUB/chapter-003.xhtml',
-    ]);
-    expect(
-      strFromU8(files['EPUB/chapter-002.xhtml'] ?? new Uint8Array()),
-    ).toContain('<ul><li><h2 id="nested">Nested</h2></li></ul>');
-    const nav = strFromU8(files['EPUB/nav.xhtml'] ?? new Uint8Array());
-    expect(nav).toContain('chapter-002.xhtml#one');
-    expect(nav).toContain('>1 One</a>');
-    expect(
-      strFromU8(files['EPUB/chapter-002.xhtml'] ?? new Uint8Array()),
-    ).toContain('<h2 id="one">1 One</h2>');
-    expect(nav).toContain('chapter-002.xhtml#nested');
-    expect(nav).toContain('chapter-003.xhtml#source-toc-detail');
+    ).toEqual(['EPUB/chapter-001.xhtml', 'EPUB/chapter-002.xhtml']);
     expect(
       strFromU8(files['EPUB/chapter-001.xhtml'] ?? new Uint8Array()),
-    ).toContain('href="chapter-003.xhtml#source-toc-detail"');
+    ).toContain('<ul><li><h2 id="nested">Nested</h2></li></ul>');
+    const nav = strFromU8(files['EPUB/nav.xhtml'] ?? new Uint8Array());
+    expect(nav).toContain('chapter-001.xhtml#one');
+    expect(nav).toContain('>1 One</a>');
+    expect(
+      strFromU8(files['EPUB/chapter-001.xhtml'] ?? new Uint8Array()),
+    ).toContain('<h2 id="one">1 One</h2>');
+    expect(nav).toContain('chapter-001.xhtml#nested');
+    expect(nav).toContain('chapter-002.xhtml#source-toc-detail');
+    expect(
+      strFromU8(files['EPUB/chapter-001.xhtml'] ?? new Uint8Array()),
+    ).toContain('href="chapter-002.xhtml#source-toc-detail"');
   });
 
   it('serializes model structures, local passive assets, notes, and metadata', async () => {

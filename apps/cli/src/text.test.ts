@@ -17,6 +17,39 @@ const png = Buffer.from(
   'base64',
 );
 
+it.each([
+  ['md', '**Abstract: **In this paper...'],
+  ['md', '**Abstract:**In this paper...'],
+  ['html', '<p><strong>Abstract: </strong>In this paper...</p>'],
+  ['html', '<p><b>Abstract:</b>In this paper...</p>'],
+])(
+  'renders abstract emphasis in EPUB from %s: %s',
+  async (extension, source) => {
+    const directory = await mkdtemp(join(tmpdir(), 'wordconvert-emphasis-'));
+    try {
+      const input = join(directory, `book.${extension}`);
+      await writeFile(input, source);
+      const chunks: Uint8Array[] = [];
+      expect(
+        await runCli([input, '-o', '-'], {
+          stdout: async (value) => {
+            if (value instanceof Uint8Array) chunks.push(value);
+          },
+          stderr: () => undefined,
+        }),
+      ).toBe(0);
+      const xhtml = Object.entries(unzipSync(chunks[0]!))
+        .filter(([path]) => /chapter.*\.xhtml$/.test(path))
+        .map(([, data]) => new TextDecoder().decode(data))
+        .join('');
+      expect(xhtml).toMatch(/<strong>Abstract:\s*<\/strong>In this paper/);
+      expect(xhtml).not.toContain('**');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 it.each(['md', 'markdown', 'html', 'htm', 'xhtml'])(
   'converts local %s to EPUB with local images and no native runtime',
   async (extension) => {

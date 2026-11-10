@@ -120,8 +120,14 @@ or a locally installed JavaScript runtime. Basic PDF mode can emit PDF.js
 diagnostics about absent optional canvas polyfills; native adapters provide
 their own canvas when rendering is enabled. A pinned pnpm PDF.js patch skips
 redundant Node canvas discovery only when all three native polyfills already
-exist. It does not filter warnings or change missing-runtime failures, and
-does not affect PDF.js's browser path. Compiled smoke checks require native
+exist. This initialization change does not filter warnings, change
+missing-runtime failures, or affect PDF.js's browser path. The same patch also
+invalidates the inherited font-name shortcut when a Form XObject has local
+resources; CLI and browser extraction then use the form's font encoding rather
+than a same-named parent font. A synthetic PDF regression covers changed
+encodings, inherited fonts without a new selection, and restoration of the
+parent text state, without relying on private source documents.
+Compiled smoke checks require native
 rasterization without the misleading canvas warning and explicit errors for
 a missing runtime. Native rendering may differ in
 pixels and system font metrics between OSes. Supported build targets and
@@ -336,6 +342,14 @@ Completed PDF conversions can show the original source page beside Markdown, HTM
 
 EPUB content edits for DOCX, PDF, and Markdown sources are parsed from Markdown into a cloned `DocumentModel` before worker conversion. Source-preserved HTML imports instead use a syntax-highlighted XHTML editor with an adjacent live sandboxed preview and remain on the direct XHTML writer path; only exact references to known model assets survive edit sanitization. Edited content remains in memory and is discarded when a new source is selected or analysis is rerun.
 
+The shared semantic text importer and content editor use `marked` tokens, not
+the SPA's `slimdown-js` preview renderer. A bounded inline-token rule accepts
+bold labels with trailing whitespace or a punctuation-ending label immediately
+followed by a word. It does not preprocess escaped text or code. HTML imports
+carry emphasis through exact, attribute-free `strong`, `em`, and `del` tags
+alongside the existing `u`, `sub`, and `sup` text marks; arbitrary raw HTML
+remains escaped text, not executable output.
+
 The in-app browser run directly verified the Chromium path, which also exercises the engine used by Chrome and Edge. Firefox and Safari were not available in this environment, so direct two-version engine runs remain a release gate rather than a claimed result. No engine-specific API is used in conversion packages; any discovered browser-specific issue should be recorded here with the affected version and workaround.
 
 ## Interactive browser evidence
@@ -401,13 +415,19 @@ Animated PNG/WebP images are preserved. Codec failures retain the original with
 an explicit warning; format/limit violations are fatal. A missing canvas binding
 is fatal if optimization is enabled and images are present.
 
-Book content and metadata remain intact; converted image suffixes and manifest
+Book text and metadata are retained except for conservative page-furniture
+cleanup: at least two isolated numeric/Roman paragraphs must immediately precede
+explicit page-break markers, or a text-only running label must repeat at least
+twice immediately after markers. Ambiguous numbers and labels remain.
+Converted image suffixes and manifest
 media types (across renditions) change together. URI-aware XML, CSS, SVG, NCX,
 SMIL, inline-style, and srcset rewriting reconnects static references, retaining
 remote/data URLs without fetching them. Existing TOCs are preserved; missing
 EPUB 3 nav/EPUB 2 NCX is generated from headings or existing spine documents.
-Chapter splitting is opt-in, heading-based, and updates spine and fragment
-references; generated paths and heading IDs are collision-checked. The
+Chapter splitting is opt-in, coalesces short spine fragments with adjacent
+substantive chapters, and splits only at credible headings after 50 words of
+section text. It updates spine and fragment references; generated paths and
+heading IDs are collision-checked. The
 resource relocation/chapter-splitting path rejects script resources and handlers
 because dynamic references cannot be safely rewritten. Format-preserving image
 optimization can avoid these relocations. The stored

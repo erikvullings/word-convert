@@ -103,6 +103,32 @@ afterEach(async () => {
 });
 
 describe('EPUB image optimization without book reconstruction', () => {
+  it('removes page numbers beside explicit page breaks and repeated running matter', async () => {
+    const body =
+      '<p>Opening paragraph.</p><p>i</p><div class="page-break" aria-hidden="true"></div><p>LESSONS LEARNED FROM THE SAMPLE REPORT</p><p>First page body.</p><p>1</p><div class="page-break" aria-hidden="true"></div><p>LESSONS LEARNED FROM THE SAMPLE REPORT</p><p>Second page body.</p><p>2</p><div class="page-break" aria-hidden="true"></div><p>Final page body.</p><p>3</p><div class="page-break" aria-hidden="true"></div><p>Keep this numbered item.</p><p>8</p><p>Ordinary following paragraph.</p>';
+    const settings = options();
+    const result = unzipSync(
+      await shrinkEpub(
+        fixture({
+          'Book/chapter.xhtml': strToU8(
+            `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Pages</title></head><body>${body}</body></html>`,
+          ),
+        }),
+        { ...settings, maxDimension: 0 },
+      ),
+    );
+    const output = strFromU8(result['Book/chapter.xhtml']!);
+    expect(output).not.toMatch(/<p>(?:i|1|2|3)<\/p>/);
+    expect(output.match(/LESSONS LEARNED FROM THE SAMPLE REPORT/g)).toBeNull();
+    expect(output).toContain('<p>Keep this numbered item.</p>');
+    expect(output).toContain('<p>8</p>');
+    expect(settings.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Removed 4 explicit page numbers and 2 repeated running headers/footers',
+      ),
+    );
+  });
+
   it('shrinks images and updates filenames and references while preserving book content', async () => {
     const input = fixture();
     const result = await shrinkEpub(input, options());
@@ -303,7 +329,7 @@ describe('CLI EPUB input', () => {
       path,
       fixture({
         'Book/chapter.xhtml': strToU8(
-          '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Book</title></head><body><h1>One</h1><p>First</p><h1>Two</h1><p>Second</p></body></html>',
+          '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Book</title></head><body><h1>Chapter One</h1><p>First chapter text has enough content to demonstrate that the heading begins a real chapter rather than a preamble fragment. This section contains useful explanation, supporting details, and a complete thought for the reader. Additional prose expands the chapter with several sentences about the subject and keeps the example comfortably above the split threshold.</p><h1>Chapter Two</h1><p>Second chapter text has enough content to demonstrate that the heading begins another real chapter rather than a one-line artifact. This section contains useful explanation, supporting details, and a complete thought for the reader. Additional prose expands the chapter with several sentences about the subject and keeps the example comfortably above the split threshold.</p></body></html>',
         ),
       }),
     );
@@ -339,7 +365,77 @@ describe('CLI EPUB input', () => {
 
   describe('EPUB navigation and optional chapter organization', () => {
     const chapters =
-      '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Full book</title></head><body><section id="wrapper"><h1 id="one">Chapter One</h1><p>First chapter text. <a href="#two">Next</a></p><h1 id="two">Chapter Two</h1><p>Second chapter text. <a href="#one">Back</a><img src="Images/art%20%26%20chart.png" alt="Photo"/></p></section></body></html>';
+      '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Full book</title></head><body><section id="wrapper"><h1 id="one">Chapter One</h1><p>First chapter text has enough content to demonstrate that the heading begins a real chapter rather than a preamble fragment. This section contains useful explanation, supporting details, and a complete thought for the reader. Additional prose expands the chapter with several sentences about the subject and keeps the example comfortably above the split threshold. <a href="#two">Next</a></p><h1 id="two">Chapter Two</h1><p>Second chapter text has enough content to demonstrate that the heading begins another real chapter rather than a one-line artifact. This section contains useful explanation, supporting details, and a complete thought for the reader. Additional prose expands the chapter with several sentences about the subject and keeps the example comfortably above the split threshold. <a href="#one">Back</a><img src="Images/art%20%26%20chart.png" alt="Photo"/></p></section></body></html>';
+
+    it('coalesces short preamble and back-matter spine fragments around a substantive chapter', async () => {
+      const bodyText =
+        'The main chapter contains enough substantive text to provide the target for nearby short spine fragments. It preserves the reading order while preventing contact details, page headers, or one-line preamble fragments from becoming standalone chapters. This body has several complete sentences and exceeds the minimum chapter length comfortably. Readers can move through the book without encountering empty or trivial chapter entries.';
+      const input = fixture({
+        [opfPath]: strToU8(
+          opf
+            .replace(
+              '<item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>',
+              '<item id="intro" href="intro.xhtml" media-type="application/xhtml+xml"/><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/><item id="back" href="back.xhtml" media-type="application/xhtml+xml"/>',
+            )
+            .replace(
+              '<spine><itemref idref="chapter"/></spine>',
+              '<spine><itemref idref="intro"/><itemref idref="chapter"/><itemref idref="back"/></spine>',
+            ),
+        ),
+        'Book/intro.xhtml': strToU8(
+          '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Contact</title></head><body><h2 id="contact">CONTACT US</h2><p>Short front matter.</p></body></html>',
+        ),
+        'Book/chapter.xhtml': strToU8(
+          `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Main</title></head><body><h1 id="one">Chapter One</h1><p>${bodyText}</p><h1 id="two">Chapter Two</h1><p>${bodyText}</p></body></html>`,
+        ),
+        'Book/back.xhtml': strToU8(
+          '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Back</title></head><body><p id="back">Short back matter.</p></body></html>',
+        ),
+        'Book/nav.xhtml': strToU8(
+          '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Contents</title></head><body><nav epub:type="toc"><ol><li><a href="intro.xhtml#contact">Contact</a></li><li><a href="back.xhtml#back">Back matter</a></li></ol></nav></body></html>',
+        ),
+      });
+      const settings = { ...options(), maxDimension: 0, splitChapters: true };
+      const result = unzipSync(await shrinkEpub(input, settings));
+      expect(
+        result['Book/intro.xhtml'],
+        JSON.stringify(settings.warn.mock.calls),
+      ).toBeUndefined();
+      expect(result['Book/back.xhtml']).toBeUndefined();
+      const chapter = strFromU8(result['Book/chapter.xhtml']!);
+      expect(chapter.indexOf('CONTACT US')).toBeLessThan(
+        chapter.indexOf('Chapter One'),
+      );
+      expect(chapter).toContain(bodyText);
+      const secondChapter = strFromU8(
+        result['Book/chapter-chapter-002.xhtml']!,
+      );
+      expect(secondChapter).toContain('Chapter Two');
+      expect(secondChapter).toContain('Short back matter.');
+      expect(strFromU8(result[opfPath]!)).not.toContain('id="intro"');
+      expect(strFromU8(result['Book/nav.xhtml']!)).toContain(
+        'href="chapter.xhtml#contact"',
+      );
+      expect(strFromU8(result['Book/nav.xhtml']!)).toContain(
+        'href="chapter-chapter-002.xhtml#back"',
+      );
+    });
+
+    it('does not split a preamble into chapters on short OCR-like headings', async () => {
+      const input = fixture({
+        'Book/chapter.xhtml': strToU8(
+          '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Preamble</title></head><body><p>Cover title.</p><h1>Discilamela</h1><h1>rl: a</h1><h1>CiAAesAa</h1><h1>CiLlsip</h1><p>Keep the preamble and body together.</p></body></html>',
+        ),
+      });
+      const result = unzipSync(
+        await shrinkEpub(input, { ...options(), splitChapters: true }),
+      );
+      expect(result['Book/chapter-chapter-002.xhtml']).toBeUndefined();
+      expect(strFromU8(result['Book/chapter.xhtml']!)).toContain('Discilamela');
+      expect(strFromU8(result['Book/chapter.xhtml']!)).toContain(
+        'Keep the preamble and body together.',
+      );
+    });
 
     it('repairs a declared but missing navigation file and retains its spine ID', async () => {
       const entries = unzipSync(
@@ -480,10 +576,10 @@ describe('CLI EPUB input', () => {
       );
       const first = strFromU8(result['Book/chapter.xhtml']!);
       const second = strFromU8(result['Book/chapter-chapter-002.xhtml']!);
-      expect(first).toContain('First chapter text.');
+      expect(first).toContain('First chapter text has');
       expect(first).not.toContain('Second chapter text.');
-      expect(second).toContain('Second chapter text.');
-      expect(second).not.toContain('First chapter text.');
+      expect(second).toContain('Second chapter text has');
+      expect(second).not.toContain('First chapter text has');
       expect(first).toContain('href="chapter-chapter-002.xhtml#two"');
       expect(second).toContain('href="chapter.xhtml#one"');
       expect(second).toContain('Images/art%20%26%20chart.jpg');
@@ -498,7 +594,7 @@ describe('CLI EPUB input', () => {
     it('uses H2 chapter headings when H1 is only the book title', async () => {
       const input = fixture({
         'Book/chapter.xhtml': strToU8(
-          '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Book</title></head><body><h1>Book</h1><h2>One</h2><p>A</p><h2>Two</h2><p>B</p></body></html>',
+          '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Book</title></head><body><h1>Book</h1><h2>Chapter One</h2><p>First chapter text has enough content to demonstrate that the heading begins a real chapter rather than a preamble fragment. This section contains useful explanation, supporting details, and a complete thought for the reader. Additional prose expands the chapter with several sentences about the subject and keeps the example comfortably above the split threshold.</p><h2>Chapter Two</h2><p>Second chapter text has enough content to demonstrate that the heading begins another real chapter rather than a one-line artifact. This section contains useful explanation, supporting details, and a complete thought for the reader. Additional prose expands the chapter with several sentences about the subject and keeps the example comfortably above the split threshold.</p></body></html>',
         ),
       });
       const result = unzipSync(
@@ -509,7 +605,11 @@ describe('CLI EPUB input', () => {
         }),
       );
       expect(result['Book/chapter-chapter-002.xhtml']).toBeDefined();
-      expect(result['Book/chapter-chapter-003.xhtml']).toBeDefined();
+      expect(result['Book/chapter-chapter-003.xhtml']).toBeUndefined();
+      expect(
+        strFromU8(result['Book/chapter.xhtml']!).match(/First chapter text/)
+          ?.length,
+      ).toBe(1);
     });
 
     it('rewrites srcset, inline CSS, CSS escapes, fragments, and SVG xlink references without filename collisions', async () => {

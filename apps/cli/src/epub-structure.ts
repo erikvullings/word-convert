@@ -109,6 +109,32 @@ function headingLevel(element: Element): number {
     : 0;
 }
 
+function isSplitHeading(element: Element): boolean {
+  const title = element.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+  const words = title.split(/\s+/);
+  return (
+    (title.length >= 20 && words.length >= 2 && words.length <= 8) ||
+    /^(?:chapter|part|section)\s+(?:\d+|[ivxlcdm]+|[a-z]+)\b/i.test(title) ||
+    /^(?:prologue|preface|introduction|conclusion|epilogue|foreword|afterword|acknowledgments?|bibliography|references)$/i.test(
+      title,
+    )
+  );
+}
+
+function isPageBreak(element: Element): boolean {
+  const classes = (element.getAttribute('class') ?? '').split(/\s+/);
+  const epubType = element.getAttributeNS(EPUB, 'type')?.split(/\s+/) ?? [];
+  return (
+    classes.includes('page-break') ||
+    epubType.includes('pagebreak') ||
+    element.getAttribute('role') === 'doc-pagebreak'
+  );
+}
+
+function pageNumber(text: string): boolean {
+  return /^(?:\d{1,4}|[ivxlcdm]{1,8})$/i.test(text.trim());
+}
+
 export class EpubStructure {
   hasStructuralChanges = false;
   readonly documents = new Map<string, Document>();
@@ -151,6 +177,78 @@ export class EpubStructure {
     this.changed.add(path);
   }
 
+  cleanPageFurniture() {
+    let removedPageNumbers = 0;
+    let removedRunningMatter = 0;
+    const visited = new Set<string>();
+    for (const [packagePath, packageDocument] of this.packages) {
+      for (const { path } of this.spine(packagePath, packageDocument)) {
+        if (visited.has(path)) continue;
+        visited.add(path);
+        const document = this.document(path);
+        const body = elements(document, XHTML, 'body')[0];
+        if (!body) continue;
+        const children = Array.from(body.childNodes);
+        const pageNumberNodes = children.filter((node, index) => {
+          if (node.nodeType !== 1) return false;
+          const element = node as Element;
+          if (element.namespaceURI !== XHTML || element.localName !== 'p')
+            return false;
+          const next = children
+            .slice(index + 1)
+            .find((sibling) => sibling.nodeType === 1) as Element | undefined;
+          return (
+            !!next && isPageBreak(next) && pageNumber(element.textContent ?? '')
+          );
+        }) as Element[];
+        if (pageNumberNodes.length >= 2) {
+          for (const node of pageNumberNodes) {
+            node.parentNode?.removeChild(node);
+            removedPageNumbers++;
+          }
+        }
+
+        const runningMatter = new Map<string, Element[]>();
+        const currentChildren = Array.from(body.childNodes);
+        currentChildren.forEach((node, index) => {
+          if (node.nodeType !== 1 || !isPageBreak(node as Element)) return;
+          const next = currentChildren
+            .slice(index + 1)
+            .find((sibling) => sibling.nodeType === 1) as Element | undefined;
+          if (
+            !next ||
+            next.namespaceURI !== XHTML ||
+            next.localName !== 'p' ||
+            next.getElementsByTagName('*').length
+          )
+            return;
+          const text = next.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+          if (text.length < 20) return;
+          const matches = runningMatter.get(text) ?? [];
+          matches.push(next);
+          runningMatter.set(text, matches);
+        });
+        for (const matches of runningMatter.values())
+          if (matches.length >= 2)
+            for (const node of matches) {
+              node.parentNode?.removeChild(node);
+              removedRunningMatter++;
+            }
+        if (
+          pageNumberNodes.length >= 2 ||
+          [...runningMatter.values()].some((nodes) => nodes.length >= 2)
+        ) {
+          this.changed.add(path);
+          this.hasStructuralChanges = true;
+        }
+      }
+    }
+    if (removedPageNumbers || removedRunningMatter)
+      this.warn(
+        `Removed ${removedPageNumbers} explicit page numbers and ${removedRunningMatter} repeated running headers/footers from EPUB text.\n`,
+      );
+  }
+
   private spine(packagePath: string, document: Document) {
     const items = new Map(
       elements(document, OPF, 'item').map((item) => [
@@ -179,8 +277,8 @@ export class EpubStructure {
       throw new Error(
         'EPUB chapter splitting requires an XHTML body directly under html.',
       );
-    const headings = Array.from(body.getElementsByTagName('*')).filter((node) =>
-      headingLevel(node),
+    const headings = Array.from(body.getElementsByTagName('*')).filter(
+      (node) => headingLevel(node) && isSplitHeading(node),
     );
     const count = (level: number) =>
       headings.filter((node) => headingLevel(node) === level).length;
@@ -190,7 +288,9 @@ export class EpubStructure {
     let targets: Node[] = [];
     const ancestors: Element[] = [];
     let current!: Document;
-    let meaningful = false;
+    let bodyWordCount = 0;
+    let hasMedia = false;
+    let hasChapterHeading = false;
     const start = () => {
       const previousTargets = targets;
       if (parts.length >= 10000)
@@ -227,16 +327,17 @@ export class EpubStructure {
         targets.push(clone);
       }
       parts.push(current);
-      meaningful = false;
+      bodyWordCount = 0;
+      hasMedia = false;
     };
     start();
     const append = (node: Node) => {
       if (node.nodeType === 1) {
         const element = node as Element;
-        if (headingLevel(element) === level) {
-          if (meaningful) start();
+        if (headingLevel(element) === level && isSplitHeading(element)) {
+          if (hasChapterHeading && (bodyWordCount >= 50 || hasMedia)) start();
           targets.at(-1)!.appendChild(current.importNode(element, true));
-          meaningful = true;
+          hasChapterHeading = true;
           return;
         }
         const clone = current.importNode(element, false);
@@ -248,13 +349,14 @@ export class EpubStructure {
             element.localName ?? '',
           )
         )
-          meaningful = true;
+          hasMedia = true;
         for (const child of Array.from(element.childNodes)) append(child);
         ancestors.pop();
         targets.pop();
       } else {
         targets.at(-1)!.appendChild(current.importNode(node, true));
-        if (node.nodeType === 3 && node.textContent?.trim()) meaningful = true;
+        if (node.nodeType === 3 && node.textContent?.trim())
+          bodyWordCount += node.textContent.trim().split(/\s+/).length;
       }
     };
     for (const child of Array.from(body.childNodes)) append(child);
@@ -283,6 +385,7 @@ export class EpubStructure {
   }
 
   splitChapters() {
+    this.mergeShortSpineDocuments();
     const splits = new Map<string, string[]>();
     for (const [packagePath, document] of this.packages) {
       const spine = this.spine(packagePath, document);
@@ -321,6 +424,143 @@ export class EpubStructure {
         });
       }
     }
+  }
+
+  private mergeShortSpineDocuments() {
+    const minimumWords = 50;
+    let mergedDocuments = 0;
+    for (const [packagePath, packageDocument] of this.packages) {
+      const spine = this.spine(packagePath, packageDocument);
+      const wordCount = (path: string) =>
+        (
+          this.document(path).getElementsByTagNameNS(XHTML, 'body')[0]
+            ?.textContent ?? ''
+        )
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean).length;
+      const candidates = spine.filter(
+        ({ item, path }) =>
+          item.getAttribute('id') !== 'title-page' &&
+          posix.basename(path).toLowerCase() !== 'title.xhtml' &&
+          wordCount(path) < minimumWords,
+      );
+      const substantial = spine.filter(({ item, path }) => {
+        if (
+          item.getAttribute('id') === 'title-page' ||
+          posix.basename(path).toLowerCase() === 'title.xhtml'
+        )
+          return false;
+        return wordCount(path) >= minimumWords;
+      });
+      if (!substantial.length) continue;
+      const tasks = candidates.map((candidate) => {
+        const sourceIndex = spine.indexOf(candidate);
+        const destination =
+          substantial.find((entry) => spine.indexOf(entry) > sourceIndex) ??
+          [...substantial]
+            .reverse()
+            .find((entry) => spine.indexOf(entry) < sourceIndex)!;
+        return { candidate, sourceIndex, destination };
+      });
+      tasks.sort((left, right) => {
+        const destinationOrder =
+          spine.indexOf(left.destination) - spine.indexOf(right.destination);
+        if (destinationOrder) return destinationOrder;
+        const destinationIndex = spine.indexOf(left.destination);
+        const leftBefore = left.sourceIndex < destinationIndex;
+        const rightBefore = right.sourceIndex < destinationIndex;
+        if (leftBefore !== rightBefore) return leftBefore ? 1 : -1;
+        return leftBefore
+          ? right.sourceIndex - left.sourceIndex
+          : left.sourceIndex - right.sourceIndex;
+      });
+      for (const { candidate, sourceIndex, destination } of tasks) {
+        if (destination.path === candidate.path) continue;
+        const source = this.document(candidate.path);
+        const target = this.document(destination.path);
+        const sourceBody = elements(source, XHTML, 'body')[0];
+        const targetBody = elements(target, XHTML, 'body')[0];
+        if (!sourceBody || !targetBody) continue;
+        const attributes = (element: Element) =>
+          Array.from(element.attributes)
+            .map(({ name, value }) => `${name}=${value}`)
+            .sort()
+            .join('\n');
+        const styles = (document: Document) => {
+          const head = elements(document, XHTML, 'head')[0];
+          if (!head) return '';
+          return Array.from(head.getElementsByTagName('*'))
+            .filter(
+              (element) =>
+                element.localName === 'style' ||
+                (element.localName === 'link' &&
+                  (element.getAttribute('rel') ?? '')
+                    .split(/\s+/)
+                    .includes('stylesheet')),
+            )
+            .map((element) => serializer.serializeToString(element))
+            .join('\n');
+        };
+        if (
+          attributes(sourceBody) !== attributes(targetBody) ||
+          styles(source) !== styles(target)
+        )
+          continue;
+        const existingIds = new Set(
+          Array.from(target.getElementsByTagName('*'))
+            .map((element) => element.getAttribute('id'))
+            .filter((id): id is string => !!id),
+        );
+        if (
+          Array.from(source.getElementsByTagName('*')).some((element) => {
+            const id = element.getAttribute('id');
+            return !!id && existingIds.has(id);
+          })
+        )
+          continue;
+        this.moves.files.set(candidate.path, destination.path);
+        this.moves.anchors.set(
+          candidate.path,
+          new Map(
+            Array.from(source.getElementsByTagName('*'))
+              .map((element) => element.getAttribute('id'))
+              .filter((id): id is string => !!id)
+              .map((id) => [id, destination.path]),
+          ),
+        );
+        rewriteDocument(
+          source,
+          candidate.path,
+          destination.path,
+          this.moves,
+          this.imageTypes,
+        );
+        const before = sourceIndex < spine.indexOf(destination);
+        const sourceChildren = Array.from(sourceBody.childNodes);
+        for (const child of before
+          ? sourceChildren.reverse()
+          : sourceChildren) {
+          const imported = target.importNode(child, true);
+          if (before) targetBody.insertBefore(imported, targetBody.firstChild);
+          else targetBody.appendChild(imported);
+        }
+        this.changed.add(destination.path);
+        this.changed.add(packagePath);
+        this.hasStructuralChanges = true;
+        const reference = candidate.reference;
+        reference.parentNode?.removeChild(reference);
+        candidate.item.parentNode?.removeChild(candidate.item);
+        delete this.entries[candidate.path];
+        this.documents.delete(candidate.path);
+        this.changed.delete(candidate.path);
+        mergedDocuments++;
+      }
+    }
+    if (mergedDocuments)
+      this.warn(
+        `Coalesced ${mergedDocuments} short XHTML spine documents with adjacent chapters.\n`,
+      );
   }
 
   addMissingToc() {

@@ -23,7 +23,14 @@ Inputs `.md`, `.markdown`, `.html`, `.htm`, and `.xhtml` are UTF-8 text under
 the same 50 MiB input limit. They use the semantic model and existing writers,
 so all five output formats work without native libraries or model downloads.
 Headings, emphasis, lists, quotes, code, GFM tables, and Markdown TeX formulas
-are retained. HTML title, language and author metadata are read when present;
+are retained. Markdown imports use `marked`; `slimdown-js` is used only for the
+SPA's rendered Markdown preview, not EPUB conversion. Exported bold labels such
+as `**Abstract: **In this paper...` and `**Abstract:**In this paper...` are
+accepted without exposing asterisks in output; escaped markers and code remain
+literal. HTML emphasis is preserved directly as semantic marks, including
+trailing whitespace and adjacent text, rather than round-tripping through
+Markdown emphasis delimiters.
+HTML title, language and author metadata are read when present;
 otherwise title derives from the first H1/filename, language defaults to
 English, and a deterministic source SHA-256 identifier is generated.
 
@@ -62,7 +69,9 @@ omitted with warnings. Relative/unsafe link destinations are omitted, while
 safe links and text remain. HTML is a semantic import, not a pixel/style-preserving
 copy: table spans are flattened with a warning, and MathML requires a TeX
 `alttext` alternative for equation preservation. Inline/raw HTML in Markdown
-may be retained as escaped text rather than interpreted as source styling.
+may be retained as escaped text rather than interpreted as source styling;
+exact, attribute-free `strong`, `em`, `del`, `u`, `sub`, and `sup` tags are
+recognized as passive text marks.
 
 Content selection prefers the first enclosing `<main>`, ARIA `role="main"`, or
 `id="main"` landmark, then `id="content"`, `<article>`, and the document body.
@@ -132,13 +141,17 @@ needed. With no usable headings, the TOC lists existing spine documents and a
 warning explains the fallback. No readable XHTML spine means a warning instead
 of a fabricated TOC.
 
-`--split-chapters` is opt-in for existing EPUBs. Each XHTML spine document splits
-at H1 headings when there are at least two; otherwise repeated H2 headings are
-used (one H1 often represents the book title). Preceding content remains a
-front-matter file. Nested wrappers are retained, and manifest/spine order, TOCs,
-and cross-chapter fragment links are updated. Without recognizable boundaries
-the file stays intact. This is heading-based organization, not inference of
-chapters from font size, plain paragraphs, or page breaks.
+`--split-chapters` is opt-in for existing EPUBs. It first coalesces short
+(under 50 words) XHTML spine fragments into the next substantial document, or
+the preceding one for trailing fragments. It then splits at credible H1
+headings when there are at least two; otherwise repeated H2 headings are used
+(one H1 often represents the book title). Short/OCR-like heading labels do not
+create a chapter, and a section needs at least 50 words before another split.
+This keeps title-page/preamble fragments from becoming one-line chapters.
+Nested wrappers are retained, and manifest/spine order, TOCs, and cross-chapter
+fragment links are updated. Without recognizable boundaries the file stays
+intact. This is heading-based organization, not inference of chapters from
+font size, plain paragraphs, or page breaks.
 
 The input is capped at **256 MiB** (instead of the normal 50 MiB source cap);
 ZIP limits are 10,000 entries, 64 MiB per expanded entry, 512 MiB total, and
@@ -172,6 +185,13 @@ and private content are preserved, not executed or fetched.
 
 ### PDF page numbers, running headers, and footers
 
+The shared PDF.js worker resolves fonts in each embedded Form XObject's resource
+scope. A form that reuses a parent font name with a different encoding no longer
+inherits that parent's character map. This fixes garbled text without a
+text-only external extraction step; the regular image/figure path is retained.
+It is not OCR or a guarantee of correct reading order for every PDF. Explicit
+source spacing and genuinely missing or incorrect character maps can remain.
+
 The CLI uses the shared PDF reader's automatic page-furniture detection. On
 documents of at least four pages, high-confidence repeated headers, footers, and
 page numbers (including odd/even variants) are omitted from extracted text.
@@ -179,9 +199,12 @@ Medium/low-confidence candidates remain to avoid deleting real content.
 The cleanup warning is reported on stderr. Text baked into page images remains
 visible; full-page OCR or image erasure is not performed.
 
-EPUB shrinking and chapter organization preserve body text. They do not strip
-paragraphs that resemble page numbers or headers: without reliable PDF geometry
-that would risk deleting genuine content.
+EPUB shrinking removes isolated numeric or Roman-numeral paragraphs only when
+they precede explicit page-break markers and at least two such page numbers are
+present in that XHTML document. It also removes repeated text-only labels that
+occur at least twice immediately after explicit page breaks. Ambiguous numbers
+and non-repeated labels remain. This is based on embedded page-break structure,
+not inferred page geometry.
 
 ## Run from source
 

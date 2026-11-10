@@ -106,7 +106,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  pdfjs-dist@6.3.289: dbad016e0951b857448f208fd2924348f75d52521a6213cb264c0e921c2b01e0
+  pdfjs-dist@6.3.289: 89d554d99ade19f4e1d7daea36efa719391af6613241af7874babec628ec881b
 
 importers:
 
@@ -195,7 +195,7 @@ importers:
         version: 1.29.0
       pdfjs-dist:
         specifier: ^6.3.289
-        version: 6.3.289(patch_hash=dbad016e0951b857448f208fd2924348f75d52521a6213cb264c0e921c2b01e0)
+        version: 6.3.289(patch_hash=89d554d99ade19f4e1d7daea36efa719391af6613241af7874babec628ec881b)
       srcset:
         specifier: ^5.0.3
         version: 5.0.3
@@ -280,7 +280,7 @@ importers:
         version: 1.29.0
       pdfjs-dist:
         specifier: 6.3.289
-        version: 6.3.289(patch_hash=dbad016e0951b857448f208fd2924348f75d52521a6213cb264c0e921c2b01e0)
+        version: 6.3.289(patch_hash=89d554d99ade19f4e1d7daea36efa719391af6613241af7874babec628ec881b)
       slimdown-js:
         specifier: ^1.5.4
         version: 1.5.4
@@ -375,7 +375,7 @@ importers:
         version: 0.8.3
       pdfjs-dist:
         specifier: ^6.3.289
-        version: 6.3.289(patch_hash=dbad016e0951b857448f208fd2924348f75d52521a6213cb264c0e921c2b01e0)
+        version: 6.3.289(patch_hash=89d554d99ade19f4e1d7daea36efa719391af6613241af7874babec628ec881b)
 
   packages/shared: {}
 
@@ -2716,7 +2716,7 @@ snapshots:
       pako: 1.0.11
       tslib: 1.14.1
 
-  pdfjs-dist@6.3.289(patch_hash=dbad016e0951b857448f208fd2924348f75d52521a6213cb264c0e921c2b01e0):
+  pdfjs-dist@6.3.289(patch_hash=89d554d99ade19f4e1d7daea36efa719391af6613241af7874babec628ec881b):
     optionalDependencies:
       '@napi-rs/canvas': 1.0.8
 

@@ -300,9 +300,9 @@ export async function readTextDocument(
           : '';
       return `\n\n${anchor}${'#'.repeat(Number(tag[1]))} ${body.trim()}\n\n`;
     }
-    if (['strong', 'b'].includes(tag)) return `**${body}**`;
-    if (['em', 'i'].includes(tag)) return `*${body}*`;
-    if (['s', 'del'].includes(tag)) return `~~${body}~~`;
+    if (['strong', 'b'].includes(tag)) return `<strong>${body}</strong>`;
+    if (['em', 'i'].includes(tag)) return `<em>${body}</em>`;
+    if (['s', 'del'].includes(tag)) return `<del>${body}</del>`;
     if (tag === 'br') return '  \n';
     if (tag === 'hr') return '\n\n---\n\n';
     if (tag === 'img') {

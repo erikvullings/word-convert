@@ -206,8 +206,7 @@ export async function shrinkEpub(
     }
   }
   const structure = new EpubStructure(entries, packages, options.warn);
-  if (options.splitChapters) structure.splitChapters();
-  structure.addMissingToc();
+  structure.cleanPageFurniture();
   if (options.maxDimension > 0 && !options.resize && images.size)
     throw new Error(
       'EPUB shrinking requires the native canvas runtime. Keep runtime/ beside wordconvert.',
@@ -274,6 +273,8 @@ export async function shrinkEpub(
       }
     }
   }
+  if (options.splitChapters) structure.splitChapters();
+  structure.addMissingToc();
   const rewritten = structure.finish();
   if (!changed && !rewritten) return input;
   const files: Zippable = Object.create(null);

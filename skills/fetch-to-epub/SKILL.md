@@ -118,9 +118,12 @@ or `--max-image-size 0`, without `--split-chapters`.
 Existing TOCs are preserved; a missing TOC is generated from headings, falling
 back to spine documents with a warning when no headings are usable.
 `--split-chapters` is opt-in: it splits at repeated H1 headings, or repeated H2
-headings when H1 is only the book title, preserving front matter and updating
-spine order, TOCs, and cross-chapter links. Without recognizable boundaries the
-file stays intact. Existing chapter files remain unchanged by default.
+headings when H1 is only the book title. Short/OCR-like headings are ignored,
+each section needs substantive text, and short spine fragments coalesce with a
+neighboring chapter so preamble lines do not become standalone chapters. Spine
+order, TOCs, and cross-chapter links are updated. Without recognizable
+boundaries the file stays intact. Existing chapter files remain unchanged by
+default unless `--split-chapters` is selected.
 TOC/chapter changes may make small books larger even when images shrink.
 
 Input limit: 256 MiB, with bounded ZIP expansion. Encrypted, font-obfuscated,
@@ -134,8 +137,9 @@ content, scripts, remote references, and metadata before sharing.
 For PDF input, high-confidence repeated page numbers, running headers, and
 footers are automatically omitted from extracted text (requires at least four
 pages). Review the cleanup warning; medium/low-confidence candidates and text
-baked into images remain. EPUB input preserves body text instead of guessing
-which paragraphs are page furniture.
+baked into images remain. EPUB shrinking removes page numbers only when they
+are adjacent to explicit page-break markers, and repeated running labels only
+when the same text recurs at multiple markers. Ambiguous lines remain.
 
 ### 4. Verify — this is the step that catches real defects
 
