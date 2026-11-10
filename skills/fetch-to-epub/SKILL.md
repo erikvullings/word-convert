@@ -89,8 +89,10 @@ wordconvert INPUT -f epub --language en --title "Article Title" \
   on macOS. `--offline` blocks downloads; `--clear-model-cache` removes managed models.
 - The CLI reads linearized "Fast Web View" PDFs that make raw `pdf.js` hang — it does **not** need the
   pdftotext fallback for those.
-- **Markdown route** for content that only exists as HTML you've already cleaned: `pandoc file.html -t gfm
-  --wrap=none > /tmp/x.md` then `wordconvert /tmp/x.md -f epub …`.
+- **Markdown route** — only for content you've genuinely *cleaned* to plain markdown yourself (a
+  stripped article, your own notes): `pandoc file.html -t gfm --wrap=none > /tmp/x.md` then
+  `wordconvert /tmp/x.md -f epub …`. Do **not** point pandoc at a raw Avada/Fusion/WordPress page —
+  it passes the builder's `<div class="avia-…">` wrapper through as reading text (see gotchas).
 
 #### Existing EPUB input
 
@@ -162,12 +164,14 @@ Report word count + image count + chapter count per file.
 
 ## Gotchas (learned the hard way)
 
-- **Pandoc can pass page-wrapper markup through as visible text.** Avada/Fusion/WordPress layouts
-  can embed the builder's `<div class="avia-…">` wrapper inside the content the
-  converter sees; `pandoc -t gfm` then emits it as `&lt;div …&gt;` reading text — hundreds of noise
-  tokens inflating the word count. **Prefer the CLI's raw-HTML semantic extraction** and run the
-  markup-noise scan (step 4c). Only fall back to pandoc/`/tmp/x.md` if raw-HTML *under*-captures, and
-  re-scan. When raw-HTML and pandoc disagree, diff the actual text — don't trust the larger number.
+- **Pandoc pollutes Avada/Fusion/WordPress layouts — raw-HTML CLI is the correct path, not the fallback.**
+  These themes embed the page builder's `<div class="avia-…">` wrapper *inside* the content the converter
+  sees; `pandoc -t gfm` emits it as `&lt;div …&gt;` reading text — hundreds of noise tokens that *inflate*
+  the word count. The trap: a pandoc version looks "more complete" (e.g. 1434 vs 600 words), but stripping
+  the literal tags shows the **real** content is the same — the extra words are markup, not report text.
+  So **always start from the CLI's raw-HTML semantic extraction** and run the markup-noise scan (step 4c).
+  Never reach for pandoc to "fix" apparent under-capture — diff the tag-stripped text first; trust the
+  smaller raw-HTML count if its body phrases are all present.
 - **`--include-external-images` used to abort on one bad image; it now skips per-image** (403 hotlink
   blocks, 204 reauth challenges, SVG/unsupported types → warning, conversion continues). Still, a page
   whose only images are blocked will produce a text-only epub — that's expected, not an error.
@@ -193,5 +197,5 @@ Report word count + image count + chapter count per file.
 | Landing page with a PDF link | download the PDF (§2), then the PDF path |
 | Server-rendered article HTML | `wordconvert file.html -f epub` (raw-HTML semantic extraction) |
 | JS/SPA article | Chrome rendered-DOM capture (§1) → `wordconvert file.html` |
-| Avada/Fusion HTML that under-captures | `pandoc → /tmp/x.md → wordconvert`, then markup-noise scan |
+| Avada/Fusion/WordPress article HTML | **raw-HTML CLI** (`wordconvert file.html -f epub`) — full report, 0 noise. Never pandoc here |
 | Protected (Akamai/Cloudflare) | Chrome `fetch()` capture (§1), `file`-verify, then convert |
