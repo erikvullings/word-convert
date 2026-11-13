@@ -292,7 +292,7 @@ export function renderApp(
             WORKFLOW_STAGES[controller.state.stage] ?? WORKFLOW_STAGES[0],
           ),
           controller.state.selectedFilename
-            ? m('p.document-context', documentLabel(controller.state))
+            ? m('p.document-context', controller.state.selectedFilename)
             : null,
           controller.state.stage === 0
             ? filePicker(controller, select, drop)
@@ -320,12 +320,6 @@ export function renderApp(
       ],
     ),
   ]);
-}
-
-function documentLabel(state: AppState): string {
-  return (
-    state.model?.metadata.title?.value.trim() || state.selectedFilename || ''
-  );
 }
 
 function filePicker(

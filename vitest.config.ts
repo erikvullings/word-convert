@@ -16,6 +16,8 @@ export default defineConfig({
     },
   },
   test: {
+    // Bound concurrent native/PDF module startup on high-core-count hosts.
+    maxWorkers: 4,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

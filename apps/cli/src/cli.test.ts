@@ -56,6 +56,7 @@ afterEach(async () => {
 });
 
 describe('CLI arguments and output', () => {
+  // The first conversion cold-loads reader/writer and native codec modules.
   it('defaults to EPUB even when streaming output', async () => {
     const result = await invoke([fixture, '-o', '-', ...fixedDate]);
     expect(result.code).toBe(0);
@@ -65,7 +66,7 @@ describe('CLI arguments and output', () => {
       expect(new TextDecoder().decode(unzipSync(output).mimetype)).toBe(
         'application/epub+zip',
       );
-  });
+  }, 15_000);
 
   it.each([
     ['book.epub', 'epub'],

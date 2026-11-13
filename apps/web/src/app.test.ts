@@ -619,7 +619,7 @@ describe('App', () => {
     );
   });
 
-  it('shows the document title quietly and uses radio buttons for Markdown preview mode', () => {
+  it('shows the source filename quietly and uses radio buttons for Markdown preview mode', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 2;
     state.status = 'complete';
@@ -647,6 +647,32 @@ describe('App', () => {
     expect(rendered).toContain('Rendered');
     expect(rendered).toContain('Markdown');
     expect(rendered).not.toContain('Current document');
+  });
+
+  it('uses the source filename rather than inferred PDF text during analysis', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 1;
+    state.status = 'analysing';
+    state.selectedFilename = 'report.pdf';
+    state.model = editorModel();
+    state.model.metadata.title = {
+      value: 'RSTn ai) souen gemng pth',
+      provenance: {
+        source: 'pdf-layout-analysis',
+        method: 'inferred',
+        confidence: 'medium',
+      },
+    };
+    state.progress = {
+      phase: 'read',
+      completed: 97,
+      total: 100,
+      message: 'Reading PDF page 97.',
+    };
+    const rendered = JSON.stringify(renderApp(controllerFor(state)));
+    expect(rendered).toContain('report.pdf');
+    expect(rendered).toContain('Reading PDF page 97.');
+    expect(rendered).not.toContain('RSTn ai) souen gemng pth');
   });
 
   it('renders complete accessible style and metadata editors', () => {

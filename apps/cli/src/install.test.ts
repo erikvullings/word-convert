@@ -42,6 +42,7 @@ it('installs full bundles, upgrades managed installations and refuses unmanaged 
         { encoding: 'utf8' },
       );
     const first = invoke();
+    if (first.error) throw first.error;
     expect(first.status, first.stderr).toBe(0);
     expect(await readFile(join(prefix, 'runtime/dependency'), 'utf8')).toBe(
       'runtime',
