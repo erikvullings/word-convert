@@ -62,8 +62,12 @@ try {
     manifest.replace(/<item\b[^>]*\bproperties="nav"[^>]*\/>/, ''),
   );
   delete parts['EPUB/nav.xhtml'];
+  const chapterBody =
+    'This chapter contains substantive prose for the portable navigation and chapter splitting checks. '.repeat(
+      5,
+    );
   parts['EPUB/chapter-001.xhtml'] = strToU8(
-    '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapters</title></head><body><h1 id="one">Chapter One</h1><p>First chapter. <a href="#two">Next</a></p><h1 id="two">Chapter Two</h1><p>Second chapter. <a href="#one">Back</a></p></body></html>',
+    `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapters</title></head><body><h1 id="one">Chapter One</h1><p>${chapterBody}<a href="#two">Next</a></p><h1 id="two">Chapter Two</h1><p>${chapterBody}<a href="#one">Back</a></p></body></html>`,
   );
   const incomplete = join(temporary, 'missing-toc.epub');
   await writeFile(
