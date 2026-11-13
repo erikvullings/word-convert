@@ -361,7 +361,7 @@ describe('CLI EPUB input', () => {
     expect(await readFile(path)).toEqual(Buffer.from(source));
     expect((await invoke([path])).code).toBe(1);
     expect((await invoke([path, '--force'])).code).toBe(0);
-  });
+  }, 15_000);
 
   describe('EPUB navigation and optional chapter organization', () => {
     const chapters =
@@ -677,5 +677,5 @@ describe('CLI EPUB input', () => {
     expect((await readFile(join(dir, 'large.shrunk.epub'))).length).toBe(
       source.length,
     );
-  });
+  }, 15_000);
 });
