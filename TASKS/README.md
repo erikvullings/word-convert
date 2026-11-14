@@ -70,7 +70,8 @@ the decision record (completable on its own) and every subtask lists it in `Depe
 so accept it and set it `done` before starting any subtask. The only other hard sequences
 are 0033 → 0034 and 0036 → 0037. 0044 is the recommended first slice because the
 heuristic tasks need stage-level before/after evidence, and calibre (GPLv3) stays an
-offline comparison command only.
+offline comparison command only. 0045 (PDF tables) was added later at the user's request
+and reverses one of 0031's rejections; it shares no sequence with the other subtasks.
 
 - [ ] 0031 Adopt calibre-inspired PDF to EPUB conversion stages *(epic)*
 - [ ] 0032 Expose PDF crop furniture and image options in the CLI
@@ -86,3 +87,4 @@ offline comparison command only.
 - [ ] 0042 Add EPUB styling cover and navigation landmark output options *(cover: source needs 0043)*
 - [ ] 0043 Extract PDF image alt text captions and cover candidates
 - [ ] 0044 Add conversion pipeline stage dumps and verbosity levels
+- [ ] 0045 Detect PDF tables and emit TableNode *(added on request; not a calibre feature)*

@@ -48,12 +48,14 @@ Surveyed calibre options and their status here:
 | `--extra-css`, `--no-default-epub-cover`, `--preserve-cover-aspect-ratio`, `--epub-max-image-size WxH`, `--start-reading-at` | Fixed internal stylesheet; cover policy not selectable; `--max-image-size` is longest-edge only; no reading-start landmark | 0042 |
 | `--add-alt-text-to-img`, `--prefer-metadata-cover`, `--remove-first-image` | No alt text is read from PDF images/tagged content at all; no cover candidate detection | 0043 |
 | `--debug-pipeline <dir>` (`input/`, `parsed/`, `structure/`, `processed/`), `--verbose` levels | Progress messages only; no stage artifacts | 0044 |
+| (not a calibre feature — calibre's PDF input does not extract tables either) PDF table extraction | Model and all three writers already render `TableNode`; no PDF producer exists, so `type: 'table'` never appears from `packages/pdf-reader` | 0045 |
 
 Subtask order: 0033 → 0034 and 0036 → 0037 are the only required sequences; every
 other subtask can start independently. Recommended first slices are 0044 (diagnostics
-make every later change measurable), then 0032/0033, then 0036/0037. All subtasks list
-this task in `Depends on:`, so it must be accepted and set to `done` before any of them
-starts.
+make every later change measurable), then 0032/0033, then 0036/0037. 0045 (PDF tables)
+was added later at the user's request and shares no sequence with the rest. All subtasks
+list this task in `Depends on:`, so it must be accepted and set to `done` before any of
+them starts.
 
 ## Acceptance Criteria
 
@@ -140,9 +142,10 @@ starts.
     already *reads* NCX, which covers the common repair case).
   - `--input-encoding` for PDF: PDF text arrives through decoded CID fonts, so a
     declared input encoding is meaningless. HTML/Markdown text imports stay UTF-8 only.
-  - PDF table and vector-artwork extraction: calibre explicitly does not do this
-    either, and WordConvert has no table detector. Open a separate task only when real
-    fixtures demand it.
+  - PDF vector-artwork extraction (figures as standalone images from path data): calibre
+    explicitly does not do this either, and rendered-figure rasterization already covers
+    the practical cases. Table extraction was originally rejected in this list and is now
+    adopted as 0045 at the user's request on 2026-11-14; that task owns the design.
 
 ## Agent Notes
 
@@ -168,7 +171,10 @@ starts.
 - 2026-11-13 pi: Deliberate bookkeeping choice — this task is completable on its own once
   the adopt/reject decisions are accepted, so the epic does not deadlock the subtasks that
   depend on it. Implementation status lives in 0032–0044 and `TASKS/README.md`.
-- 2026-11-13 pi: Pre-sign-off audit of this epic and all twelve subtasks. Every
+- 2026-11-14 pi: User reviewed the adopt/reject table and overturned one rejection — PDF
+  table extraction is now adopted as 0045 (vector artwork stays rejected). Everything else
+  in the table still awaits explicit acceptance, so this task stays `open`.
+- 2026-11-13 pi: Pre-sign-off audit of this epic and the then-present subtasks 0032–0044. Every
   backticked `symbol()` referenced in 0031–0044 was checked against the repository: 65 of
   66 resolve to real code, and the remaining names are calibre Python identifiers quoted
   from `v9.18.0` on purpose. One bad reference was found and fixed — 0042 cited a

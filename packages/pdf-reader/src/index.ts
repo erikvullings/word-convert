@@ -12,8 +12,15 @@ import {
   type Person,
   type Provenance,
   type StyleMapping,
+  type TableNode,
 } from '@wordconvert/document-model';
 import { PdfReadError } from './error.ts';
+import {
+  buildTaggedTable,
+  detectTaggedTables,
+  layoutTaggedTables,
+  TAGGED_TABLE_CAPTION_KEY,
+} from './tables.ts';
 import {
   createFormulaCandidates,
   type PdfFormulaCandidate,
@@ -188,6 +195,15 @@ export interface PdfFurnitureCandidate {
   removed: boolean;
 }
 
+/** A table the reader turned into a `TableNode`, reported for review. */
+export interface PdfDetectedTable {
+  page: number;
+  rows: number;
+  columns: number;
+  source: 'tagged';
+  confidence: 'high' | 'medium' | 'low';
+}
+
 export interface PdfAnalysisSummary {
   pageCount: number;
   analysedPages: number[];
@@ -199,6 +215,7 @@ export interface PdfAnalysisSummary {
   fallbackPages?: Array<RawPdfPageFallback & { page: number }>;
   formulaCandidates?: PdfFormulaCandidate[];
   formulaImageRegions?: PdfFormulaImageRegion[];
+  tables?: PdfDetectedTable[];
 }
 
 export interface PdfAnalysisResult {
@@ -615,17 +632,34 @@ export async function analysePdf(
     total: analysisSteps,
     message: 'Building the document.',
   });
-  const blocks = normalizePdfLists(
-    normalizePdfToc(
-      await linesToBlocks(
-        lines,
-        styles,
-        retainedPages,
-        options,
-        semanticCandidates,
-      ),
-    ),
+  const {
+    blocks: tabledBlocks,
+    unresolvedTablePages,
+    tables,
+  } = await linesToBlocks(
+    lines,
+    styles,
+    retainedPages,
+    options,
+    semanticCandidates,
   );
+  const blocks = normalizePdfLists(normalizePdfToc(tabledBlocks));
+  if (unresolvedTablePages.length > 0)
+    warnings.push({
+      code: 'pdf-table-structure-unresolved',
+      severity: 'info',
+      message:
+        'One or more tables declared in the PDF structure could not be resolved and were retained as text.',
+      details: { pages: unresolvedTablePages.length },
+    });
+  if (tables.length > 0)
+    warnings.push({
+      code: 'pdf-tables-detected',
+      severity: 'info',
+      message:
+        'Tables declared in the PDF structure were converted to table blocks.',
+      details: { tables: tables.length },
+    });
   const formulaImageRegions = retainedPages.flatMap((page) =>
     page.images
       .filter(
@@ -687,6 +721,7 @@ export async function analysePdf(
       ),
       formulaCandidates,
       formulaImageRegions,
+      ...(tables.length > 0 ? { tables } : {}),
     },
   };
 }
@@ -914,6 +949,39 @@ async function groupLines(
     if (line) output.push(line);
   }
   return output;
+}
+
+/**
+ * Group the spans of one table cell into lines, mirroring the baseline and
+ * word-spacing rules of `groupLines`. Whitespace-only spans are dropped: the
+ * gaps between the remaining spans re-create any needed separator, so a cell
+ * keeps its words without inheriting layout padding as content.
+ */
+function cellLines(page: number, spans: readonly RawPdfTextSpan[]): PdfLine[] {
+  const sorted = spans
+    .filter((span) => span.text.trim() !== '')
+    .sort((left, right) => left.top - right.top || left.x - right.x);
+  const lines: PdfLine[] = [];
+  let segment: RawPdfTextSpan[] = [];
+  const flush = (): void => {
+    const line = createPdfLine(page, segment);
+    if (line) lines.push(line);
+    segment = [];
+  };
+  for (const span of sorted) {
+    const previous = segment.at(-1);
+    const sameBaseline =
+      previous !== undefined &&
+      Math.abs(span.top - previous.top) <= Math.max(span.height, 0.008) * 0.75;
+    if (
+      previous !== undefined &&
+      (!sameBaseline || span.x - (previous.x + previous.width) > 0.08)
+    )
+      flush();
+    segment.push(span);
+  }
+  flush();
+  return lines;
 }
 
 function retainGroupedLines(
@@ -1357,7 +1425,11 @@ async function linesToBlocks(
   pages: readonly RawPdfPage[],
   options: PdfAnalysisOptions,
   formulaCandidates: readonly PdfFormulaCandidate[] = [],
-): Promise<BlockNode[]> {
+): Promise<{
+  blocks: BlockNode[];
+  unresolvedTablePages: number[];
+  tables: PdfDetectedTable[];
+}> {
   const mapping = new Map(
     styles.map(({ id, proposedMapping }) => [id, proposedMapping]),
   );
@@ -1367,6 +1439,8 @@ async function linesToBlocks(
       .map(({ id }) => id),
   );
   const blocks: BlockNode[] = [];
+  const unresolvedTablePages: number[] = [];
+  const tables: PdfDetectedTable[] = [];
   const placedFormulaIds = new Set<string>();
   const bodySize = bodyFontSize(lines);
   let previousLine: PdfLine | undefined;
@@ -1398,6 +1472,85 @@ async function linesToBlocks(
       pageLines,
       page.images.filter(({ source }) => source !== 'rendered-equation'),
     );
+    const taggedDiscovery = detectTaggedTables(page.taggedStructure);
+    const taggedLayout = layoutTaggedTables(
+      taggedDiscovery.tables,
+      new Set(
+        pageLines.flatMap((line) =>
+          line.spans
+            .map(({ markedContentId }) => markedContentId)
+            .filter((mark): mark is string => mark !== undefined),
+        ),
+      ),
+    );
+    const taggedTablesById = new Map(
+      taggedDiscovery.tables.map((table) => [table.id, table] as const),
+    );
+    // Structure cells reference marked-content ids, not span ids, and one mark
+    // can cover several spans (a word and its trailing space, for instance).
+    const taggedSpansByMark = new Map<string, RawPdfTextSpan[]>();
+    for (const span of page.spans) {
+      if (span.markedContentId === undefined) continue;
+      const group = taggedSpansByMark.get(span.markedContentId) ?? [];
+      group.push(span);
+      taggedSpansByMark.set(span.markedContentId, group);
+    }
+    const taggedOwnerOfMark = new Map<
+      string,
+      { tableId: string; key: string }
+    >();
+    for (const table of taggedDiscovery.tables) {
+      for (const [key, marks] of taggedLayout.complete.get(table.id) ?? [])
+        for (const mark of marks)
+          taggedOwnerOfMark.set(mark, { tableId: table.id, key });
+      for (const mark of taggedLayout.captions.get(table.id) ?? [])
+        taggedOwnerOfMark.set(mark, {
+          tableId: table.id,
+          key: TAGGED_TABLE_CAPTION_KEY,
+        });
+    }
+    // A PDF routinely renders a whole row as one text run, so cell content is
+    // rebuilt from the cell's own spans: page lines can straddle columns.
+    // Cells stay out of the equation and formula paths because their geometry
+    // belongs to the cell rather than to the surrounding flow.
+    const taggedCellLines = (tableId: string, key: string): PdfLine[] => {
+      const marks =
+        key === TAGGED_TABLE_CAPTION_KEY
+          ? taggedLayout.captions.get(tableId)
+          : taggedLayout.complete.get(tableId)?.get(key);
+      if (!marks) return [];
+      return cellLines(
+        page.number,
+        marks.flatMap((mark) => taggedSpansByMark.get(mark) ?? []),
+      );
+    };
+    const taggedCellInlines = (
+      tableId: string,
+      key: string,
+    ): InlineNode[] | undefined => {
+      const children: InlineNode[] = [];
+      for (const cellLine of taggedCellLines(tableId, key))
+        children.push(
+          ...lineInlines(
+            cellLine,
+            page.links,
+            [],
+            [],
+            page.imageBacked === true,
+          ),
+        );
+      return children.length > 0 ? children : undefined;
+    };
+    const taggedCellBlocks = (tableId: string, key: string): BlockNode[] => {
+      const [firstLine] = taggedCellLines(tableId, key);
+      const children = taggedCellInlines(tableId, key);
+      if (!firstLine || !children) return [];
+      return [{ type: 'paragraph', children, styleId: styleId(firstLine) }];
+    };
+    const emittedTables = new Set<string>();
+    const failedTables = new Set<string>();
+    if (taggedDiscovery.unresolved + taggedLayout.unresolved > 0)
+      unresolvedTablePages.push(page.number);
     if (pageLines.length === 0 && page.images.length === 0) continue;
     const previousBlock = blocks.at(-1);
     const firstLine = pageLines[0];
@@ -1445,6 +1598,56 @@ async function linesToBlocks(
           line.spans.every((span) => candidate.spanIds.includes(span.id)),
       );
       if (placedLineFormula) continue;
+      const routedOwner =
+        line.spans.length > 0 &&
+        line.spans.every(
+          ({ markedContentId }) =>
+            markedContentId !== undefined &&
+            taggedLayout.marks.has(markedContentId),
+        )
+          ? taggedOwnerOfMark.get(line.spans[0]!.markedContentId!)
+          : undefined;
+      const routedTable = routedOwner
+        ? taggedTablesById.get(routedOwner.tableId)
+        : undefined;
+      if (routedTable !== undefined) {
+        let consumed = false;
+        if (emittedTables.has(routedTable.id)) consumed = true;
+        else if (!failedTables.has(routedTable.id)) {
+          const built = buildTaggedTable(
+            routedTable,
+            (row, cell) => taggedCellBlocks(routedTable.id, `${row}:${cell}`),
+            () => taggedCellInlines(routedTable.id, TAGGED_TABLE_CAPTION_KEY),
+          );
+          if (built) {
+            blocks.push({
+              type: 'table',
+              ...(built.caption
+                ? { caption: built.caption as InlineNode[] }
+                : {}),
+              rows: built.rows as TableNode['rows'],
+            });
+            tables.push({
+              page: page.number,
+              rows: routedTable.rows.length,
+              columns: built.columnCount,
+              source: 'tagged',
+              confidence: 'high',
+            });
+            emittedTables.add(routedTable.id);
+            consumed = true;
+          } else {
+            // The declared table could not be completed, so its text stays on
+            // the paragraph path rather than being swallowed by a half table.
+            failedTables.add(routedTable.id);
+            unresolvedTablePages.push(page.number);
+          }
+        }
+        if (consumed) {
+          previousLine = undefined;
+          continue;
+        }
+      }
       const lineFormulaCandidates = formulaCandidates.filter(
         (candidate) =>
           !placedFormulaIds.has(candidate.id) &&
@@ -1583,7 +1786,7 @@ async function linesToBlocks(
       previousLine = line;
     }
   }
-  return blocks;
+  return { blocks, unresolvedTablePages, tables };
 }
 
 function coversRenderedEquation(

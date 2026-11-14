@@ -609,3 +609,72 @@ describe('writeEpub', () => {
     }
   });
 });
+
+describe('writeEpub tagged table output', () => {
+  it('renders header cells, spans, and the caption in chapter XHTML', async () => {
+    const input = model([
+      {
+        type: 'table',
+        caption: [{ type: 'text', text: 'Quarterly revenue' }],
+        rows: [
+          {
+            cells: [
+              {
+                header: true,
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Period' }],
+                  },
+                ],
+              },
+              {
+                header: true,
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Revenue' }],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Q1 + Q2' }],
+                  },
+                ],
+                colSpan: 2,
+                rowSpan: 2,
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const files = unzipSync(
+      await writeEpub(input, {
+        conversionDate: '2026-07-15',
+        identifier: 'table-book',
+        title: 'Table Book',
+        language: 'en',
+      }),
+    );
+    const chapter = strFromU8(
+      files['EPUB/chapter-001.xhtml'] ?? new Uint8Array(),
+    );
+
+    expect(chapter).toContain('<table>');
+    expect(chapter).toContain('<caption>Quarterly revenue</caption>');
+    expect(chapter).toContain('<th><p>Period</p></th>');
+    expect(chapter).toContain('<th><p>Revenue</p></th>');
+    expect(chapter).toContain(
+      '<td colspan="2" rowspan="2"><p>Q1 + Q2</p></td>',
+    );
+  });
+});

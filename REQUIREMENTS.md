@@ -98,6 +98,21 @@ Mammoth.js may be used as one component of conversion, but WordConvert must not 
 
 Do not include page headers, page footers, watermark shapes or other repetitive decorative page furniture in the main converted document by default. Report omitted content in the warnings panel.
 
+## PDF support
+
+Support PDF input by reflowing its text into the neutral document model. Page geometry belongs to the reader: writers never see page numbers or coordinates.
+
+Extract tables when the source states them. A tagged PDF whose structure tree declares a `Table` element with `TR` rows and `TH`/`TD`/`TC` cells converts to a table block:
+
+- keep the declared row and cell order, and mark `TH` cells as header cells;
+- take cell text from the spans whose marked-content id falls in that cell's subtree, so cells use the same inline and style rules as every other block;
+- move a `Caption` child into the table caption;
+- never emit a partial table: when a declared table has no rows, ragged rows, or a cell whose text was removed as page furniture, keep the original paragraphs and report it in the warnings panel;
+- never lose text: the text of the cells and caption equals the text the paragraph path would have produced for the same region, in reading order;
+- report every detected table in the analysis summary with its page, row count, column count, signal and confidence.
+
+Do not infer tables from ruled lines or aligned columns under this requirement. Those are separate signals that must show no regression on the existing PDF corpus before becoming default behaviour.
+
 ## Style analysis and heading inference
 
 Before final conversion, inspect every paragraph and character style used in the document.

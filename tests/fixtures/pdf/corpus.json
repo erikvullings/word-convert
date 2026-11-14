@@ -14,6 +14,15 @@
       "covers": ["tagged structure", "marked content"]
     },
     {
+      "file": "tagged-table.pdf",
+      "covers": [
+        "tagged structure",
+        "tagged table",
+        "tagged table header cells",
+        "tagged table caption"
+      ]
+    },
+    {
       "file": "scanned-page.pdf",
       "covers": ["image-only page", "OCR warning"]
     },

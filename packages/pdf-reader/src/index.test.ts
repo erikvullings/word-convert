@@ -4517,3 +4517,495 @@ describe('dense and slow PDF page guard', () => {
     );
   });
 });
+
+function textOf(blocks: readonly unknown[]): string[] {
+  const words: string[] = [];
+  const walk = (nodes: readonly unknown[]): void => {
+    for (const node of nodes) {
+      if (!node || typeof node !== 'object') continue;
+      const value = node as Record<string, unknown>;
+      if (typeof value.text === 'string')
+        words.push(...value.text.split(/\s+/).filter(Boolean));
+      for (const key of ['children', 'blocks', 'rows', 'cells', 'caption'])
+        if (Array.isArray(value[key])) walk(value[key] as unknown[]);
+    }
+  };
+  walk(blocks);
+  return words;
+}
+
+describe('PDF tagged table extraction', () => {
+  const content = (markedContentId: string) => ({
+    role: 'NonStruct',
+    markedContentId,
+    children: [],
+  });
+  const cell = (role: 'TH' | 'TD', markedContentIds: string[]) => ({
+    role,
+    children: markedContentIds.map(content),
+  });
+  const row = (cells: Array<{ role: string; children: unknown[] }>) => ({
+    role: 'TR',
+    children: cells,
+  });
+
+  it('builds a TableNode with header cells from a tagged table structure', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Quarter', 0.1, 0.2, { markedContentId: 'mc-h-quarter' }),
+            span('Revenue', 0.6, 0.2, { markedContentId: 'mc-h-revenue' }),
+            span('Q1', 0.1, 0.25, { markedContentId: 'mc-q1' }),
+            span('100', 0.6, 0.25, { markedContentId: 'mc-r1-revenue' }),
+            span('Q2', 0.1, 0.3, { markedContentId: 'mc-q2' }),
+            span('120', 0.6, 0.3, { markedContentId: 'mc-r2-revenue' }),
+          ],
+          links: [],
+          images: [],
+          taggedStructure: {
+            role: 'Root',
+            children: [
+              {
+                role: 'Table',
+                children: [
+                  {
+                    role: 'THead',
+                    children: [
+                      row([
+                        cell('TH', ['mc-h-quarter']),
+                        cell('TH', ['mc-h-revenue']),
+                      ]),
+                    ],
+                  },
+                  {
+                    role: 'TBody',
+                    children: [
+                      row([
+                        cell('TD', ['mc-q1']),
+                        cell('TD', ['mc-r1-revenue']),
+                      ]),
+                      row([
+                        cell('TD', ['mc-q2']),
+                        cell('TD', ['mc-r2-revenue']),
+                      ]),
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks).toEqual([
+      {
+        type: 'table',
+        rows: [
+          {
+            cells: [
+              {
+                header: true,
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Quarter' }],
+                    styleId: 'pdf-body-11-regular-roman',
+                  },
+                ],
+              },
+              {
+                header: true,
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Revenue' }],
+                    styleId: 'pdf-body-11-regular-roman',
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Q1' }],
+                    styleId: 'pdf-body-11-regular-roman',
+                  },
+                ],
+              },
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: '100' }],
+                    styleId: 'pdf-body-11-regular-roman',
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Q2' }],
+                    styleId: 'pdf-body-11-regular-roman',
+                  },
+                ],
+              },
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: '120' }],
+                    styleId: 'pdf-body-11-regular-roman',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+  it('keeps the text as paragraphs and warns when a declared table is ragged', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Quarter', 0.1, 0.2, { markedContentId: 'mc-h-quarter' }),
+            span('Revenue', 0.6, 0.2, { markedContentId: 'mc-h-revenue' }),
+            span('Q1', 0.1, 0.25, { markedContentId: 'mc-q1' }),
+            span('100', 0.6, 0.25, { markedContentId: 'mc-r1-revenue' }),
+            span('Notes', 0.8, 0.25, { markedContentId: 'mc-r1-notes' }),
+          ],
+          links: [],
+          images: [],
+          taggedStructure: {
+            role: 'Root',
+            children: [
+              {
+                role: 'Table',
+                children: [
+                  {
+                    role: 'TBody',
+                    children: [
+                      row([
+                        cell('TD', ['mc-h-quarter']),
+                        cell('TD', ['mc-h-revenue']),
+                      ]),
+                      row([
+                        cell('TD', ['mc-q1']),
+                        cell('TD', ['mc-r1-revenue']),
+                        cell('TD', ['mc-r1-notes']),
+                      ]),
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks.some(({ type }) => type === 'table')).toBe(
+      false,
+    );
+    expect(textOf(result.model.blocks)).toEqual([
+      'Quarter',
+      'Revenue',
+      'Q1',
+      '100',
+      'Notes',
+    ]);
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({ code: 'pdf-table-structure-unresolved' }),
+    );
+  });
+  it('reports detected tables in the analysis summary with provenance', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Period', 0.1, 0.2, { markedContentId: 'mc-h-period' }),
+            span('Cost', 0.6, 0.2, { markedContentId: 'mc-h-cost' }),
+            span('Jan', 0.1, 0.25, { markedContentId: 'mc-jan' }),
+            span('10', 0.6, 0.25, { markedContentId: 'mc-jan-cost' }),
+          ],
+          links: [],
+          images: [],
+          taggedStructure: {
+            role: 'Root',
+            children: [
+              {
+                role: 'Table',
+                children: [
+                  {
+                    role: 'TBody',
+                    children: [
+                      row([
+                        cell('TH', ['mc-h-period']),
+                        cell('TH', ['mc-h-cost']),
+                      ]),
+                      row([
+                        cell('TD', ['mc-jan']),
+                        cell('TD', ['mc-jan-cost']),
+                      ]),
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.analysis.tables).toEqual([
+      {
+        page: 1,
+        rows: 2,
+        columns: 2,
+        source: 'tagged',
+        confidence: 'high',
+      },
+    ]);
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({ code: 'pdf-tables-detected' }),
+    );
+  });
+  it('places a table where it sits in reading order between paragraphs', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Intro paragraph.', 0.1, 0.1, { markedContentId: 'mc-p1' }),
+            span('A', 0.1, 0.3, { markedContentId: 'mc-a' }),
+            span('B', 0.6, 0.3, { markedContentId: 'mc-b' }),
+            span('Outro paragraph.', 0.1, 0.5, { markedContentId: 'mc-p2' }),
+          ],
+          links: [],
+          images: [],
+          taggedStructure: {
+            role: 'Root',
+            children: [
+              { role: 'P', markedContentId: 'mc-p1', children: [] },
+              {
+                role: 'Table',
+                children: [
+                  {
+                    role: 'TBody',
+                    children: [
+                      row([cell('TD', ['mc-a']), cell('TD', ['mc-b'])]),
+                    ],
+                  },
+                ],
+              },
+              { role: 'P', markedContentId: 'mc-p2', children: [] },
+            ],
+          },
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks.map(({ type }) => type)).toEqual([
+      'paragraph',
+      'table',
+      'paragraph',
+    ]);
+    expect(textOf(result.model.blocks)).toEqual([
+      'Intro',
+      'paragraph.',
+      'A',
+      'B',
+      'Outro',
+      'paragraph.',
+    ]);
+  });
+  it('moves a tagged table caption into the table caption', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Table 1', 0.1, 0.18, { markedContentId: 'mc-cap' }),
+            span('Period', 0.1, 0.2, { markedContentId: 'mc-h-period' }),
+            span('Cost', 0.6, 0.2, { markedContentId: 'mc-h-cost' }),
+            span('Feb', 0.1, 0.25, { markedContentId: 'mc-feb' }),
+            span('20', 0.6, 0.25, { markedContentId: 'mc-feb-cost' }),
+          ],
+          links: [],
+          images: [],
+          taggedStructure: {
+            role: 'Root',
+            children: [
+              {
+                role: 'Table',
+                children: [
+                  {
+                    role: 'Caption',
+                    children: [content('mc-cap')],
+                  },
+                  {
+                    role: 'TBody',
+                    children: [
+                      row([
+                        cell('TH', ['mc-h-period']),
+                        cell('TH', ['mc-h-cost']),
+                      ]),
+                      row([
+                        cell('TD', ['mc-feb']),
+                        cell('TD', ['mc-feb-cost']),
+                      ]),
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks).toHaveLength(1);
+    expect(result.model.blocks[0]).toMatchObject({
+      type: 'table',
+      caption: [{ type: 'text', text: 'Table 1' }],
+    });
+    // Order-independent: this asserts no caption text is lost or duplicated.
+    expect(textOf(result.model.blocks).sort()).toEqual(
+      ['Table', '1', 'Period', 'Cost', 'Feb', '20'].sort(),
+    );
+  });
+  it('reads a tagged table from a real PDF into a table block', async () => {
+    const result = await pdfJsReader.read(await fixture('tagged-table.pdf'), {
+      conversionDate: '2026-08-29',
+    });
+
+    expect(result.model.blocks).toEqual([
+      {
+        type: 'table',
+        caption: [{ type: 'text', text: 'Table 1: quarterly revenue' }],
+        rows: [
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Period' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+                header: true,
+              },
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Revenue' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+                header: true,
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Q1' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+              },
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: '100' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Q2' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+              },
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: '120' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(result.analysis.tables).toEqual([
+      { page: 1, rows: 3, columns: 2, source: 'tagged', confidence: 'high' },
+    ]);
+    // No text loss: every string the fixture draws reaches the output exactly
+    // once, whether it landed in a cell or in the caption.
+    expect(textOf(result.model.blocks)).toEqual([
+      'Period',
+      'Revenue',
+      'Q1',
+      '100',
+      'Q2',
+      '120',
+      'Table',
+      '1:',
+      'quarterly',
+      'revenue',
+    ]);
+  });
+});
