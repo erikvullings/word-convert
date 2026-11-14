@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -11,11 +11,13 @@ import {
   createFormulaCandidates,
   pdfJsReader,
   type RawPdfDocument,
+  type RawPdfStrokeSegment,
   type RawPdfTextSpan,
 } from './index.ts';
 import {
   countVectorPaths,
   proseSpans,
+  collectStrokeSegments,
   readGuardedPage,
   readImages,
   readSpans,
@@ -24,6 +26,7 @@ import {
   type PdfExtractionOptions,
   type PdfFigureRasterizer,
 } from './pdfjs.ts';
+import { detectRuledTables, DEFAULT_RULED_TABLE_LIMITS } from './tables.ts';
 
 async function fixture(name: string): Promise<Uint8Array> {
   return new Uint8Array(
@@ -5387,4 +5390,534 @@ describe('PDF tagged table extraction', () => {
       'revenue',
     ]);
   });
+});
+
+describe('PDF stroke segment collection', () => {
+  const viewport = (width: number, height: number) =>
+    ({ width, height, transform: [1, 0, 0, -1, 0, height] }) as never;
+
+  function pathOps(
+    entries: Array<{
+      path: readonly number[];
+      paint?: number;
+      lineWidth?: number;
+      color?: 'black' | 'white';
+    }>,
+  ): { fnArray: number[]; argsArray: unknown[] } {
+    const fnArray: number[] = [];
+    const argsArray: unknown[] = [];
+    for (const entry of entries) {
+      if (entry.lineWidth !== undefined) {
+        fnArray.push(OPS.setLineWidth);
+        argsArray.push([entry.lineWidth]);
+      }
+      if (entry.color) {
+        fnArray.push(OPS.setStrokeRGBColor);
+        argsArray.push(entry.color === 'white' ? [255, 255, 255] : [0, 0, 0]);
+      }
+      fnArray.push(OPS.constructPath);
+      argsArray.push([entry.paint ?? OPS.stroke, [entry.path], undefined]);
+    }
+    return { fnArray, argsArray };
+  }
+
+  it('reports stroked lines as page-relative segments', () => {
+    const collected = collectStrokeSegments(
+      pathOps([{ path: [0, 0, 100, 1, 400, 100], lineWidth: 1 }]),
+      viewport(400, 200),
+    );
+    expect(collected.truncated).toBe(false);
+    expect(collected.segments).toEqual([
+      {
+        x1: 0,
+        y1: 0.5,
+        x2: 1,
+        y2: 0.5,
+        width: expect.closeTo(1 / 400, 6),
+      },
+    ]);
+  });
+
+  it('expands a stroked rectangle into its four rules', () => {
+    // `40 200 300 60 re S` arrives as moveTo, three lineTo and closePath.
+    const collected = collectStrokeSegments(
+      pathOps([
+        {
+          path: [0, 40, 200, 1, 340, 200, 1, 340, 260, 1, 40, 260, 4],
+        },
+      ]),
+      viewport(400, 300),
+    );
+    expect(collected.segments).toHaveLength(4);
+    expect(collected.segments.map(({ y1 }) => y1)).toEqual([
+      expect.closeTo((300 - 200) / 300, 6),
+      expect.closeTo((300 - 200) / 300, 6),
+      expect.closeTo((300 - 260) / 300, 6),
+      expect.closeTo((300 - 260) / 300, 6),
+    ]);
+  });
+
+  it('ignores filled areas, curves and strokes painted white', () => {
+    const collected = collectStrokeSegments(
+      pathOps([
+        { path: [0, 0, 10, 1, 100, 10], paint: OPS.fill },
+        { path: [0, 0, 10, 2, 10, 10, 20, 10, 30, 10, 40, 10] },
+        { path: [0, 0, 10, 1, 100, 10], color: 'white' },
+        { path: [0, 0, 10, 1, 100, 10], lineWidth: 0 },
+      ]),
+      viewport(400, 200),
+    );
+    expect(collected.segments).toEqual([]);
+  });
+
+  it('keeps stroked-and-filled paths, which are bordered cells', () => {
+    const collected = collectStrokeSegments(
+      pathOps([
+        { path: [0, 0, 10, 1, 100, 10], paint: OPS.fillStroke },
+        { path: [0, 0, 10, 1, 100, 10], paint: OPS.closeStroke },
+      ]),
+      viewport(400, 200),
+    );
+    expect(collected.segments).toHaveLength(2);
+  });
+
+  it('stops at the segment limit and says so', () => {
+    const collected = collectStrokeSegments(
+      pathOps(
+        Array.from({ length: 6 }, () => ({
+          path: [0, 0, 10, 1, 100, 10] as number[],
+        })),
+      ),
+      viewport(400, 200),
+      3,
+    );
+    expect(collected.segments).toHaveLength(3);
+    expect(collected.truncated).toBe(true);
+  });
+});
+
+describe('PDF ruled table detection', () => {
+  const rule = (x1: number, y1: number, x2: number, y2: number) => ({
+    x1,
+    y1,
+    x2,
+    y2,
+    width: 0.0025,
+  });
+  /** A closed rowCount x columnCount lattice. */
+  function lattice(xs: readonly number[], ys: readonly number[]) {
+    const strokes: RawPdfStrokeSegment[] = [];
+    for (const x of xs) strokes.push(rule(x, ys[0]!, x, ys.at(-1)!));
+    for (const y of ys) strokes.push(rule(xs[0]!, y, xs.at(-1)!, y));
+    return strokes;
+  }
+  const cellSpan = (
+    text: string,
+    xs: readonly number[],
+    ys: readonly number[],
+    row: number,
+    column: number,
+  ) =>
+    span(text, xs[column]! + 0.02, ys[row]! + 0.02, {
+      width: xs[column + 1]! - xs[column]! - 0.04,
+      height: ys[row + 1]! - ys[row]! - 0.04,
+      id: text,
+    });
+
+  const xs = [0.1, 0.4, 0.7];
+  const ys = [0.2, 0.35, 0.5];
+
+  it('builds a grid from rules that close every cell', () => {
+    const discovery = detectRuledTables(
+      [
+        cellSpan('Quarter', xs, ys, 0, 0),
+        cellSpan('Revenue', xs, ys, 0, 1),
+        cellSpan('Q1', xs, ys, 1, 0),
+        cellSpan('100', xs, ys, 1, 1),
+      ],
+      lattice(xs, ys),
+    );
+    expect(discovery.unresolved).toBe(0);
+    expect(discovery.tables).toHaveLength(1);
+    const [table] = discovery.tables;
+    expect(table?.rowCount).toBe(2);
+    expect(table?.columnCount).toBe(2);
+    expect(table?.cells.map(({ spanIds }) => spanIds)).toEqual([
+      ['Quarter'],
+      ['Revenue'],
+      ['Q1'],
+      ['100'],
+    ]);
+  });
+
+  it('does not turn an underlined heading into a table', () => {
+    const discovery = detectRuledTables(
+      [span('Chapter one', 0.1, 0.2, { width: 0.4 })],
+      [rule(0.1, 0.24, 0.5, 0.24)],
+    );
+    expect(discovery.tables).toEqual([]);
+  });
+
+  it('rejects the whole grid when one cell is not closed', () => {
+    // The middle horizontal rule stops short, so the right-hand cells leak.
+    const strokes = lattice(xs, ys).filter(
+      (segment) =>
+        !(
+          Math.abs(segment.y1 - ys[1]!) < 1e-9 &&
+          Math.abs(segment.x2 - xs[2]!) < 1e-9
+        ),
+    );
+    strokes.push(rule(xs[0]!, ys[1]!, xs[1]!, ys[1]!));
+    const discovery = detectRuledTables(
+      [
+        cellSpan('Quarter', xs, ys, 0, 0),
+        cellSpan('Revenue', xs, ys, 0, 1),
+        cellSpan('Q1', xs, ys, 1, 0),
+        cellSpan('100', xs, ys, 1, 1),
+      ],
+      strokes,
+    );
+    expect(discovery.tables).toEqual([]);
+    expect(discovery.unresolved).toBe(1);
+  });
+
+  it('rejects a span that straddles an interior rule', () => {
+    const discovery = detectRuledTables(
+      [
+        cellSpan('Quarter', xs, ys, 0, 0),
+        cellSpan('Revenue', xs, ys, 0, 1),
+        cellSpan('Q1', xs, ys, 1, 0),
+        span('a run across both columns', 0.2, 0.4, {
+          width: 0.4,
+          height: 0.06,
+          id: 'straddling',
+        }),
+      ],
+      lattice(xs, ys),
+    );
+    expect(discovery.tables).toEqual([]);
+    expect(discovery.unresolved).toBe(1);
+  });
+
+  it('leaves text outside the grid to the paragraph path', () => {
+    const discovery = detectRuledTables(
+      [
+        span('Table 1: quarterly revenue', 0.1, 0.1, {
+          width: 0.5,
+          height: 0.02,
+          id: 'caption',
+        }),
+        cellSpan('Q1', xs, ys, 0, 0),
+        cellSpan('100', xs, ys, 0, 1),
+        cellSpan('Q2', xs, ys, 1, 0),
+        cellSpan('120', xs, ys, 1, 1),
+      ],
+      lattice(xs, ys),
+    );
+    expect(
+      discovery.tables[0]?.cells.flatMap(({ spanIds }) => spanIds),
+    ).not.toContain('caption');
+  });
+
+  it('rejects a grid that holds text in only one cell', () => {
+    const discovery = detectRuledTables(
+      [cellSpan('Q1', xs, ys, 0, 0)],
+      lattice(xs, ys),
+    );
+    expect(discovery.tables).toEqual([]);
+  });
+
+  it('reports two separated lattices as two tables', () => {
+    const lower = [0.7, 0.775, 0.85];
+    const discovery = detectRuledTables(
+      [
+        cellSpan('A', xs, ys, 0, 0),
+        cellSpan('B', xs, ys, 0, 1),
+        cellSpan('C', xs, ys, 1, 0),
+        cellSpan('D', xs, ys, 1, 1),
+        cellSpan('E', xs, lower, 0, 0),
+        cellSpan('F', xs, lower, 0, 1),
+        cellSpan('G', xs, lower, 1, 0),
+        cellSpan('H', xs, lower, 1, 1),
+      ],
+      [...lattice(xs, ys), ...lattice(xs, lower)],
+    );
+    expect(discovery.tables).toHaveLength(2);
+    expect(discovery.tables.map(({ rowCount }) => rowCount)).toEqual([2, 2]);
+    expect(discovery.tables.map(({ cells }) => cells[0]?.spanIds)).toEqual([
+      ['A'],
+      ['E'],
+    ]);
+  });
+
+  it('reports truncation rather than guessing past the stroke budget', () => {
+    const discovery = detectRuledTables(
+      [
+        cellSpan('Q1', xs, ys, 0, 0),
+        cellSpan('100', xs, ys, 0, 1),
+        cellSpan('Q2', xs, ys, 1, 0),
+        cellSpan('120', xs, ys, 1, 1),
+      ],
+      lattice(xs, ys),
+      { ...DEFAULT_RULED_TABLE_LIMITS, maxStrokes: 2 },
+    );
+    expect(discovery.tables).toEqual([]);
+    expect(discovery.truncated).toBe(true);
+  });
+});
+
+describe('PDF ruled table extraction', () => {
+  const xs = [0.1, 0.4, 0.7];
+  const ys = [0.2, 0.35, 0.5];
+  const rule = (x1: number, y1: number, x2: number, y2: number) => ({
+    x1,
+    y1,
+    x2,
+    y2,
+    width: 0.0025,
+  });
+  function lattice(): RawPdfStrokeSegment[] {
+    const strokes: RawPdfStrokeSegment[] = [];
+    for (const x of xs) strokes.push(rule(x, ys[0]!, x, ys.at(-1)!));
+    for (const y of ys) strokes.push(rule(xs[0]!, y, xs.at(-1)!, y));
+    return strokes;
+  }
+  const cellText = (text: string, row: number, column: number) =>
+    span(text, xs[column]! + 0.02, ys[row]! + 0.02, {
+      width: xs[column + 1]! - xs[column]! - 0.04,
+      height: ys[row + 1]! - ys[row]! - 0.04,
+    });
+  const pageOf = (
+    spans: RawPdfTextSpan[],
+    strokes: RawPdfStrokeSegment[],
+    extra: Partial<RawPdfDocument['pages'][number]> = {},
+  ) => ({
+    number: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    spans,
+    links: [],
+    images: [],
+    strokes,
+    ...extra,
+  });
+
+  it('turns a closed grid of rules into a table block', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        pageOf(
+          [
+            cellText('Quarter', 0, 0),
+            cellText('Revenue', 0, 1),
+            cellText('Q1', 1, 0),
+            cellText('100', 1, 1),
+          ],
+          lattice(),
+        ),
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(
+      result.model.blocks.filter(({ type }) => type === 'table'),
+    ).toHaveLength(1);
+    expect(result.analysis.tables).toEqual([
+      { page: 1, rows: 2, columns: 2, source: 'ruled', confidence: 'medium' },
+    ]);
+    // No duplication: the grid text reached the table and not the paragraph path.
+    expect(textOf(result.model.blocks)).toEqual([
+      'Quarter',
+      'Revenue',
+      'Q1',
+      '100',
+    ]);
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({ code: 'pdf-tables-detected' }),
+    );
+  });
+
+  it('keeps every word as prose when the rules do not close a grid', async () => {
+    // Three boundaries each way, but the middle horizontal stops short, so the
+    // right-hand cells are open: grid-shaped, and refused.
+    const strokes = lattice()
+      .filter((segment) => !(segment.y1 === ys[1] && segment.y2 === ys[1]))
+      .concat(rule(xs[0]!, ys[1]!, xs[1]!, ys[1]!));
+    const result = await analysePdf(
+      rawDocument([
+        pageOf(
+          [
+            cellText('Quarter', 0, 0),
+            cellText('Revenue', 0, 1),
+            cellText('Q1', 1, 0),
+            cellText('100', 1, 1),
+          ],
+          strokes,
+        ),
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks.some(({ type }) => type === 'table')).toBe(
+      false,
+    );
+    expect(textOf(result.model.blocks)).toEqual([
+      'Quarter',
+      'Revenue',
+      'Q1',
+      '100',
+    ]);
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({ code: 'pdf-table-structure-unresolved' }),
+    );
+  });
+
+  it('leaves the caption above the grid as a paragraph', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        pageOf(
+          [
+            span('Table 1', 0.1, 0.12, { width: 0.12, height: 0.02 }),
+            cellText('Quarter', 0, 0),
+            cellText('Revenue', 0, 1),
+            cellText('Q1', 1, 0),
+            cellText('100', 1, 1),
+          ],
+          lattice(),
+        ),
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(textOf(result.model.blocks)).toEqual([
+      'Table',
+      '1',
+      'Quarter',
+      'Revenue',
+      'Q1',
+      '100',
+    ]);
+    const [table] = result.model.blocks.filter(({ type }) => type === 'table');
+    expect(table).toBeDefined();
+  });
+
+  it('stays silent on a page whose stroke budget was exhausted', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        pageOf(
+          [
+            cellText('Quarter', 0, 0),
+            cellText('Revenue', 0, 1),
+            cellText('Q1', 1, 0),
+            cellText('100', 1, 1),
+          ],
+          lattice(),
+          { strokesTruncated: true },
+        ),
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks.some(({ type }) => type === 'table')).toBe(
+      false,
+    );
+    expect(textOf(result.model.blocks)).toEqual([
+      'Quarter',
+      'Revenue',
+      'Q1',
+      '100',
+    ]);
+    expect(result.model.warnings.map(({ code }) => code)).not.toContain(
+      'pdf-tables-detected',
+    );
+  });
+  it('reads a ruled table from a real PDF into a table block', async () => {
+    const result = await pdfJsReader.read(await fixture('ruled-table.pdf'), {
+      conversionDate: '2026-08-29',
+    });
+
+    expect(result.analysis.tables).toEqual([
+      { page: 1, rows: 3, columns: 2, source: 'ruled', confidence: 'medium' },
+    ]);
+    const [table] = result.model.blocks.filter(({ type }) => type === 'table');
+    expect(table?.type).toBe('table');
+    if (table?.type !== 'table') return;
+    expect(
+      table.rows.map((row) => row.cells.map((cell) => textOf(cell.blocks))),
+    ).toEqual([
+      [['Period'], ['Revenue']],
+      [['Q1'], ['100']],
+      [['Q2'], ['120']],
+    ]);
+    // The caption sits outside the closed grid, so it stays a paragraph and no
+    // word is lost or repeated.
+    expect(textOf(result.model.blocks)).toEqual([
+      'Quarterly',
+      'revenue',
+      'Period',
+      'Revenue',
+      'Q1',
+      '100',
+      'Q2',
+      '120',
+    ]);
+  });
+
+  it('refuses separators, boxes, chart axes and an open grid', async () => {
+    const result = await pdfJsReader.read(
+      await fixture('ruled-non-tables.pdf'),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks.some(({ type }) => type === 'table')).toBe(
+      false,
+    );
+    expect(result.analysis.tables).toBeUndefined();
+    expect(textOf(result.model.blocks)).toEqual([
+      'Chapter',
+      'heading',
+      'Indented',
+      'quotation',
+      'Figure',
+      '2',
+      'Alpha',
+      'Beta',
+      'Gamma',
+      'Delta',
+    ]);
+    // The grid-shaped failure is reported instead of guessed at.
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({ code: 'pdf-table-structure-unresolved' }),
+    );
+  });
+});
+
+describe('PDF corpus table guard', () => {
+  it('finds tables only in the fixtures that declare or draw one', async () => {
+    const directory = new URL('../../../tests/fixtures/pdf/', import.meta.url);
+    const names = (await readdir(directory))
+      .filter((name) => name.endsWith('.pdf'))
+      .sort();
+    const found: Record<string, string> = {};
+    for (const name of names) {
+      try {
+        const result = await pdfJsReader.read(
+          new Uint8Array(await readFile(new URL(name, directory))),
+          { conversionDate: '2026-08-29', password: 'fixture-password' },
+        );
+        const tables = result.analysis.tables ?? [];
+        if (tables.length > 0)
+          found[name] = tables
+            .map(({ source, rows, columns }) => `${source}:${rows}x${columns}`)
+            .join(',');
+      } catch {
+        // Encrypted and malformed fixtures have their own tests.
+      }
+    }
+    expect(found).toEqual({
+      'ruled-table.pdf': 'ruled:3x2',
+      'tagged-table.pdf': 'tagged:3x2',
+      'tagged-table-spans.pdf': 'tagged:3x2',
+    });
+  }, 120_000);
 });

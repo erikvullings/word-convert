@@ -7,7 +7,12 @@ import {
   PDFOperator,
   PDFString,
   StandardFonts,
+  lineTo,
+  moveTo,
   rgb,
+  setLineWidth,
+  setStrokingGrayscaleColor,
+  stroke,
 } from 'pdf-lib';
 import { format } from 'prettier';
 
@@ -20,6 +25,8 @@ await save('two-column-article.pdf', await twoColumnArticle());
 await save('tagged-article.pdf', await taggedArticle());
 await save('tagged-table.pdf', await taggedTable());
 await save('tagged-table-spans.pdf', await taggedTableSpans());
+await save('ruled-table.pdf', await ruledTable());
+await save('ruled-non-tables.pdf', await ruledNonTables());
 await save('scanned-page.pdf', await scannedPage());
 await save('formula-layouts.pdf', await formulaLayouts());
 await save('formula-false-positives.pdf', await formulaFalsePositives());
@@ -78,6 +85,20 @@ await writeFile(
         {
           file: 'scanned-page.pdf',
           covers: ['image-only page', 'OCR warning'],
+        },
+        {
+          file: 'ruled-table.pdf',
+          covers: ['ruled table', 'stroked cell borders', 'table caption'],
+        },
+        {
+          file: 'ruled-non-tables.pdf',
+          covers: [
+            'separator rule',
+            'bordered box',
+            'chart axes',
+            'open grid',
+            'unresolved rules',
+          ],
         },
         {
           file: 'formula-layouts.pdf',
@@ -495,6 +516,87 @@ async function taggedTableSpans() {
     document.context.obj({ Marked: true }),
   );
   document.catalog.set(PDFName.of('Lang'), PDFString.of('en'));
+  return document;
+}
+
+/**
+ * A table that states itself as geometry instead of structure: stroked rules
+ * close every cell, so detection has to work from vector strokes alone.
+ */
+async function ruledTable() {
+  const document = await baseDocument('Quarterly Results');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const page = document.addPage([400, 300]);
+  const left = 40;
+  const middle = 190;
+  const right = 340;
+  // Cell boundaries from the top of the grid down, in PDF user space.
+  const boundaries = [240, 200, 160, 120];
+  page.pushOperators(setLineWidth(1), setStrokingGrayscaleColor(0));
+  for (const x of [left, middle, right])
+    page.pushOperators(
+      moveTo(x, boundaries.at(-1)),
+      lineTo(x, boundaries[0]),
+      stroke(),
+    );
+  for (const y of boundaries)
+    page.pushOperators(moveTo(left, y), lineTo(right, y), stroke());
+  const cells = [
+    ['Period', 'Revenue'],
+    ['Q1', '100'],
+    ['Q2', '120'],
+  ];
+  cells.forEach((row, rowIndex) =>
+    row.forEach((text, columnIndex) =>
+      page.drawText(text, {
+        x: (columnIndex === 0 ? left : middle) + 10,
+        y: boundaries[rowIndex] - 26,
+        size: 11,
+        font: body,
+      }),
+    ),
+  );
+  page.drawText('Quarterly revenue', { x: left, y: 262, size: 11, font: body });
+  return document;
+}
+
+/**
+ * Rules that must never become a table: a separator, a bordered box, chart
+ * axes, and a grid whose middle rule stops short. Detection has to refuse all
+ * four and keep every word as prose.
+ */
+async function ruledNonTables() {
+  const document = await baseDocument('Rules That Are Not Tables');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const page = document.addPage([400, 300]);
+  const rule = (x1, y1, x2, y2) => {
+    page.pushOperators(moveTo(x1, y1), lineTo(x2, y2), stroke());
+  };
+  page.pushOperators(setLineWidth(1), setStrokingGrayscaleColor(0));
+  // A running-head separator across the whole page.
+  rule(40, 282, 360, 282);
+  page.drawText('Chapter heading', { x: 40, y: 288, size: 12, font: body });
+  // A bordered quotation: one box, so one row and one column.
+  rule(40, 200, 200, 200);
+  rule(40, 250, 200, 250);
+  rule(40, 200, 40, 250);
+  rule(200, 200, 200, 250);
+  page.drawText('Indented quotation', { x: 50, y: 220, size: 11, font: body });
+  // Chart axes: one vertical and one horizontal meeting at a corner.
+  rule(60, 40, 60, 120);
+  rule(60, 40, 200, 40);
+  page.drawText('Figure 2', { x: 150, y: 110, size: 9, font: body });
+  // A grid whose middle rule stops short, leaving the right column open.
+  rule(250, 60, 350, 60);
+  rule(250, 100, 300, 100);
+  rule(250, 140, 350, 140);
+  rule(250, 60, 250, 140);
+  rule(300, 60, 300, 140);
+  rule(350, 60, 350, 140);
+  page.drawText('Alpha', { x: 255, y: 114, size: 10, font: body });
+  page.drawText('Beta', { x: 305, y: 114, size: 10, font: body });
+  page.drawText('Gamma', { x: 255, y: 74, size: 10, font: body });
+  page.drawText('Delta', { x: 305, y: 74, size: 10, font: body });
   return document;
 }
 

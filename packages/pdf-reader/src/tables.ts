@@ -7,8 +7,9 @@
  * grid of spans; the reader owns inline and style creation so table cells share
  * the formatting path of every other block.
  *
- * Ruled-line and borderless table detection are deliberately absent here; see
- * TASKS/0045-detect-pdf-tables-and-emit-table-node.md for those slices.
+ * Ruled-line detection lives in this module too (see below); borderless
+ * alignment detection is still open in
+ * TASKS/0045-detect-pdf-tables-and-emit-table-node.md.
  */
 
 export interface TaggedStructureNode {
@@ -440,4 +441,503 @@ export function buildTaggedTable(
     columnCount: placement.columnCount,
     ...(caption && caption.length > 0 ? { caption } : {}),
   };
+}
+
+/**
+ * Ruled-line table detection.
+ *
+ * A ruled table states its grid geometrically: stroked lines that close every
+ * cell. This module turns a page's straight strokes into boundaries, and only
+ * accepts a lattice whose every cell is closed on all four sides, so a single
+ * underline, a boxed quote, or a decorative frame cannot become a table.
+ * Merged ruled cells are out of scope for this slice: a span that straddles an
+ * interior rule rejects the grid rather than being guessed into one cell.
+ */
+
+/** A straight stroked line in page-relative coordinates. */
+export interface RuledStroke {
+  readonly x1: number;
+  readonly y1: number;
+  readonly x2: number;
+  readonly y2: number;
+  readonly width: number;
+}
+
+/** The box of a retained text span, in the same page-relative space. */
+export interface RuledSpanBox {
+  readonly id: string;
+  readonly x: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+  /** Span text; whitespace-only spans are not table content. */
+  readonly text?: string;
+}
+
+export interface RuledTableCell {
+  /** Grid position as `row:column`. */
+  readonly key: string;
+  readonly rowIndex: number;
+  readonly columnIndex: number;
+  readonly spanIds: readonly string[];
+}
+
+export interface RuledTable {
+  readonly id: string;
+  readonly rowCount: number;
+  readonly columnCount: number;
+  readonly x: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+  readonly cells: readonly RuledTableCell[];
+}
+
+export interface RuledTableDiscovery {
+  readonly tables: readonly RuledTable[];
+  /** Grid-shaped rule sets that could not be read as a table. */
+  readonly unresolved: number;
+  /** The stroke budget stopped detection early, so rules may be missing. */
+  readonly truncated: boolean;
+}
+
+export interface RuledTableLimits {
+  readonly maxTablesPerPage: number;
+  readonly maxRowsPerTable: number;
+  readonly maxColumnsPerTable: number;
+  readonly maxStrokes: number;
+  /** Coordinates this close count as the same rule or boundary. */
+  readonly tolerance: number;
+  /** A stroke thicker than this is a block, not a rule. */
+  readonly maxRuleWidth: number;
+  /** Shortest stroke that can be a rule; shorter marks are dots and dashes. */
+  readonly minRuleLength: number;
+  /** A cell narrower or shorter than this is noise, so its rules merge. */
+  readonly minCellSize: number;
+  /** How much of a cell edge a rule may miss and still close the cell. */
+  readonly maxEdgeGap: number;
+  /** Fraction of cells that must hold text for rules to be a table. */
+  readonly minTextCoverage: number;
+}
+
+export const DEFAULT_RULED_TABLE_LIMITS: RuledTableLimits = {
+  maxTablesPerPage: 16,
+  maxRowsPerTable: 500,
+  maxColumnsPerTable: 64,
+  maxStrokes: 4_000,
+  tolerance: 0.004,
+  maxRuleWidth: 0.02,
+  minRuleLength: 0.02,
+  minCellSize: 0.02,
+  maxEdgeGap: 0.01,
+  minTextCoverage: 0.5,
+};
+
+interface Rule {
+  /** Position across the page: y for a horizontal rule, x for a vertical one. */
+  readonly position: number;
+  readonly start: number;
+  readonly end: number;
+  readonly thickness: number;
+}
+
+const finite = (...values: readonly number[]): boolean =>
+  values.every((value) => Number.isFinite(value));
+
+/** Merge rules that sit on the same line into one boundary. */
+function clusterRules(
+  rules: readonly Rule[],
+  limits: RuledTableLimits,
+): Rule[] {
+  const clusters: Rule[] = [];
+  for (const rule of [...rules].sort(
+    (left, right) => left.position - right.position,
+  )) {
+    const last = clusters.at(-1);
+    const gap = rule.position - (last?.position ?? Number.POSITIVE_INFINITY);
+    if (
+      last &&
+      gap <= Math.max(limits.tolerance, last.thickness, rule.thickness)
+    ) {
+      const thickness = Math.max(last.thickness, rule.thickness);
+      const count = (last as Rule & { count?: number }).count ?? 1;
+      clusters[clusters.length - 1] = {
+        position: (last.position * count + rule.position) / (count + 1),
+        start: Math.min(last.start, rule.start),
+        end: Math.max(last.end, rule.end),
+        thickness,
+      };
+      (clusters[clusters.length - 1] as Rule & { count?: number }).count =
+        count + 1;
+      continue;
+    }
+    clusters.push({ ...rule });
+    (clusters[clusters.length - 1] as Rule & { count?: number }).count = 1;
+  }
+  return clusters;
+}
+
+/** Drop boundaries that are too close to be a real cell side. */
+function dedupePositions(
+  positions: readonly number[],
+  minimum: number,
+): number[] {
+  const kept: number[] = [];
+  for (const position of [...positions].sort((left, right) => left - right))
+    if (position - (kept.at(-1) ?? Number.NEGATIVE_INFINITY) >= minimum)
+      kept.push(position);
+  return kept;
+}
+
+interface RuleGroup {
+  readonly horizontal: Rule[];
+  readonly vertical: Rule[];
+}
+
+/**
+ * Split strokes into rule groups that touch each other. Rules of two separate
+ * tables never touch, so each group is examined on its own and one broken grid
+ * cannot spoil a healthy neighbour. Rules are only claimed once they are known
+ * to cross, otherwise the first grid would swallow the rules of the next.
+ */
+function groupRules(
+  strokes: readonly RuledStroke[],
+  limits: RuledTableLimits,
+): { groups: RuleGroup[]; truncated: boolean } {
+  const horizontals: Rule[] = [];
+  const verticals: Rule[] = [];
+  let truncated = false;
+  let seen = 0;
+  for (const stroke of strokes) {
+    if (seen >= limits.maxStrokes) {
+      truncated = true;
+      break;
+    }
+    seen += 1;
+    if (
+      !finite(stroke.x1, stroke.y1, stroke.x2, stroke.y2, stroke.width) ||
+      stroke.width > limits.maxRuleWidth
+    )
+      continue;
+    const dx = Math.abs(stroke.x2 - stroke.x1);
+    const dy = Math.abs(stroke.y2 - stroke.y1);
+    const alignment = Math.max(limits.tolerance, stroke.width);
+    if (dy <= alignment && dx >= limits.minRuleLength)
+      horizontals.push({
+        position: (stroke.y1 + stroke.y2) / 2,
+        start: Math.min(stroke.x1, stroke.x2),
+        end: Math.max(stroke.x1, stroke.x2),
+        thickness: stroke.width,
+      });
+    else if (dx <= alignment && dy >= limits.minRuleLength)
+      verticals.push({
+        position: (stroke.x1 + stroke.x2) / 2,
+        start: Math.min(stroke.y1, stroke.y2),
+        end: Math.max(stroke.y1, stroke.y2),
+        thickness: stroke.width,
+      });
+    // A diagonal stroke is decoration or a chart, never a cell border.
+  }
+
+  const order = (rules: readonly Rule[]) =>
+    rules
+      .map((rule, index) => ({ rule, index }))
+      .sort((left, right) => left.rule.position - right.rule.position);
+  const byHorizontal = order(horizontals);
+  const byVertical = order(verticals);
+  // Only rules whose position falls inside the other's extent can cross, and
+  // those are contiguous once sorted, so a binary search bounds the work.
+  const firstAtOrAfter = (
+    entries: readonly { rule: Rule; index: number }[],
+    value: number,
+  ): number => {
+    let low = 0;
+    let high = entries.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (entries[middle]!.rule.position < value) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  };
+
+  const groups: RuleGroup[] = [];
+  const horizontalOwner = new Map<number, number>();
+  const verticalOwner = new Map<number, number>();
+  for (const seed of byHorizontal) {
+    if (horizontalOwner.has(seed.index)) continue;
+    const groupId = groups.length;
+    const group: { horizontal: Rule[]; vertical: Rule[] } = {
+      horizontal: [],
+      vertical: [],
+    };
+    groups.push(group);
+    horizontalOwner.set(seed.index, groupId);
+    const queue: Array<{ kind: 'h' | 'v'; index: number }> = [
+      { kind: 'h', index: seed.index },
+    ];
+    while (queue.length > 0) {
+      const entry = queue.shift();
+      if (!entry) continue;
+      if (entry.kind === 'h') {
+        const rule = horizontals[entry.index]!;
+        group.horizontal.push(rule);
+        const gap = limits.tolerance;
+        const from = firstAtOrAfter(byVertical, rule.start - gap);
+        for (let cursor = from; cursor < byVertical.length; cursor++) {
+          const candidate = byVertical[cursor]!;
+          if (candidate.rule.position > rule.end + gap) break;
+          if (verticalOwner.has(candidate.index)) continue;
+          if (!reaches(candidate.rule, rule.position, gap)) continue;
+          verticalOwner.set(candidate.index, groupId);
+          queue.push({ kind: 'v', index: candidate.index });
+        }
+      } else {
+        const rule = verticals[entry.index]!;
+        group.vertical.push(rule);
+        const gap = limits.tolerance;
+        const from = firstAtOrAfter(byHorizontal, rule.start - gap);
+        for (let cursor = from; cursor < byHorizontal.length; cursor++) {
+          const candidate = byHorizontal[cursor]!;
+          if (candidate.rule.position > rule.end + gap) break;
+          if (horizontalOwner.has(candidate.index)) continue;
+          if (!reaches(candidate.rule, rule.position, gap)) continue;
+          horizontalOwner.set(candidate.index, groupId);
+          queue.push({ kind: 'h', index: candidate.index });
+        }
+      }
+    }
+  }
+  // Rules that touch nothing are ordinary rules, not a candidate table; they
+  // are dropped here and never counted as unresolved.
+  return {
+    groups: groups.filter(
+      (group) => group.horizontal.length > 0 && group.vertical.length > 0,
+    ),
+    truncated,
+  };
+}
+
+/** Does a rule reach the perpendicular position of the rule crossing it? */
+function reaches(rule: Rule, position: number, gap: number): boolean {
+  const slack = Math.max(gap, rule.thickness, 0.002);
+  return rule.start - slack <= position && rule.end + slack >= position;
+}
+
+interface Lattice {
+  readonly xs: readonly number[];
+  readonly ys: readonly number[];
+  readonly horizontal: readonly Rule[];
+  readonly vertical: readonly Rule[];
+}
+
+function toLattice(
+  group: RuleGroup,
+  limits: RuledTableLimits,
+): Lattice | undefined {
+  const xs = dedupePositions(
+    clusterRules(group.vertical, limits).map((rule) => rule.position),
+    limits.minCellSize,
+  );
+  const ys = dedupePositions(
+    clusterRules(group.horizontal, limits).map((rule) => rule.position),
+    limits.minCellSize,
+  );
+  // Two of each means at least two rows and two columns of cells: a single
+  // bordered box or a ruled-off heading is not a table.
+  if (
+    xs.length < 3 ||
+    ys.length < 3 ||
+    xs.length > limits.maxColumnsPerTable + 1 ||
+    ys.length > limits.maxRowsPerTable + 1
+  )
+    return undefined;
+  return {
+    xs,
+    ys,
+    horizontal: clusterRules(group.horizontal, limits),
+    vertical: clusterRules(group.vertical, limits),
+  };
+}
+
+/** How much of `[from, to]` the rules at `position` actually cover. */
+function coverage(
+  rules: readonly Rule[],
+  position: number,
+  from: number,
+  to: number,
+  limits: RuledTableLimits,
+): number {
+  let covered = 0;
+  for (const rule of rules) {
+    if (
+      Math.abs(rule.position - position) >
+      Math.max(limits.tolerance, rule.thickness)
+    )
+      continue;
+    covered += Math.max(0, Math.min(rule.end, to) - Math.max(rule.start, from));
+  }
+  return Math.min(covered, to - from);
+}
+
+function closesAt(
+  rules: readonly Rule[],
+  position: number,
+  from: number,
+  to: number,
+  limits: RuledTableLimits,
+): boolean {
+  return (
+    coverage(rules, position, from, to, limits) >= to - from - limits.maxEdgeGap
+  );
+}
+
+/** Every cell must be closed on all four sides, or the grid is not a grid. */
+function isClosedGrid(lattice: Lattice, limits: RuledTableLimits): boolean {
+  for (let row = 0; row < lattice.ys.length - 1; row++)
+    for (let column = 0; column < lattice.xs.length - 1; column++) {
+      const left = lattice.xs[column]!;
+      const right = lattice.xs[column + 1]!;
+      const top = lattice.ys[row]!;
+      const bottom = lattice.ys[row + 1]!;
+      if (
+        right - left < limits.minCellSize ||
+        bottom - top < limits.minCellSize
+      )
+        return false;
+      if (
+        !closesAt(lattice.horizontal, top, left, right, limits) ||
+        !closesAt(lattice.horizontal, bottom, left, right, limits) ||
+        !closesAt(lattice.vertical, left, top, bottom, limits) ||
+        !closesAt(lattice.vertical, right, top, bottom, limits)
+      )
+        return false;
+    }
+  return true;
+}
+
+/**
+ * Give each text span to the single cell it lies in. A span that overlaps two
+ * cells straddles a rule, which is a merged cell this slice does not read, so
+ * the whole grid is refused instead of silently dropping half the text.
+ */
+function assignSpans(
+  spans: readonly RuledSpanBox[],
+  lattice: Lattice,
+  limits: RuledTableLimits,
+): Map<string, string[]> | undefined {
+  const cells = new Map<string, string[]>();
+  let filled = 0;
+  for (let row = 0; row < lattice.ys.length - 1; row++)
+    for (let column = 0; column < lattice.xs.length - 1; column++)
+      cells.set(`${row}:${column}`, []);
+  for (const box of spans) {
+    const overlaps: string[] = [];
+    for (let row = 0; row < lattice.ys.length - 1; row++)
+      for (let column = 0; column < lattice.xs.length - 1; column++) {
+        const horizontal =
+          Math.min(box.x + box.width, lattice.xs[column + 1]!) -
+          Math.max(box.x, lattice.xs[column]!);
+        const vertical =
+          Math.min(box.top + box.height, lattice.ys[row + 1]!) -
+          Math.max(box.top, lattice.ys[row]!);
+        if (horizontal > limits.tolerance && vertical > limits.tolerance)
+          overlaps.push(`${row}:${column}`);
+      }
+    if (overlaps.length === 0) continue; // caption, running head, other prose
+    if (overlaps.length > 1) return undefined;
+    const [key] = overlaps;
+    const bucket = cells.get(key!);
+    if (!bucket) return undefined;
+    if (bucket.length === 0) filled += 1;
+    bucket.push(box.id);
+  }
+  const total = (lattice.ys.length - 1) * (lattice.xs.length - 1);
+  if (total === 0 || filled / total < limits.minTextCoverage) return undefined;
+  return cells;
+}
+
+/**
+ * Find ruled tables among a page's straight strokes. Text outside the grid is
+ * left to the paragraph path, and a grid that cannot be closed or completed
+ * keeps all of its text as paragraphs.
+ */
+export function detectRuledTables(
+  spans: readonly RuledSpanBox[],
+  strokes: readonly RuledStroke[],
+  limits: RuledTableLimits = DEFAULT_RULED_TABLE_LIMITS,
+): RuledTableDiscovery {
+  const tables: RuledTable[] = [];
+  let unresolved = 0;
+  if (strokes.length === 0 || limits.maxTablesPerPage <= 0)
+    return { tables, unresolved, truncated: false };
+  const usable = spans.filter(
+    (box) =>
+      (box.text ?? '').trim().length > 0 &&
+      finite(box.x, box.top, box.width, box.height),
+  );
+  const { groups, truncated } = groupRules(strokes, limits);
+  interface Candidate {
+    readonly lattice: Lattice;
+    readonly assignment: Map<string, string[]>;
+  }
+  const candidates: Candidate[] = [];
+  for (const group of groups) {
+    const lattice = toLattice(group, limits);
+    if (!lattice) continue; // ordinary rules, not a table-shaped rule set
+    if (!isClosedGrid(lattice, limits)) {
+      unresolved += 1;
+      continue;
+    }
+    const assignment = assignSpans(usable, lattice, limits);
+    if (!assignment) {
+      unresolved += 1;
+      continue;
+    }
+    candidates.push({ lattice, assignment });
+  }
+  // Two grids that both contain one span are pathological; refusing them both
+  // keeps every word on the paragraph path instead of printing it twice.
+  const owners = new Map<string, number>();
+  const shared = new Set<number>();
+  candidates.forEach((candidate, index) => {
+    for (const ids of candidate.assignment.values())
+      for (const id of ids) {
+        const previous = owners.get(id);
+        if (previous === undefined) owners.set(id, index);
+        else if (previous !== index) shared.add(previous).add(index);
+      }
+  });
+  candidates.forEach((candidate, index) => {
+    if (tables.length >= limits.maxTablesPerPage) return;
+    if (shared.has(index)) {
+      unresolved += 1;
+      return;
+    }
+    const { lattice } = candidate;
+    const cells: RuledTableCell[] = [];
+    for (let row = 0; row < lattice.ys.length - 1; row++)
+      for (let column = 0; column < lattice.xs.length - 1; column++) {
+        const key = `${row}:${column}`;
+        cells.push({
+          key,
+          rowIndex: row,
+          columnIndex: column,
+          spanIds: candidate.assignment.get(key) ?? [],
+        });
+      }
+    const top = lattice.ys[0]!;
+    const left = lattice.xs[0]!;
+    tables.push({
+      id: `ruled-table-${tables.length}`,
+      rowCount: lattice.ys.length - 1,
+      columnCount: lattice.xs.length - 1,
+      x: left,
+      top,
+      width: lattice.xs.at(-1)! - left,
+      height: lattice.ys.at(-1)! - top,
+      cells,
+    });
+  });
+  return { tables, unresolved, truncated };
 }

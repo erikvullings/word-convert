@@ -111,7 +111,18 @@ Extract tables when the source states them. A tagged PDF whose structure tree de
 - never lose text: the text of the cells and caption equals the text the paragraph path would have produced for the same region, in reading order;
 - report every detected table in the analysis summary with its page, row count, column count, signal and confidence.
 
-Do not infer tables from ruled lines or aligned columns under this requirement. Those are separate signals that must show no regression on the existing PDF corpus before becoming default behaviour.
+Infer a table from ruled lines only where the geometry closes. A set of straight stroked lines becomes a table block only when:
+
+- rules that touch each other form the grid, so rules belonging to two separate tables never merge into one;
+- the grid has at least two rows and two columns of cells, each cell being at least a minimum size, so a separator rule, a bordered quotation box, or chart axes cannot become a table;
+- every cell is closed on all four sides by those rules, so a grid with one open cell stays paragraphs and is reported in the warnings panel;
+- each text span lies in exactly one cell: a span straddling an interior rule, or claimed by two grids, refuses the grid instead of guessing a merged cell;
+- most cells hold text, so ruled-off prose is not turned into a table;
+- text outside the grid, such as a caption above it, keeps its place on the paragraph path, and no word is lost or repeated.
+
+A ruled table is reported with the ruled signal and medium confidence. Curved and filled paths are never rules, and pages that were rasterized, were classified as dense illustrations, or exceeded the stroke budget are excluded from ruled inference.
+
+Do not infer tables from aligned columns alone. That signal still has to show no regression on the existing PDF corpus before becoming default behaviour.
 
 ## Style analysis and heading inference
 

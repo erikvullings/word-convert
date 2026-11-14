@@ -24,6 +24,7 @@ import type {
   RawPdfMetadata,
   RawPdfOutlineItem,
   RawPdfPage,
+  RawPdfStrokeSegment,
   RawPdfStructureNode,
   RawPdfTextSpan,
 } from './index.ts';
@@ -52,6 +53,12 @@ export interface PdfReaderLimits {
   maxTotalImagePixels: number;
   /** Vector path operations at which a page counts as a dense illustration. */
   denseVectorPathsPerPage: number;
+  /**
+   * Stroked line segments collected per page for ruled-table detection.
+   * Collection reports truncation instead of spending unbounded time on pages
+   * of vector art. Defaults to {@link DEFAULT_MAX_STROKE_SEGMENTS_PER_PAGE}.
+   */
+  maxStrokeSegmentsPerPage?: number;
   /** Per-page processing budget before the page falls back to a page image; 0 disables it. */
   pageTimeoutMs: number;
 }
@@ -595,6 +602,187 @@ export function countVectorPaths(operators: PdfOperatorList): number {
   return paths;
 }
 
+/**
+ * Painting operators that stroke, which is the set PDF.js itself treats as
+ * "this path is drawn" when it folds a transform into a path. `fillStroke`
+ * variants count because a filled *and* stroked rectangle is a bordered cell.
+ */
+const STROKE_PAINT_OPS = new Set<number>([
+  OPS.stroke,
+  OPS.closeStroke,
+  OPS.fillStroke,
+  OPS.eoFillStroke,
+  OPS.closeFillStroke,
+  OPS.closeEOFillStroke,
+]);
+
+/** `DrawOPS` codes of the compiled path encoding PDF.js hands to `constructPath`. */
+const DRAW_MOVE_TO = 0;
+const DRAW_LINE_TO = 1;
+const DRAW_CLOSE_PATH = 4;
+
+/** Stroked lines per page before collection gives up and reports truncation. */
+export const DEFAULT_MAX_STROKE_SEGMENTS_PER_PAGE = 4_000;
+
+/**
+ * A white or near-white stroke is invisible on paper, so it is not a rule.
+ * PDF.js encodes RGB components as 0-255 and gray as 0-1; both scales are
+ * covered by treating anything at or above the top of the range as blank.
+ */
+function isBlankStrokeColor(
+  args: readonly unknown[] | undefined,
+  cmyk: boolean,
+): boolean {
+  const components = args?.filter(
+    (value): value is number =>
+      typeof value === 'number' && Number.isFinite(value),
+  );
+  if (!components || components.length === 0) return false;
+  return cmyk
+    ? components.every((component) => component <= 0.001)
+    : components.every((component) => component >= 0.999);
+}
+
+function isNumericPath(value: unknown): value is ArrayLike<number> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'length' in value &&
+    typeof (value as ArrayLike<unknown>).length === 'number' &&
+    typeof (value as ArrayLike<unknown>)[0] === 'number'
+  );
+}
+
+/**
+ * Collect the straight stroked lines of a page in the same page-relative space
+ * as {@link readSpans}, so a ruled grid and the text inside it can be compared
+ * without a second coordinate system.
+ *
+ * Only straight strokes count: a path containing a curve, an unrecognized path
+ * operator, or a fill-only path is not a rule and is dropped whole, which keeps
+ * decorative art and shaded blocks out of table detection. Coordinates come
+ * from the viewport, so page rotation is already applied.
+ */
+export function collectStrokeSegments(
+  operators: PdfOperatorList,
+  viewport: Pick<PageViewport, 'width' | 'height' | 'transform'>,
+  maxSegments: number = DEFAULT_MAX_STROKE_SEGMENTS_PER_PAGE,
+): { segments: RawPdfStrokeSegment[]; truncated: boolean } {
+  const transform = viewport.transform as Matrix;
+  const scaleX = Math.hypot(transform[0], transform[1]) || 1;
+  const segments: RawPdfStrokeSegment[] = [];
+  const state = { truncated: false };
+  let lineWidth = 1;
+  let visible = true;
+
+  const point = (x: number, y: number): [number, number] => [
+    (transform[0] * x + transform[2] * y + transform[4]) / viewport.width,
+    (transform[1] * x + transform[3] * y + transform[5]) / viewport.height,
+  ];
+  const push = (x1: number, y1: number, x2: number, y2: number): void => {
+    if (!Number.isFinite(x1 + y1 + x2 + y2)) return;
+    const [fromX, fromY] = point(x1, y1);
+    const [toX, toY] = point(x2, y2);
+    if (Math.abs(toX - fromX) === 0 && Math.abs(toY - fromY) === 0) return;
+    if (segments.length >= maxSegments) {
+      state.truncated = true;
+      return;
+    }
+    segments.push({
+      x1: fromX,
+      y1: fromY,
+      x2: toX,
+      y2: toY,
+      width: (lineWidth * scaleX) / viewport.width,
+    });
+  };
+
+  const { fnArray, argsArray } = operators;
+  for (let index = 0; index < fnArray.length; index++) {
+    const fn = fnArray[index];
+    const args = argsArray[index] as readonly unknown[] | undefined;
+    switch (fn) {
+      case OPS.setLineWidth: {
+        const value = args?.[0];
+        if (typeof value === 'number' && Number.isFinite(value) && value >= 0)
+          lineWidth = value;
+        break;
+      }
+      case OPS.setStrokeGray:
+      case OPS.setStrokeColor:
+      case OPS.setStrokeRGBColor:
+        visible = !isBlankStrokeColor(args, false);
+        break;
+      case OPS.setStrokeCMYKColor:
+        visible = !isBlankStrokeColor(args, true);
+        break;
+      case OPS.setStrokeColorN:
+        // A stroked pattern can be anything visible; keep it.
+        visible = true;
+        break;
+      case OPS.constructPath: {
+        const paint = args?.[0];
+        if (typeof paint !== 'number' || !STROKE_PAINT_OPS.has(paint)) break;
+        if (!visible || lineWidth <= 0) break;
+        const path = (args?.[1] as ArrayLike<unknown> | undefined)?.[0];
+        if (!isNumericPath(path)) break;
+        walkStrokePath(path, push);
+        if (state.truncated) return { segments, truncated: true };
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return { segments, truncated: state.truncated };
+}
+
+/**
+ * Walk the flat `(op, ...coordinates)` path encoding and emit its straight
+ * segments. Returns false as soon as the path cannot be a rule set, so a
+ * partially understood path never contributes half a grid.
+ */
+function walkStrokePath(
+  path: ArrayLike<number>,
+  push: (x1: number, y1: number, x2: number, y2: number) => void,
+): boolean {
+  let x = 0;
+  let y = 0;
+  let startX = 0;
+  let startY = 0;
+  for (let index = 0; index < path.length;) {
+    const op = path[index++];
+    if (op === DRAW_MOVE_TO) {
+      if (index + 2 > path.length) return false;
+      x = path[index]!;
+      y = path[index + 1]!;
+      startX = x;
+      startY = y;
+      index += 2;
+      continue;
+    }
+    if (op === DRAW_LINE_TO) {
+      if (index + 2 > path.length) return false;
+      const toX = path[index]!;
+      const toY = path[index + 1]!;
+      push(x, y, toX, toY);
+      x = toX;
+      y = toY;
+      index += 2;
+      continue;
+    }
+    if (op === DRAW_CLOSE_PATH) {
+      push(x, y, startX, startY);
+      x = startX;
+      y = startY;
+      continue;
+    }
+    // curveTo, quadraticCurveTo, or an encoding this version does not know.
+    return false;
+  }
+  return true;
+}
+
 async function readPageText(
   page: PDFPageProxy,
   pageNumber: number,
@@ -1029,6 +1217,11 @@ async function readPage(
       );
     formulaBudget.candidates += retained;
   }
+  const collectedStrokes = collectStrokeSegments(
+    operators,
+    viewport,
+    limits.maxStrokeSegmentsPerPage ?? DEFAULT_MAX_STROKE_SEGMENTS_PER_PAGE,
+  );
   return {
     number: pageNumber,
     width: viewport.width,
@@ -1042,6 +1235,10 @@ async function readPage(
     images,
     ...(formulaCandidates.length > 0 ? { formulaCandidates } : {}),
     ...(structure ? { taggedStructure: readStructure(structure) } : {}),
+    ...(collectedStrokes.segments.length > 0
+      ? { strokes: collectedStrokes.segments }
+      : {}),
+    ...(collectedStrokes.truncated ? { strokesTruncated: true } : {}),
   };
 }
 

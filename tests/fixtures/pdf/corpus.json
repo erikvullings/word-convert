@@ -35,6 +35,20 @@
       "covers": ["image-only page", "OCR warning"]
     },
     {
+      "file": "ruled-table.pdf",
+      "covers": ["ruled table", "stroked cell borders", "table caption"]
+    },
+    {
+      "file": "ruled-non-tables.pdf",
+      "covers": [
+        "separator rule",
+        "bordered box",
+        "chart axes",
+        "open grid",
+        "unresolved rules"
+      ]
+    },
+    {
       "file": "formula-layouts.pdf",
       "covers": [
         "inline formula",

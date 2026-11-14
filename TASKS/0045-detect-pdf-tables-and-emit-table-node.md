@@ -226,3 +226,54 @@ Three signals are available at very different cost and precision:
   fail with `Test timed out in 5000ms` only when the whole suite runs with 54
   worker files; they pass in isolation and on a rerun. Tracked as task 0046 so
   nobody mistakes it for a regression in table work.
+- 2026-11-14 pi: **Slice 2 (ruled grids) implemented and on by default.** New
+  seam `collectStrokeSegments(operators, viewport, maxSegments)` in
+  `packages/pdf-reader/src/pdfjs.ts` returns page-relative straight strokes in
+  the same 0..1 space as spans; detection is the pure
+  `detectRuledTables(spans, strokes, limits)` in `tables.ts`. Both are unit
+  tested over operator-list and stroke literals, plus real-PDF and corpus tests.
+  Precision gates, in the order they fire:
+  - a path counts only if PDF.js painted it with a stroking operator, and any
+    path containing a curve, or an encoding this version does not know, is
+    dropped whole rather than half-parsed;
+  - white and near-white strokes are dropped (they are invisible on paper);
+  - rules are merged into boundaries, then split into groups of rules that
+    touch, so two tables on one page are judged separately and one broken grid
+    cannot spoil a healthy neighbour;
+  - a group needs at least three boundaries each way (two rows and two columns
+    of cells) so separators, quotation boxes and chart axes are ordinary rules,
+    not unresolved tables, and therefore do not warn;
+  - every cell must be closed on all four sides within `maxEdgeGap`, so a grid
+    with one short rule is refused and reported;
+  - a span overlapping two cells (a merged ruled cell this slice does not read)
+    refuses the grid, and a span claimed by two grids refuses both;
+  - at least half the cells must hold text.
+  Text outside the grid keeps its paragraph, and a line is only pulled into a
+  table when every one of its spans belongs to the same grid — whitespace
+  between two cells is glue and does not veto ownership.
+- 2026-11-14 pi: Two bugs found by the tests rather than by review. Whitespace
+  spans between cell texts share the row's baseline, so requiring every span to
+  be grid-owned meant a real ruled table never emitted; and the first
+  connected-components code claimed rules before checking whether they crossed,
+  which swallowed the second table on a page. Both are locked by tests.
+- 2026-11-14 pi: Evidence, since this became default behaviour.
+  `tests/fixtures/pdf/ruled-table.pdf` (stroked 3x2 grid plus a caption outside
+  the grid) yields one `ruled`/`medium` table with all six cells and the caption
+  as prose; the new adversarial `tests/fixtures/pdf/ruled-non-tables.pdf`
+  (separator rule, quotation box, chart axes, grid with a short middle rule)
+  yields no table, keeps all ten words as prose, and reports
+  `pdf-table-structure-unresolved`. A corpus guard test reads every PDF fixture
+  and asserts tables appear only in the three table fixtures with exact
+  provenance, so a future false positive fails the suite rather than shipping.
+  `formula-layouts.pdf` and `formula-false-positives.pdf` — both full of vector
+  paths — remain table-free.
+- 2026-11-14 pi: Cost is bounded and recorded in `documentation/hardening.md`:
+  `maxStrokeSegmentsPerPage: 4,000`, collection reports truncation, and
+  truncated, dense, or rasterized pages skip ruled inference entirely.
+  `REQUIREMENTS.md` gained the ruled-table requirements; the previous sentence
+  forbidding ruled inference is gone. No CLI option was added, so `cli.ts`,
+  `documentation/cli.md` and `README.md` are unchanged per `AGENTS.md`.
+- 2026-11-14 pi: Still open — borderless aligned-column detection (slice 3,
+  opt-in), merged ruled cells (needs the missing interior rule to be inferred,
+  which is exactly the guessing this slice refuses), and confirmation that the
+  0041 size splitter keeps a `TableNode` whole.

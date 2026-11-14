@@ -17,6 +17,7 @@ import {
 import { PdfReadError } from './error.ts';
 import {
   buildTaggedTable,
+  detectRuledTables,
   detectTaggedTables,
   layoutTaggedTables,
   TAGGED_TABLE_CAPTION_KEY,
@@ -132,6 +133,26 @@ export interface RawPdfPage {
   images: RawPdfImage[];
   formulaCandidates?: PdfFormulaCandidate[];
   taggedStructure?: RawPdfStructureNode;
+  /**
+   * Stroked vector lines of the page, normalized to fractions of the rotated
+   * page with y measured from the top. Absent when the page has no rules.
+   */
+  strokes?: RawPdfStrokeSegment[];
+  /** The per-page stroke budget stopped collection early. */
+  strokesTruncated?: boolean;
+}
+
+/**
+ * One stroked straight line of a page, in the same page-relative space as
+ * {@link RawPdfTextSpan} so rules and text can be compared directly.
+ */
+export interface RawPdfStrokeSegment {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  /** Stroke width as a fraction of the rotated page width. */
+  width: number;
 }
 
 export interface RawPdfStructureNode {
@@ -204,7 +225,7 @@ export interface PdfDetectedTable {
   page: number;
   rows: number;
   columns: number;
-  source: 'tagged';
+  source: 'tagged' | 'ruled';
   confidence: 'high' | 'medium' | 'low';
 }
 
@@ -257,6 +278,7 @@ const DEFAULT_LIMITS: PdfReaderLimits = {
   maxImagePixels: 40_000_000,
   maxTotalImagePixels: 80_000_000,
   denseVectorPathsPerPage: 2_500,
+  maxStrokeSegmentsPerPage: 4_000,
   pageTimeoutMs: 60_000,
 };
 
@@ -1528,12 +1550,11 @@ async function linesToBlocks(
         marks.flatMap((mark) => taggedSpansByMark.get(mark) ?? []),
       );
     };
-    const taggedCellInlines = (
-      tableId: string,
-      key: string,
+    const cellInlines = (
+      lines: readonly PdfLine[],
     ): InlineNode[] | undefined => {
       const children: InlineNode[] = [];
-      for (const cellLine of taggedCellLines(tableId, key))
+      for (const cellLine of lines)
         children.push(
           ...lineInlines(
             cellLine,
@@ -1545,15 +1566,72 @@ async function linesToBlocks(
         );
       return children.length > 0 ? children : undefined;
     };
-    const taggedCellBlocks = (tableId: string, key: string): BlockNode[] => {
-      const [firstLine] = taggedCellLines(tableId, key);
-      const children = taggedCellInlines(tableId, key);
+    const cellBlocks = (lines: readonly PdfLine[]): BlockNode[] => {
+      const [firstLine] = lines;
+      const children = cellInlines(lines);
       if (!firstLine || !children) return [];
       return [{ type: 'paragraph', children, styleId: styleId(firstLine) }];
     };
+    const taggedCellInlines = (
+      tableId: string,
+      key: string,
+    ): InlineNode[] | undefined => cellInlines(taggedCellLines(tableId, key));
+    const taggedCellBlocks = (tableId: string, key: string): BlockNode[] =>
+      cellBlocks(taggedCellLines(tableId, key));
+    // A ruled table states its grid geometrically instead of in the structure
+    // tree, so detection runs on the straight strokes the reader kept. A page
+    // that was rasterized, or whose strokes were truncated, has no trustworthy
+    // geometry and keeps its paragraphs.
+    const retainedSpanIds = new Set(
+      pageLines.flatMap((line) => line.spans.map(({ id }) => id)),
+    );
+    const ruledDiscovery =
+      page.strokes !== undefined &&
+      page.strokes.length > 0 &&
+      !page.strokesTruncated &&
+      page.dense !== true &&
+      page.fallback === undefined
+        ? detectRuledTables(
+            page.spans.filter((candidate) => retainedSpanIds.has(candidate.id)),
+            page.strokes,
+          )
+        : { tables: [], unresolved: 0, truncated: false };
+    const ruledTablesById = new Map(
+      ruledDiscovery.tables.map((table) => [table.id, table] as const),
+    );
+    const spansById = new Map(
+      page.spans.map((candidate) => [candidate.id, candidate] as const),
+    );
+    const ruledOwnerOfSpan = new Map<
+      string,
+      { tableId: string; key: string }
+    >();
+    for (const table of ruledDiscovery.tables)
+      for (const cell of table.cells)
+        for (const id of cell.spanIds)
+          ruledOwnerOfSpan.set(id, { tableId: table.id, key: cell.key });
+    const ruledCellLines = (tableId: string, key: string): PdfLine[] => {
+      const cell = ruledTablesById
+        .get(tableId)
+        ?.cells.find((candidate) => candidate.key === key);
+      if (!cell) return [];
+      return cellLines(
+        page.number,
+        cell.spanIds
+          .map((id) => spansById.get(id))
+          .filter(
+            (candidate): candidate is RawPdfTextSpan => candidate !== undefined,
+          ),
+      );
+    };
     const emittedTables = new Set<string>();
     const failedTables = new Set<string>();
-    if (taggedDiscovery.unresolved + taggedLayout.unresolved > 0)
+    if (
+      taggedDiscovery.unresolved +
+        taggedLayout.unresolved +
+        ruledDiscovery.unresolved >
+      0
+    )
       unresolvedTablePages.push(page.number);
     if (pageLines.length === 0 && page.images.length === 0) continue;
     const previousBlock = blocks.at(-1);
@@ -1650,6 +1728,63 @@ async function linesToBlocks(
           previousLine = undefined;
           continue;
         }
+      }
+      // Ruled grid: every span of the line must sit in a cell of the same
+      // table, so a line that also carries text from outside the grid stays on
+      // the paragraph path rather than being pulled into the table. Whitespace
+      // between two cells is glue, not content, so it does not veto ownership.
+      const ruledOwners = new Set<string>();
+      let ruledOwner: { tableId: string; key: string } | undefined;
+      if (
+        line.spans.length > 0 &&
+        line.spans.every(
+          ({ id, text }) =>
+            ruledOwnerOfSpan.has(id) || text.trim().length === 0,
+        )
+      )
+        for (const { id } of line.spans) {
+          const owner = ruledOwnerOfSpan.get(id);
+          if (!owner) continue;
+          ruledOwners.add(owner.tableId);
+          ruledOwner ??= owner;
+        }
+      // One line straddling two grids is pathological: keep it as prose rather
+      // than feeding its words to whichever table happened to be seen first.
+      const ruledTable =
+        ruledOwners.size === 1 && ruledOwner
+          ? ruledTablesById.get(ruledOwner.tableId)
+          : undefined;
+      if (ruledTable !== undefined) {
+        if (!emittedTables.has(ruledTable.id)) {
+          const rows: TableNode['rows'] = [];
+          for (let rowIndex = 0; rowIndex < ruledTable.rowCount; rowIndex++) {
+            const cells: TableNode['rows'][number]['cells'] = [];
+            for (
+              let columnIndex = 0;
+              columnIndex < ruledTable.columnCount;
+              columnIndex++
+            )
+              cells.push({
+                blocks: cellBlocks(
+                  ruledCellLines(ruledTable.id, `${rowIndex}:${columnIndex}`),
+                ),
+              });
+            rows.push({ cells });
+          }
+          blocks.push({ type: 'table', rows });
+          tables.push({
+            page: page.number,
+            rows: ruledTable.rowCount,
+            columns: ruledTable.columnCount,
+            source: 'ruled',
+            confidence: 'medium',
+          });
+          emittedTables.add(ruledTable.id);
+        }
+        // Consumed either way: the later lines of an already emitted table must
+        // not reappear as prose.
+        previousLine = undefined;
+        continue;
       }
       const lineFormulaCandidates = formulaCandidates.filter(
         (candidate) =>
