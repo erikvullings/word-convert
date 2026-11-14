@@ -172,3 +172,57 @@ Three signals are available at very different cost and precision:
   collection surface in `pdfjs.ts`), slice 3 (borderless, opt-in), tagged merged
   cells, and the 0041 check that the size splitter never cuts inside a
   `TableNode`.
+- 2026-11-14 pi: **Merged cells and `THead` headers implemented** (slice 1
+  completion). PDF.js already copies a cell's `/ColSpan` and `/RowSpan` from its
+  `/A` attribute dictionary (`O: /Table`) onto the serialized structure node via
+  `StructElementNode.tableAttributes`, but `readStructure()` in
+  `packages/pdf-reader/src/pdfjs.ts` dropped them, so any table with a merged
+  cell was rejected as ragged. Added `rowSpan`/`colSpan` to
+  `RawPdfStructureNode`, forwarded them in `readStructure()`, and replaced the
+  rectangularity check with `placeCells()` in `tables.ts`, which walks the
+  declared cells onto a grid: a row that starts past column zero is legitimate
+  when the cell above spans down, while two cells claiming one position — or a
+  position no cell claims — rejects the table. `rowSpan` is clamped to the
+  declared row count so the emitted HTML cannot be invalid.
+- 2026-11-14 pi: Two rules worth keeping in mind when slice 2 lands.
+  - A cell that declares **no** marked content is a blank cell and stays
+    `{ blocks: [] }`; only a cell whose declared marks are all gone (cropped, or
+    removed as furniture) makes the table unsafe. Rejecting tables for blank
+    cells would drop most spreadsheet prints.
+  - Cells of a `THead` row are header cells even when their role is `TD`,
+    because the section states the meaning. `/Scope` and `/Headers` are parsed
+    by PDF.js (`scope`, `headers`, `short`, `summary` on the node) but are not
+    read here: `TableCell` has no field for them.
+  Verified with four new unit cases plus `tests/fixtures/pdf/tagged-table-spans.pdf`
+  (declared `/RowSpan 2` and `/ColSpan 2`), whose reader test asserts the real
+  PDF.js pass-through, and an EPUB case asserting a table is never split across
+  chapters (`splitChapters()` only breaks before a top-level level-2 heading, so
+  a `TableNode` always moves whole — locked by a test now that 0041 will add a
+  size-based splitter).
+- 2026-11-14 pi: **Slice 2 ground truth, measured rather than guessed.** A
+  stroked PDF was generated with `pdf-lib` and its `getOperatorList()` dumped, so
+  whoever picks up ruled detection does not have to rediscover this:
+  - `OPS.constructPath = 91`, and its `argsArray` entry is
+    `[paintOp, [pathData], minMax]`.
+  - `paintOp` is the **OPS code of the painting operator**: `stroke: 20`,
+    `closeStroke: 21`, `fill: 22`, `eoFill: 23`, `clip: 29`, `eoClip: 30`. A rule
+    is `20` or `21`; `22`/`23` are filled areas, not rules.
+  - `pathData` is a flat numeric array of `(op, ...coordinates)` pairs in PDF user
+    space: `0` = moveTo, `1` = lineTo, `12` = closePath (a `rectangle` op expands
+    to moveTo + three lineTo + closePath, so a stroked rectangle is four rules).
+    Any curve op encountered means "not a rule".
+  - `minMax` is `[x0, y0, x1, y1]` in the same user space, useful as a cheap
+    reject before per-segment work.
+  - Coordinates still need the viewport transform and `page.rotation`, exactly as
+    `readSpans()` does with `Util.transform(viewportTransform, item.transform)`;
+    normalize to the same 0..1 page-relative space as spans.
+  - Two fixture-generator traps found the hard way: `PDFOperator.of('w', [1])`
+    with **raw JS numbers** silently serializes an empty content stream (use
+    `document.context.obj(...)` or pdf-lib's own op helpers such as `moveTo`,
+    `lineTo`, `stroke`, `rectangle`, `setLineWidth`, `setStrokingRgbColor`), and
+    PDF.js must be imported from `pdfjs-dist/legacy/build/pdf.mjs` in Node —
+    the modern build fails with `hashOriginal.toHex is not a function`.
+- 2026-11-14 pi: Full suite note: `apps/cli` and `apps/web` tests intermittently
+  fail with `Test timed out in 5000ms` only when the whole suite runs with 54
+  worker files; they pass in isolation and on a rerun. Tracked as task 0046 so
+  nobody mistakes it for a regression in table work.

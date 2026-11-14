@@ -677,4 +677,63 @@ describe('writeEpub tagged table output', () => {
       '<td colspan="2" rowspan="2"><p>Q1 + Q2</p></td>',
     );
   });
+  it('keeps a table whole inside one chapter', async () => {
+    const input = model([
+      { type: 'heading', level: 2, children: [{ type: 'text', text: 'One' }] },
+      {
+        type: 'table',
+        rows: [
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'A' }],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'B' }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      { type: 'heading', level: 2, children: [{ type: 'text', text: 'Two' }] },
+      { type: 'paragraph', children: [{ type: 'text', text: 'After' }] },
+    ]);
+
+    const files = unzipSync(
+      await writeEpub(input, {
+        conversionDate: '2026-07-15',
+        identifier: 'table-split',
+        title: 'Table Split',
+        language: 'en',
+      }),
+    );
+    const first = strFromU8(
+      files['EPUB/chapter-001.xhtml'] ?? new Uint8Array(),
+    );
+    const second = strFromU8(
+      files['EPUB/chapter-002.xhtml'] ?? new Uint8Array(),
+    );
+
+    expect(first).toContain('<table>');
+    expect(first).toContain('<td><p>A</p></td>');
+    expect(first).toContain('<td><p>B</p></td>');
+    expect(first).toContain('One');
+    expect(first).not.toContain('After');
+    expect(second).not.toContain('<table');
+    expect(second).toContain('After');
+  });
 });

@@ -88,3 +88,8 @@ and reverses one of 0031's rejections; it shares no sequence with the other subt
 - [ ] 0043 Extract PDF image alt text captions and cover candidates
 - [ ] 0044 Add conversion pipeline stage dumps and verbosity levels
 - [ ] 0045 Detect PDF tables and emit TableNode *(added on request; not a calibre feature)*
+
+## Test reliability
+
+- [ ] 0046 Fix flaky CLI test timeouts under full suite load *(blocks trusting a
+  red `pnpm test`; seen while implementing 0045, unrelated to it)*
