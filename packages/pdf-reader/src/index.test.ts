@@ -4540,8 +4540,14 @@ describe('PDF tagged table extraction', () => {
     markedContentId,
     children: [],
   });
-  const cell = (role: 'TH' | 'TD', markedContentIds: string[]) => ({
+  const cell = (
+    role: 'TH' | 'TD',
+    markedContentIds: string[],
+    spans: { colSpan?: number; rowSpan?: number } = {},
+  ) => ({
     role,
+    ...(spans.colSpan === undefined ? {} : { colSpan: spans.colSpan }),
+    ...(spans.rowSpan === undefined ? {} : { rowSpan: spans.rowSpan }),
     children: markedContentIds.map(content),
   });
   const row = (cells: Array<{ role: string; children: unknown[] }>) => ({
@@ -4908,6 +4914,379 @@ describe('PDF tagged table extraction', () => {
     expect(textOf(result.model.blocks).sort()).toEqual(
       ['Table', '1', 'Period', 'Cost', 'Feb', '20'].sort(),
     );
+  });
+  it('keeps cells the PDF declares with colSpan and rowSpan', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Total', 0.1, 0.2, { markedContentId: 'mc-total' }),
+            span('Revenue', 0.6, 0.2, { markedContentId: 'mc-revenue' }),
+            span('100', 0.6, 0.25, { markedContentId: 'mc-100' }),
+            span('Q1', 0.1, 0.3, { markedContentId: 'mc-q1' }),
+          ],
+          links: [],
+          images: [],
+          taggedStructure: {
+            role: 'Root',
+            children: [
+              {
+                role: 'Table',
+                children: [
+                  {
+                    role: 'TBody',
+                    children: [
+                      row([
+                        cell('TD', ['mc-total'], { rowSpan: 2 }),
+                        cell('TD', ['mc-revenue']),
+                      ]),
+                      row([cell('TD', ['mc-100'])]),
+                      row([cell('TD', ['mc-q1']), cell('TD', [])]),
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks).toEqual([
+      {
+        type: 'table',
+        rows: [
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Total' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+                rowSpan: 2,
+              },
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Revenue' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: '100' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Q1' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+              },
+              { blocks: [] },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(result.analysis.tables).toEqual([
+      { page: 1, rows: 3, columns: 2, source: 'tagged', confidence: 'high' },
+    ]);
+  });
+  it('places a colSpan cell across the columns it declares', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Years 2025 and 2026', 0.1, 0.2, {
+              markedContentId: 'mc-wide',
+            }),
+            span('Q1', 0.1, 0.25, { markedContentId: 'mc-q1' }),
+            span('Q2', 0.6, 0.25, { markedContentId: 'mc-q2' }),
+          ],
+          links: [],
+          images: [],
+          taggedStructure: {
+            role: 'Root',
+            children: [
+              {
+                role: 'Table',
+                children: [
+                  {
+                    role: 'TBody',
+                    children: [
+                      row([cell('TD', ['mc-wide'], { colSpan: 2 })]),
+                      row([cell('TD', ['mc-q1']), cell('TD', ['mc-q2'])]),
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks).toEqual([
+      {
+        type: 'table',
+        rows: [
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Years 2025 and 2026' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+                colSpan: 2,
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Q1' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+              },
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Q2' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(result.analysis.tables).toEqual([
+      { page: 1, rows: 2, columns: 2, source: 'tagged', confidence: 'high' },
+    ]);
+  });
+  it('marks cells of a THead row as header even when their role is TD', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Period', 0.1, 0.2, { markedContentId: 'mc-h1' }),
+            span('Revenue', 0.6, 0.2, { markedContentId: 'mc-h2' }),
+            span('Q1', 0.1, 0.25, { markedContentId: 'mc-b1' }),
+            span('100', 0.6, 0.25, { markedContentId: 'mc-b2' }),
+          ],
+          links: [],
+          images: [],
+          taggedStructure: {
+            role: 'Root',
+            children: [
+              {
+                role: 'Table',
+                children: [
+                  {
+                    role: 'THead',
+                    children: [
+                      row([cell('TD', ['mc-h1']), cell('TD', ['mc-h2'])]),
+                    ],
+                  },
+                  {
+                    role: 'TBody',
+                    children: [
+                      row([cell('TD', ['mc-b1']), cell('TD', ['mc-b2'])]),
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    const [table] = result.model.blocks as Array<{
+      type: string;
+      rows: Array<{ cells: Array<{ header?: boolean }> }>;
+    }>;
+    expect(table?.rows[0]?.cells.map(({ header }) => header)).toEqual([
+      true,
+      true,
+    ]);
+    expect(table?.rows[1]?.cells.map(({ header }) => header)).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+  it('keeps text as paragraphs when declared spans overlap', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('A', 0.1, 0.2, { markedContentId: 'mc-a' }),
+            span('B', 0.6, 0.2, { markedContentId: 'mc-b' }),
+            span('C', 0.1, 0.25, { markedContentId: 'mc-c' }),
+            span('D', 0.6, 0.25, { markedContentId: 'mc-d' }),
+          ],
+          links: [],
+          images: [],
+          taggedStructure: {
+            role: 'Root',
+            children: [
+              {
+                role: 'Table',
+                children: [
+                  {
+                    role: 'TBody',
+                    children: [
+                      row([
+                        cell('TD', ['mc-a'], { rowSpan: 2 }),
+                        cell('TD', ['mc-b']),
+                      ]),
+                      row([cell('TD', ['mc-c']), cell('TD', ['mc-d'])]),
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks.some(({ type }) => type === 'table')).toBe(
+      false,
+    );
+    expect(textOf(result.model.blocks)).toEqual(['A', 'B', 'C', 'D']);
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({ code: 'pdf-table-structure-unresolved' }),
+    );
+  });
+  it('reads declared row and column spans from a real PDF', async () => {
+    const result = await pdfJsReader.read(
+      await fixture('tagged-table-spans.pdf'),
+      {
+        conversionDate: '2026-08-29',
+      },
+    );
+
+    expect(result.model.blocks).toEqual([
+      {
+        type: 'table',
+        rows: [
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Metric' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+                header: true,
+                rowSpan: 2,
+              },
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Revenue' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+                header: true,
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Cost' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+                header: true,
+              },
+            ],
+          },
+          {
+            cells: [
+              {
+                blocks: [
+                  {
+                    type: 'paragraph',
+                    children: [{ type: 'text', text: 'Total revenue' }],
+                    styleId: expect.any(String),
+                  },
+                ],
+                colSpan: 2,
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(result.analysis.tables).toEqual([
+      { page: 1, rows: 3, columns: 2, source: 'tagged', confidence: 'high' },
+    ]);
+    expect(textOf(result.model.blocks)).toEqual([
+      'Metric',
+      'Revenue',
+      'Cost',
+      'Total',
+      'revenue',
+    ]);
   });
   it('reads a tagged table from a real PDF into a table block', async () => {
     const result = await pdfJsReader.read(await fixture('tagged-table.pdf'), {

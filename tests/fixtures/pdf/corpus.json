@@ -14,6 +14,14 @@
       "covers": ["tagged structure", "marked content"]
     },
     {
+      "file": "tagged-table-spans.pdf",
+      "covers": [
+        "tagged structure",
+        "tagged table row span",
+        "tagged table column span"
+      ]
+    },
+    {
       "file": "tagged-table.pdf",
       "covers": [
         "tagged structure",

@@ -2686,8 +2686,25 @@ function readStructure(value: unknown): RawPdfStructureNode {
   return {
     role: typeof value.role === 'string' ? value.role : 'NonStruct',
     ...(typeof value.id === 'string' ? { markedContentId: value.id } : {}),
+    ...declaredTableSpan(value, 'colSpan'),
+    ...declaredTableSpan(value, 'rowSpan'),
     children,
   };
+}
+
+/**
+ * PDF.js copies a cell's declared `/ColSpan` and `/RowSpan` from its `/A`
+ * attribute dictionary onto the serialized structure node, and only when the
+ * value is an integer above one.
+ */
+function declaredTableSpan(
+  value: Record<string, unknown>,
+  key: 'colSpan' | 'rowSpan',
+): Partial<Pick<RawPdfStructureNode, typeof key>> {
+  const span = value[key];
+  return typeof span === 'number' && Number.isInteger(span) && span > 1
+    ? { [key]: span }
+    : {};
 }
 
 async function readMetadata(

@@ -14,6 +14,10 @@
 export interface TaggedStructureNode {
   readonly role?: string;
   readonly markedContentId?: string;
+  /** Declared `/ColSpan` of a `TH`/`TD`, present only when greater than one. */
+  readonly colSpan?: number;
+  /** Declared `/RowSpan` of a `TH`/`TD`, present only when greater than one. */
+  readonly rowSpan?: number;
   readonly children?: readonly TaggedStructureNode[];
 }
 
@@ -22,6 +26,8 @@ export interface TaggedTableCell {
   readonly columnIndex: number;
   readonly role: string;
   readonly header: boolean;
+  readonly colSpan: number;
+  readonly rowSpan: number;
   /** Marked-content ids that hold this cell's text, in structure order. */
   readonly markedContentIds: readonly string[];
 }
@@ -62,13 +68,29 @@ const ROW_ROLE = 'TR';
 const CELL_ROLES = new Set(['TH', 'TD', 'TC']);
 const TABLE_ROLE = 'TABLE';
 const CAPTION_ROLE = 'CAPTION';
+const HEAD_ROLE = 'THEAD';
 /** Bucket key under which caption spans are stored for a table. */
 export const TAGGED_TABLE_CAPTION_KEY = 'caption';
 
 const isHeaderRole = (role: string): boolean => role === 'TH';
 
+/** Declared spans are trusted but bounded: an absurd value is a broken PDF. */
+const declaredSpan = (
+  value: number | undefined,
+  fallback: number,
+  maximum: number,
+): number => {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  const span = Math.floor(value);
+  if (span < 1) return fallback;
+  return Math.min(span, maximum);
+};
+
 interface CellAccumulator {
   readonly role: string;
+  readonly header: boolean;
+  readonly colSpan: number;
+  readonly rowSpan: number;
   readonly markedContentIds: string[];
 }
 
@@ -101,11 +123,14 @@ function collectMarks(
 /**
  * Walk a `TR` element and return its cells in document order. Empty cells are
  * kept with no spans so the grid stays rectangular where the PDF declares it.
+ * Cells of a `THead` row are headers even when their role is `TD`, because the
+ * section states the meaning.
  */
 function collectCells(
   rowNode: TaggedStructureNode,
   limits: TaggedTableLimits,
   state: { visited: number },
+  inHead: boolean,
 ): CellAccumulator[] | undefined {
   const cells: CellAccumulator[] = [];
   const descend = (nodes: readonly TaggedStructureNode[]): void => {
@@ -118,6 +143,9 @@ function collectCells(
         if (cells.length >= limits.maxCellsPerRow) return;
         cells.push({
           role,
+          header: inHead || isHeaderRole(role),
+          colSpan: declaredSpan(node.colSpan, 1, limits.maxCellsPerRow),
+          rowSpan: declaredSpan(node.rowSpan, 1, limits.maxRowsPerTable),
           markedContentIds: collectMarks(node.children ?? [], limits, state),
         });
         continue;
@@ -143,14 +171,17 @@ function readTable(
 ): RawTable | undefined {
   const rows: CellAccumulator[][] = [];
   const captionMarkedContentIds: string[] = [];
-  const descend = (nodes: readonly TaggedStructureNode[]): void => {
+  const descend = (
+    nodes: readonly TaggedStructureNode[],
+    inHead = false,
+  ): void => {
     for (const child of nodes) {
       state.visited += 1;
       if (state.visited > limits.maxNodes) return;
       const role = (child.role ?? '').toUpperCase();
       if (role === ROW_ROLE) {
         if (rows.length >= limits.maxRowsPerTable) return;
-        const cells = collectCells(child, limits, state);
+        const cells = collectCells(child, limits, state, inHead);
         if (cells) rows.push(cells);
         continue;
       }
@@ -158,7 +189,7 @@ function readTable(
         captionMarkedContentIds.push(...collectMarks([child], limits, state));
         continue;
       }
-      descend(child.children ?? []);
+      descend(child.children ?? [], inHead || role === HEAD_ROLE);
     }
   };
   descend(node.children ?? []);
@@ -209,7 +240,9 @@ export function detectTaggedTables(
             rowIndex,
             columnIndex,
             role: cell.role,
-            header: isHeaderRole(cell.role),
+            header: cell.header,
+            colSpan: cell.colSpan,
+            rowSpan: cell.rowSpan,
             markedContentIds: cell.markedContentIds,
           })),
         })),
@@ -222,11 +255,86 @@ export function detectTaggedTables(
   return { tables, unresolved };
 }
 
+export interface TaggedTablePlacedCell {
+  /** Grid position of the cell, as `row:column`. */
+  readonly key: string;
+  readonly rowIndex: number;
+  readonly columnIndex: number;
+  readonly header: boolean;
+  readonly colSpan: number;
+  readonly rowSpan: number;
+  readonly markedContentIds: readonly string[];
+}
+
+export interface TaggedTablePlacement {
+  readonly rows: readonly (readonly TaggedTablePlacedCell[])[];
+  readonly columnCount: number;
+}
+
+/**
+ * Turn declared cells into grid positions. A row that starts later than column
+ * zero is legitimate when the cell above spans down, so raggedness alone is not
+ * a reason to reject a table; two cells claiming one position, or a position no
+ * cell claims, is.
+ */
+export function placeCells(
+  table: TaggedTable,
+  limits: TaggedTableLimits = DEFAULT_TAGGED_TABLE_LIMITS,
+): TaggedTablePlacement | undefined {
+  const rowCount = table.rows.length;
+  if (rowCount === 0) return undefined;
+  const occupied = new Set<string>();
+  const rows: TaggedTablePlacedCell[][] = [];
+  let columnCount = 0;
+  for (const row of table.rows) {
+    const cells: TaggedTablePlacedCell[] = [];
+    let column = 0;
+    for (const cell of row.cells) {
+      while (occupied.has(`${cell.rowIndex}:${column}`)) column += 1;
+      const colSpan = declaredSpan(cell.colSpan, 1, limits.maxCellsPerRow);
+      const rowSpan = Math.min(
+        declaredSpan(cell.rowSpan, 1, limits.maxRowsPerTable),
+        rowCount - cell.rowIndex,
+      );
+      for (let offset = 0; offset < rowSpan; offset++)
+        for (let width = 0; width < colSpan; width++) {
+          const key = `${cell.rowIndex + offset}:${column + width}`;
+          // Two cells claim this position: the declaration contradicts itself
+          // and no amount of guessing produces the author's table.
+          if (occupied.has(key)) return undefined;
+          occupied.add(key);
+        }
+      cells.push({
+        key: `${cell.rowIndex}:${column}`,
+        rowIndex: cell.rowIndex,
+        columnIndex: column,
+        header: cell.header,
+        colSpan,
+        rowSpan,
+        markedContentIds: cell.markedContentIds,
+      });
+      column += colSpan;
+    }
+    if (column > limits.maxCellsPerRow) return undefined;
+    columnCount = Math.max(columnCount, column);
+    rows.push(cells);
+  }
+  for (let rowIndex = 0; rowIndex < rowCount; rowIndex++)
+    for (let column = 0; column < columnCount; column++)
+      if (!occupied.has(`${rowIndex}:${column}`)) return undefined;
+  return { rows, columnCount };
+}
+
 export interface TaggedTableLayout {
   /**
-   * Retained marked-content ids per emittable table and cell key (`row:cell`).
-   * A table is absent when any cell lost all its text to cropping or furniture
-   * removal, so a half-understood table can never swallow part of its text.
+   * Grid positions per emittable table, in structure order. A table is absent
+   * when its declaration contradicts itself or a cell lost all its text to
+   * cropping or furniture removal, so a half-understood table can never
+   * swallow part of its text.
+   */
+  readonly placements: ReadonlyMap<string, TaggedTablePlacement>;
+  /**
+   * Retained marked-content ids per emittable table and grid position.
    */
   readonly complete: ReadonlyMap<
     string,
@@ -249,40 +357,42 @@ export interface TaggedTableLayout {
 export function layoutTaggedTables(
   tables: readonly TaggedTable[],
   retainedMarks: ReadonlySet<string>,
+  limits: TaggedTableLimits = DEFAULT_TAGGED_TABLE_LIMITS,
 ): TaggedTableLayout {
+  const placements = new Map<string, TaggedTablePlacement>();
   const complete = new Map<string, ReadonlyMap<string, readonly string[]>>();
   const captions = new Map<string, readonly string[]>();
   const marks = new Set<string>();
   let unresolved = 0;
   for (const table of tables) {
-    if (table.rows.length === 0) {
+    const placement = placeCells(table, limits);
+    if (!placement) {
       unresolved += 1;
       continue;
     }
     const cells = new Map<string, readonly string[]>();
     let dropped = false;
-    const columnCount = table.rows[0]!.cells.length;
-    if (table.rows.some((row) => row.cells.length !== columnCount)) {
-      // A ragged declaration cannot be turned into a grid without guessing how
-      // the missing cells were meant to span, so the text stays as paragraphs.
-      unresolved += 1;
-      continue;
-    }
-    table.rows.forEach((row, rowIndex) => {
-      if (dropped) return;
-      row.cells.forEach((cell, cellIndex) => {
-        if (dropped) return;
+    for (const row of placement.rows)
+      for (const cell of row) {
+        if (dropped) continue;
+        // A cell that declares no content at all is a blank cell, which is
+        // normal in a spreadsheet print. A cell that declares content the
+        // reader no longer has is a different matter: the table is not safe.
+        if (cell.markedContentIds.length === 0) {
+          cells.set(cell.key, []);
+          continue;
+        }
         const present = cell.markedContentIds.filter((mark) =>
           retainedMarks.has(mark),
         );
         if (present.length === 0) dropped = true;
-        else cells.set(`${rowIndex}:${cellIndex}`, present);
-      });
-    });
+        else cells.set(cell.key, present);
+      }
     if (dropped) {
       unresolved += 1;
       continue;
     }
+    placements.set(table.id, placement);
     complete.set(table.id, cells);
     const caption = table.captionMarkedContentIds.filter((mark) =>
       retainedMarks.has(mark),
@@ -291,7 +401,7 @@ export function layoutTaggedTables(
     for (const ids of cells.values()) for (const id of ids) marks.add(id);
     for (const id of caption) marks.add(id);
   }
-  return { complete, captions, marks, unresolved };
+  return { placements, complete, captions, marks, unresolved };
 }
 
 export interface TaggedTableBuild {
@@ -301,33 +411,33 @@ export interface TaggedTableBuild {
 }
 
 /**
- * Assemble the document-model table once every cell has its blocks. Returns
- * `undefined` when any cell has no blocks, keeping the all-or-nothing rule in
- * one place instead of in each caller.
+ * Assemble the document-model table from placed cells. Spans are emitted only
+ * because the source declared them, and a cell with no content stays an empty
+ * cell rather than becoming invented text.
  */
 export function buildTaggedTable(
-  table: TaggedTable,
-  cellBlocks: (rowIndex: number, columnIndex: number) => readonly unknown[],
+  placement: TaggedTablePlacement,
+  cellBlocks: (key: string) => readonly unknown[],
   captionBlocks: () => readonly unknown[] | undefined,
-): TaggedTableBuild | undefined {
+): TaggedTableBuild {
   const rows: { cells: unknown[] }[] = [];
-  for (const row of table.rows) {
+  for (const row of placement.rows) {
     const cells: unknown[] = [];
-    for (const cell of row.cells) {
-      const blocks = cellBlocks(cell.rowIndex, cell.columnIndex);
-      if (blocks.length === 0) return undefined;
-      cells.push(
-        blocks.length > 0
-          ? { blocks, ...(cell.header ? { header: true } : {}) }
-          : { blocks: [] as unknown[] },
-      );
+    for (const cell of row) {
+      const blocks = cellBlocks(cell.key);
+      cells.push({
+        blocks,
+        ...(cell.header ? { header: true } : {}),
+        ...(cell.colSpan > 1 ? { colSpan: cell.colSpan } : {}),
+        ...(cell.rowSpan > 1 ? { rowSpan: cell.rowSpan } : {}),
+      });
     }
     rows.push({ cells });
   }
   const caption = captionBlocks();
   return {
     rows,
-    columnCount: Math.max(...table.rows.map((row) => row.cells.length)),
+    columnCount: placement.columnCount,
     ...(caption && caption.length > 0 ? { caption } : {}),
   };
 }

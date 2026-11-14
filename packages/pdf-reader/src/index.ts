@@ -137,6 +137,10 @@ export interface RawPdfPage {
 export interface RawPdfStructureNode {
   role: string;
   markedContentId?: string;
+  /** Declared `/ColSpan` of a table cell, present only when greater than one. */
+  colSpan?: number;
+  /** Declared `/RowSpan` of a table cell, present only when greater than one. */
+  rowSpan?: number;
   children: RawPdfStructureNode[];
 }
 
@@ -1612,36 +1616,35 @@ async function linesToBlocks(
         : undefined;
       if (routedTable !== undefined) {
         let consumed = false;
+        const placement = taggedLayout.placements.get(routedTable.id);
         if (emittedTables.has(routedTable.id)) consumed = true;
-        else if (!failedTables.has(routedTable.id)) {
+        else if (placement && !failedTables.has(routedTable.id)) {
           const built = buildTaggedTable(
-            routedTable,
-            (row, cell) => taggedCellBlocks(routedTable.id, `${row}:${cell}`),
+            placement,
+            (key) => taggedCellBlocks(routedTable.id, key),
             () => taggedCellInlines(routedTable.id, TAGGED_TABLE_CAPTION_KEY),
           );
-          if (built) {
-            blocks.push({
-              type: 'table',
-              ...(built.caption
-                ? { caption: built.caption as InlineNode[] }
-                : {}),
-              rows: built.rows as TableNode['rows'],
-            });
-            tables.push({
-              page: page.number,
-              rows: routedTable.rows.length,
-              columns: built.columnCount,
-              source: 'tagged',
-              confidence: 'high',
-            });
-            emittedTables.add(routedTable.id);
-            consumed = true;
-          } else {
-            // The declared table could not be completed, so its text stays on
-            // the paragraph path rather than being swallowed by a half table.
-            failedTables.add(routedTable.id);
-            unresolvedTablePages.push(page.number);
-          }
+          blocks.push({
+            type: 'table',
+            ...(built.caption
+              ? { caption: built.caption as InlineNode[] }
+              : {}),
+            rows: built.rows as TableNode['rows'],
+          });
+          tables.push({
+            page: page.number,
+            rows: placement.rows.length,
+            columns: built.columnCount,
+            source: 'tagged',
+            confidence: 'high',
+          });
+          emittedTables.add(routedTable.id);
+          consumed = true;
+        } else if (!failedTables.has(routedTable.id)) {
+          // The declared table could not be placed on a grid, so its text stays
+          // on the paragraph path rather than being swallowed by a half table.
+          failedTables.add(routedTable.id);
+          unresolvedTablePages.push(page.number);
         }
         if (consumed) {
           previousLine = undefined;

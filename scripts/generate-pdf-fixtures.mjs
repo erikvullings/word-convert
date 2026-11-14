@@ -19,6 +19,7 @@ await save('one-column-book.pdf', await oneColumnBook());
 await save('two-column-article.pdf', await twoColumnArticle());
 await save('tagged-article.pdf', await taggedArticle());
 await save('tagged-table.pdf', await taggedTable());
+await save('tagged-table-spans.pdf', await taggedTableSpans());
 await save('scanned-page.pdf', await scannedPage());
 await save('formula-layouts.pdf', await formulaLayouts());
 await save('formula-false-positives.pdf', await formulaFalsePositives());
@@ -56,6 +57,14 @@ await writeFile(
         {
           file: 'tagged-article.pdf',
           covers: ['tagged structure', 'marked content'],
+        },
+        {
+          file: 'tagged-table-spans.pdf',
+          covers: [
+            'tagged structure',
+            'tagged table row span',
+            'tagged table column span',
+          ],
         },
         {
           file: 'tagged-table.pdf',
@@ -367,6 +376,114 @@ async function taggedTable() {
           firstRow.reference,
           secondRow.reference,
         ]),
+      ],
+    }),
+  );
+  root.set(PDFName.of('ParentTreeNextKey'), document.context.obj(1));
+  page.node.set(PDFName.of('StructParents'), document.context.obj(0));
+  document.catalog.set(PDFName.of('StructTreeRoot'), rootReference);
+  document.catalog.set(
+    PDFName.of('MarkInfo'),
+    document.context.obj({ Marked: true }),
+  );
+  document.catalog.set(PDFName.of('Lang'), PDFString.of('en'));
+  return document;
+}
+
+async function taggedTableSpans() {
+  const document = await baseDocument('Tagged Table Spans');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const bold = await document.embedFont(StandardFonts.TimesRomanBold);
+  const page = document.addPage([600, 800]);
+  // Declared spans live in the cell's `/A` attribute dictionary with `/O /Table`,
+  // which is what PDF.js reads into `rowSpan` and `colSpan`.
+  const cells = [
+    { text: 'Metric', x: 60, y: 700, font: bold, role: 'TH', rowSpan: 2 },
+    { text: 'Revenue', x: 300, y: 700, font: bold, role: 'TH' },
+    { text: 'Cost', x: 300, y: 676, font: bold, role: 'TH' },
+    {
+      text: 'Total revenue',
+      x: 60,
+      y: 652,
+      font: body,
+      role: 'TD',
+      colSpan: 2,
+    },
+  ];
+
+  for (const [markedContentId, cell] of cells.entries()) {
+    page.pushOperators(
+      PDFOperator.of('BDC', [
+        PDFName.of(cell.role),
+        document.context.obj({ MCID: markedContentId }),
+      ]),
+    );
+    page.drawText(cell.text, {
+      x: cell.x,
+      y: cell.y,
+      size: 12,
+      font: cell.font,
+    });
+    page.pushOperators(PDFOperator.of('EMC'));
+  }
+
+  const root = document.context.obj({ Type: 'StructTreeRoot', K: [] });
+  const rootReference = document.context.register(root);
+  const element = (role, parent, children, attributes = undefined) => {
+    const dict = document.context.obj({
+      Type: 'StructElem',
+      S: role,
+      Pg: page.ref,
+      K: [],
+    });
+    dict.set(PDFName.of('P'), parent);
+    if (attributes) dict.set(PDFName.of('A'), document.context.obj(attributes));
+    if (children !== undefined)
+      dict.set(PDFName.of('K'), document.context.obj(children));
+    return { dict, reference: document.context.register(dict) };
+  };
+  const table = element('Table', rootReference);
+  const tableBody = element('TBody', table.reference);
+  const rows = [
+    element('TR', tableBody.reference),
+    element('TR', tableBody.reference),
+    element('TR', tableBody.reference),
+  ];
+  const cellRows = [0, 0, 1, 2];
+  const cellElements = cells.map((cell, index) =>
+    element(cell.role, rows[cellRows[index]].reference, index, {
+      O: 'Table',
+      ...(cell.colSpan === undefined ? {} : { ColSpan: cell.colSpan }),
+      ...(cell.rowSpan === undefined ? {} : { RowSpan: cell.rowSpan }),
+    }),
+  );
+  rows[0].dict.set(
+    PDFName.of('K'),
+    document.context.obj([
+      cellElements[0].reference,
+      cellElements[1].reference,
+    ]),
+  );
+  rows[1].dict.set(
+    PDFName.of('K'),
+    document.context.obj([cellElements[2].reference]),
+  );
+  rows[2].dict.set(
+    PDFName.of('K'),
+    document.context.obj([cellElements[3].reference]),
+  );
+  tableBody.dict.set(
+    PDFName.of('K'),
+    document.context.obj(rows.map((row) => row.reference)),
+  );
+  table.dict.set(PDFName.of('K'), document.context.obj([tableBody.reference]));
+  root.set(PDFName.of('K'), document.context.obj([table.reference]));
+  root.set(
+    PDFName.of('ParentTree'),
+    document.context.obj({
+      Nums: [
+        0,
+        document.context.obj(cellElements.map((cell) => cell.reference)),
       ],
     }),
   );
