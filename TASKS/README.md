@@ -61,3 +61,28 @@ These improvements are intentionally outside the initial production path.
 ## Command-line distribution
 
 - [x] 0030 Add portable CLI and release bundles
+
+## calibre-inspired PDF to EPUB conversion
+
+Adopting the useful parts of calibre's `ebook-convert` transform stage. 0031 holds the
+option-by-option gap map, the adopted features, and the deliberately rejected ones; it is
+the decision record (completable on its own) and every subtask lists it in `Depends on:`,
+so accept it and set it `done` before starting any subtask. The only other hard sequences
+are 0033 → 0034 and 0036 → 0037. 0044 is the recommended first slice because the
+heuristic tasks need stage-level before/after evidence, and calibre (GPLv3) stays an
+offline comparison command only.
+
+- [ ] 0031 Adopt calibre-inspired PDF to EPUB conversion stages *(epic)*
+- [ ] 0032 Expose PDF crop furniture and image options in the CLI
+- [ ] 0033 Add median-length driven PDF line unwrapping with a tunable factor
+- [ ] 0034 Add document-wide PDF de-hyphenation *(needs 0033)*
+- [ ] 0035 Normalize PDF indents and remove fake page margins
+- [ ] 0036 Add configurable chapter detection marking and heading-run merging *(needs 0033)*
+- [ ] 0037 Build hierarchical filtered tables of contents for PDF books *(needs 0036)*
+- [ ] 0038 Add scene break blank paragraph and punctuation normalization
+- [ ] 0039 Add bounded user pattern rules for furniture and text cleanup
+- [ ] 0040 Complete publication metadata and add CLI overrides with a sidecar file
+- [ ] 0041 Split oversized EPUB chapters by content size
+- [ ] 0042 Add EPUB styling cover and navigation landmark output options *(cover: source needs 0043)*
+- [ ] 0043 Extract PDF image alt text captions and cover candidates
+- [ ] 0044 Add conversion pipeline stage dumps and verbosity levels
