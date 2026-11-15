@@ -294,7 +294,6 @@ export async function writeEpub(
   files['EPUB/package.opf'] = strToU8(
     packageXml(
       metadata,
-      model,
       chapters,
       assets,
       coverPath,
@@ -371,20 +370,57 @@ interface PublicationMetadata {
   title: string;
   language: string;
   modified: string;
+  subtitle?: string;
+  titleSort?: string;
+  authorSort?: string;
+  publisher?: string;
+  description?: string;
+  subjects: string[];
+  version?: string;
+  rights?: string;
+  sourceCreatedAt?: string;
+  sourceModifiedAt?: string;
+  publicationDate?: string;
+  conversionDate?: string;
+  isbn?: string;
+  series?: string;
+  seriesIndex?: number;
+  creators: { name: string; sortAs?: string; role?: string }[];
+  contributors: { name: string; sortAs?: string; role: string }[];
+  bookProducer?: string;
 }
 
 function resolveMetadata(
   model: DocumentModel,
   options: EpubWriterOptions,
 ): PublicationMetadata {
-  const identifier = options.identifier ?? model.metadata.identifier?.value;
-  const title = options.title ?? model.metadata.title?.value;
-  const language = options.language ?? model.metadata.language?.value;
-  const modified =
-    options.modified ?? normalizeModified(options.conversionDate);
+  const identifier = boundedText(
+    options.identifier ?? model.metadata.identifier?.value,
+    'identifier',
+    4096,
+  );
+  const title = boundedText(
+    options.title ?? model.metadata.title?.value,
+    'title',
+  );
+  const language = boundedText(
+    options.language ?? model.metadata.language?.value,
+    'language',
+    128,
+  );
+  let modified: string;
+  try {
+    modified = normalizeMetadataDate(
+      options.modified ?? options.conversionDate,
+    );
+  } catch {
+    throw new TypeError(
+      'EPUB modified timestamp must be UTC ISO 8601 with second precision.',
+    );
+  }
   if (!identifier?.trim()) throw new TypeError('EPUB identifier is required.');
   if (!title?.trim()) throw new TypeError('EPUB title is required.');
-  if (!language || !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(language))
+  if (!language || !isLanguageTag(language))
     throw new TypeError('EPUB language must be a valid BCP 47 language tag.');
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(modified))
     throw new TypeError(
@@ -395,15 +431,191 @@ function resolveMetadata(
     title: title.trim(),
     language,
     modified,
+    ...optionalText('subtitle', model.metadata.subtitle?.value, 'subtitle'),
+    ...optionalText('titleSort', model.metadata.titleSort?.value, 'title sort'),
+    ...optionalText(
+      'authorSort',
+      model.metadata.authorSort?.value,
+      'author sort',
+    ),
+    ...optionalText('publisher', model.metadata.publisher?.value, 'publisher'),
+    ...optionalText(
+      'description',
+      model.metadata.description?.value,
+      'description',
+      16_384,
+    ),
+    subjects: boundedList(
+      model.metadata.subjects.map(({ value }) => value),
+      'subject',
+      100,
+    ),
+    ...optionalText('version', model.metadata.version?.value, 'version'),
+    ...optionalText('rights', model.metadata.rights?.value, 'rights'),
+    ...optionalDate('sourceCreatedAt', model.metadata.sourceCreatedAt?.value),
+    ...optionalDate('sourceModifiedAt', model.metadata.sourceModifiedAt?.value),
+    ...optionalDate('publicationDate', model.metadata.publicationDate?.value),
+    ...optionalDate('conversionDate', model.metadata.conversionDate?.value),
+    ...optionalText('isbn', model.metadata.isbn?.value, 'ISBN', 64),
+    ...optionalText('series', model.metadata.series?.value, 'series'),
+    ...(model.metadata.seriesIndex
+      ? {
+          seriesIndex: boundedSeriesIndex(model.metadata.seriesIndex.value),
+        }
+      : {}),
+    creators: boundedList(
+      model.metadata.authors.map(({ value }) => value),
+      'author',
+      100,
+    ).map((author) => {
+      const role = marcRelator(author.role);
+      return {
+        name: boundedText(author.name, 'author name'),
+        ...optionalText('sortAs', author.sortAs, 'author sort'),
+        ...(role ? { role } : {}),
+      };
+    }),
+    contributors: boundedList(
+      model.metadata.contributors?.map(({ value }) => value) ?? [],
+      'contributor',
+      100,
+    ).map((contributor) => ({
+      name: boundedText(contributor.name, 'contributor name'),
+      ...optionalText('sortAs', contributor.sortAs, 'contributor sort'),
+      role: marcRelator(contributor.role) ?? 'ctb',
+    })),
+    ...optionalText(
+      'bookProducer',
+      model.metadata.bookProducer?.value,
+      'book producer',
+    ),
   };
 }
 
-function normalizeModified(value: string): string {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${value}T00:00:00Z`;
-  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?Z$/.exec(
-    value,
+function marcRelator(role: string | undefined): string | undefined {
+  if (!role) return undefined;
+  const aliases: Readonly<Record<string, string>> = {
+    author: 'aut',
+    editor: 'edt',
+    illustrator: 'ill',
+    translator: 'trl',
+    contributor: 'ctb',
+    'book producer': 'bkp',
+  };
+  const normalized = role.trim().toLowerCase();
+  return (
+    aliases[normalized] ??
+    (/^[a-z]{3}$/.test(normalized) ? normalized : undefined)
   );
-  return match?.[1] ? `${match[1]}Z` : value;
+}
+
+function optionalText<K extends string>(
+  field: K,
+  value: string | undefined,
+  label: string,
+  maxLength = 4096,
+): Partial<Record<K, string>> {
+  if (value === undefined || value.trim() === '') return {};
+  return { [field]: boundedText(value, label, maxLength) } as Partial<
+    Record<K, string>
+  >;
+}
+
+function boundedText(
+  value: string | undefined,
+  label: string,
+  maxLength = 4096,
+): string {
+  if (value === undefined) return '';
+  if (value.length > maxLength)
+    throw new TypeError(
+      `EPUB ${label} must be no longer than ${maxLength} characters.`,
+    );
+  return value.trim();
+}
+
+function boundedList<T>(
+  values: readonly T[],
+  label: string,
+  limit: number,
+): T[] {
+  if (values.length > limit)
+    throw new TypeError(
+      `EPUB metadata supports at most ${limit} ${label} values.`,
+    );
+  return [...values];
+}
+
+function boundedSeriesIndex(value: number): number {
+  if (!Number.isFinite(value) || value <= 0 || value > 1_000_000)
+    throw new TypeError(
+      'EPUB series index must be greater than 0 and at most 1000000.',
+    );
+  return value;
+}
+
+function optionalDate<K extends string>(
+  field: K,
+  value: string | undefined,
+): Partial<Record<K, string>> {
+  if (value === undefined || value.trim() === '') return {};
+  return { [field]: normalizeMetadataDate(value) } as Partial<
+    Record<K, string>
+  >;
+}
+
+function normalizeMetadataDate(value: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    if (!isValidCalendarDate(value))
+      throw new TypeError(
+        'EPUB dates must be valid ISO 8601 dates or timestamps.',
+      );
+    const date = new Date(`${value}T00:00:00Z`);
+    if (Number.isFinite(date.getTime())) return `${value}T00:00:00Z`;
+  } else {
+    const match =
+      /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(
+        value,
+      );
+    if (
+      !match ||
+      !isValidCalendarDate(match[1] ?? '') ||
+      Number(match[2]) > 23 ||
+      Number(match[3]) > 59 ||
+      Number(match[4]) > 59 ||
+      (match[6] !== undefined &&
+        (Number(match[6]) > 23 || Number(match[7]) > 59))
+    )
+      throw new TypeError(
+        'EPUB dates must be valid ISO 8601 dates or timestamps.',
+      );
+    const date = new Date(value);
+    if (Number.isFinite(date.getTime()))
+      return date.toISOString().slice(0, 19) + 'Z';
+  }
+  throw new TypeError('EPUB dates must be valid ISO 8601 dates or timestamps.');
+}
+
+function isValidCalendarDate(value: string): boolean {
+  const [yearText, monthText, dayText] = value.split('-');
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (year < 100) date.setUTCFullYear(year);
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function isLanguageTag(value: string): boolean {
+  try {
+    return Intl.getCanonicalLocales(value).length === 1;
+  } catch {
+    return false;
+  }
 }
 
 function splitChapters(
@@ -571,7 +783,6 @@ function containerXml(): string {
 
 function packageXml(
   metadata: PublicationMetadata,
-  model: DocumentModel,
   chapters: Chapter[],
   assets: AssetEntry[],
   coverPath: 'cover.png' | 'cover.svg' | undefined,
@@ -579,9 +790,78 @@ function packageXml(
   inlineTocPath: string | undefined,
   tocAtEnd: boolean,
 ): string {
-  const creators = model.metadata.authors
-    .map(({ value }) => `<dc:creator>${escapeXml(value.name)}</dc:creator>`)
+  const creators = metadata.creators
+    .map(({ name, sortAs }, index) => {
+      const id = `creator-${index + 1}`;
+      const sort = metadata.authorSort ?? sortAs;
+      const role = metadata.creators[index]?.role;
+      return `<dc:creator id="${id}">${escapeXml(name)}</dc:creator>${sort ? `<meta refines="#${id}" property="file-as">${escapeXml(sort)}</meta>` : ''}${role ? `<meta refines="#${id}" property="role" scheme="marc:relators">${escapeXml(role)}</meta>` : ''}`;
+    })
     .join('');
+  const contributors = metadata.contributors
+    .map(
+      ({ name, role, sortAs }, index) =>
+        `<dc:contributor id="contributor-${index + 1}">${escapeXml(name)}</dc:contributor>${sortAs ? `<meta refines="#contributor-${index + 1}" property="file-as">${escapeXml(sortAs)}</meta>` : ''}<meta refines="#contributor-${index + 1}" property="role" scheme="marc:relators">${escapeXml(role)}</meta>`,
+    )
+    .join('');
+  const bookProducer = metadata.bookProducer
+    ? `<dc:contributor id="book-producer">${escapeXml(metadata.bookProducer)}</dc:contributor><meta refines="#book-producer" property="role" scheme="marc:relators">bkp</meta>`
+    : '';
+  const dates = [
+    metadata.sourceCreatedAt
+      ? `<dc:date id="source-created">${escapeXml(metadata.sourceCreatedAt)}</dc:date><meta refines="#source-created" property="event">creation</meta>`
+      : '',
+    metadata.sourceModifiedAt
+      ? `<dc:date id="source-modified">${escapeXml(metadata.sourceModifiedAt)}</dc:date><meta refines="#source-modified" property="event">modification</meta>`
+      : '',
+    metadata.publicationDate
+      ? `<dc:date id="publication-date">${escapeXml(metadata.publicationDate)}</dc:date><meta refines="#publication-date" property="event">publication</meta>`
+      : '',
+    metadata.conversionDate
+      ? `<dc:date>${escapeXml(metadata.conversionDate)}</dc:date>`
+      : '',
+  ].join('');
+  const subtitle = metadata.subtitle
+    ? `<dc:title id="subtitle">${escapeXml(metadata.subtitle)}</dc:title><meta refines="#subtitle" property="title-type">subtitle</meta>`
+    : '';
+  const titleSort = metadata.titleSort
+    ? `<meta refines="#title" property="file-as">${escapeXml(metadata.titleSort)}</meta>`
+    : '';
+  const isbn = metadata.isbn
+    ? `<dc:identifier id="isbn-id">${escapeXml(metadata.isbn)}</dc:identifier><meta refines="#isbn-id" property="identifier-type" scheme="onix:codelist5">15</meta>`
+    : '';
+  const series = metadata.series
+    ? `<meta property="belongs-to-collection" id="series">${escapeXml(metadata.series)}</meta><meta refines="#series" property="collection-type">series</meta>${metadata.seriesIndex !== undefined ? `<meta refines="#series" property="group-position">${metadata.seriesIndex}</meta>` : ''}`
+    : '';
+  if (metadata.seriesIndex !== undefined && !metadata.series)
+    throw new TypeError('EPUB series index requires a series name.');
+  if (metadata.authorSort && metadata.creators.length === 0)
+    throw new TypeError('EPUB author sort requires at least one author.');
+  const subjects = metadata.subjects
+    .map((subject) => `<dc:subject>${escapeXml(subject)}</dc:subject>`)
+    .join('');
+  const additionalMetadata = [
+    subtitle,
+    titleSort,
+    metadata.publisher
+      ? `<dc:publisher>${escapeXml(metadata.publisher)}</dc:publisher>`
+      : '',
+    metadata.description
+      ? `<dc:description>${escapeXml(metadata.description)}</dc:description>`
+      : '',
+    subjects,
+    metadata.version
+      ? `<meta property="dcterms:hasVersion">${escapeXml(metadata.version)}</meta>`
+      : '',
+    metadata.rights
+      ? `<dc:rights>${escapeXml(metadata.rights)}</dc:rights>`
+      : '',
+    dates,
+    isbn,
+    series,
+    contributors,
+    bookProducer,
+  ].join('');
   const chapterProperties = hasSourceMathml ? ' properties="mathml"' : '';
   const chapterItems = chapters
     .map(
@@ -607,7 +887,7 @@ function packageXml(
     ? `<item id="cover-image" href="${coverPath}" media-type="${coverPath === 'cover.png' ? 'image/png' : 'image/svg+xml'}" properties="cover-image"/><item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>`
     : '';
   const coverSpine = coverPath ? '<itemref idref="cover-page"/>' : '';
-  return `<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${escapeAttribute(metadata.language)}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${escapeXml(metadata.identifier)}</dc:identifier><dc:title>${escapeXml(metadata.title)}</dc:title><dc:language>${escapeXml(metadata.language)}</dc:language>${creators}<meta property="dcterms:modified">${metadata.modified}</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="styles" href="styles.css" media-type="text/css"/>${coverItems}<item id="title-page" href="title.xhtml" media-type="application/xhtml+xml"/>${inlineTocItem}${chapterItems}${assetItems}</manifest><spine>${coverSpine}<itemref idref="title-page"/>${contentsSpine}</spine></package>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${escapeAttribute(metadata.language)}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${escapeXml(metadata.identifier)}</dc:identifier><dc:title id="title">${escapeXml(metadata.title)}</dc:title><dc:language>${escapeXml(metadata.language)}</dc:language>${creators}${additionalMetadata}<meta property="dcterms:modified">${escapeXml(metadata.modified)}</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="styles" href="styles.css" media-type="text/css"/>${coverItems}<item id="title-page" href="title.xhtml" media-type="application/xhtml+xml"/>${inlineTocItem}${chapterItems}${assetItems}</manifest><spine>${coverSpine}<itemref idref="title-page"/>${contentsSpine}</spine></package>`;
 }
 
 function coverXhtml(

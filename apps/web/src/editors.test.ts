@@ -4,7 +4,9 @@ import {
   acceptHighConfidenceMappings,
   exportStylePreset,
   importStylePreset,
+  setContributors,
   setMetadataField,
+  setSeriesIndex,
   parseAuthors,
   updateAuthor,
 } from './editors.ts';
@@ -140,5 +142,24 @@ describe('metadata editor state', () => {
       provenance: { method: 'user', confidence: 'certain' },
     });
     expect(edited.conversionDate).toEqual(model.metadata.conversionDate);
+  });
+
+  it('round-trips series and contributor edits with user provenance', () => {
+    const series = setMetadataField(model.metadata, 'series', 'Field Notes');
+    const indexed = setSeriesIndex(series, '2.5');
+    const edited = setContributors(indexed, ['Editor One']);
+
+    expect(edited.series).toMatchObject({
+      value: 'Field Notes',
+      provenance: { method: 'user', confidence: 'certain' },
+    });
+    expect(edited.seriesIndex).toMatchObject({
+      value: 2.5,
+      provenance: { method: 'user', confidence: 'certain' },
+    });
+    expect(edited.contributors?.[0]).toMatchObject({
+      value: { name: 'Editor One', role: 'ctb' },
+      provenance: { method: 'user', confidence: 'certain' },
+    });
   });
 });

@@ -87,7 +87,14 @@ export interface DocumentMetadata {
   publicationDate?: InferredValue<string>;
   conversionDate: InferredValue<string>;
   identifier?: InferredValue<string>;
+  isbn?: InferredValue<string>;
   rights?: InferredValue<string>;
+  titleSort?: InferredValue<string>;
+  authorSort?: InferredValue<string>;
+  series?: InferredValue<string>;
+  seriesIndex?: InferredValue<number>;
+  contributors?: InferredValue<Person>[];
+  bookProducer?: InferredValue<string>;
 }
 
 export interface TextInline {

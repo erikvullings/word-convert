@@ -51,6 +51,14 @@ import {
   createPipelineDebugDump,
   PipelineDebugUsageError,
 } from './pipeline-debug.ts';
+import {
+  applyMetadataSidecar,
+  isValidIsbn,
+  MAX_METADATA_FILE_BYTES,
+  normalizeIsoDate,
+  normalizeLanguageTag,
+  parseMetadataSidecar,
+} from './metadata-sidecar.ts';
 
 const FORMATS = [
   'html',
@@ -96,12 +104,32 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --toc-inline             Add a visible contents page/section
       --toc-at-end             Place visible contents after book content
       --title <text>           Override inferred title
+      --subtitle <text>        Override subtitle
+      --title-sort <text>      EPUB title sort value
       --author <name>          Override authors (repeat for multiple authors)
-      --cover <path>           Use a JPEG, PNG, WebP, or SVG EPUB cover image
+      --author-sort <text>     EPUB author sort value
+      --publisher <text>       Override publisher
+      --description <text>     Override description
+      --subject <text>         Add a subject (repeatable)
+      --book-version <text>    Override publication version
+      --rights <text>          Override rights statement
+      --series <text>          Override series name
+      --series-index <number>  Series position, greater than 0
+      --contributor <name>     Add a contributor (repeatable)
+      --book-producer <name>   Book producer contributor
+      --source-created-at <ISO> Original document creation date
+      --source-modified-at <ISO> Original document modification date
+      --pubdate <ISO>          Publication date (ISO 8601 date or timestamp)
+      --isbn <number>          ISBN-10 or ISBN-13; warns on checksum errors
+      --strict-isbn            Reject ISBNs with an invalid checksum
+      --metadata <path>        Bounded v1 JSON sidecar; CLI > sidecar > reader > defaults
+      --cover <path>           Bounded JPEG/PNG/WebP or sanitized SVG cover;
+                               keeps cover-image declaration and semantic title page
       --frontpage-cover        Use the first PDF page as the EPUB cover and omit
                                its images from the body
       --language <tag>         Override language; missing/invalid document tag defaults to en
       --identifier <text>      Override publication identifier
+      --conversion-date <ISO>  Fixed conversion/package-modified date
       --formula-mode <mode>   source, mathml, katex, disabled
                               Default: mathml for EPUB, source otherwise
       --max-image-size <px>   Longest image edge in EPUB output; larger JPEG/PNG/WebP
@@ -110,7 +138,6 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --image-quality <1-100> EPUB JPEG/WebP quality (default 80)
       --split-chapters        EPUB input: split at chapter headings (opt-in)
                               A missing TOC is generated automatically
-      --conversion-date <ISO>  Fixed date or UTC timestamp for reproducible output
       --debug-pipeline <dir>   Write bounded, privacy-sensitive stage artifacts
       --debug-pipeline-assets  Include exact stage-4 writer assets; requires --debug-pipeline
       --verbose                Repeat up to twice for stage timings and options
@@ -151,6 +178,11 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --offline               Never use the network; missing cached models are errors
       --model-cache-dir <dir>  Override OS model cache directory
       --clear-model-cache     Delete only managed cached models, then exit
+
+Metadata sidecars are UTF-8 JSON, at most 32768 bytes, with no unknown keys:
+{"schema":"wordconvert.metadata","version":1,"metadata":{"title":"Title","titleSort":"Title sort","subtitle":"Subtitle","authors":["Author"],"authorSort":"Author sort","language":"en","publisher":"Publisher","description":"Description","subjects":["Subject"],"version":"2.0","rights":"Rights","identifier":"urn:id","isbn":"9780306406157","sourceCreatedAt":"2020-01-02","sourceModifiedAt":"2021-02-03","publicationDate":"2022-03-04","series":"Series","seriesIndex":1,"contributors":["Editor"],"bookProducer":"Producer"}}
+String fields are limited to 16384 characters; lists hold at most 100 strings.
+Dates and BCP 47 languages are validated. --conversion-date is not a sidecar field.
   -h, --help                  Show this help
   -v, --version               Show version
 
@@ -396,11 +428,29 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       throw new UsageError(
         'Conversion date must be a valid ISO date or UTC timestamp.',
       );
-    if (
-      values.language &&
-      !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(values.language)
-    )
-      throw new UsageError('Language must be a valid BCP 47 language tag.');
+    if (values.language) {
+      try {
+        values.language = normalizeLanguageTag(values.language);
+      } catch {
+        throw new UsageError('Language must be a valid BCP 47 language tag.');
+      }
+    }
+    const publicationDate =
+      values.pubdate !== undefined
+        ? normalizeCliDate(values.pubdate, '--pubdate')
+        : undefined;
+    const sourceCreatedAt =
+      values['source-created-at'] !== undefined
+        ? normalizeCliDate(values['source-created-at'], '--source-created-at')
+        : undefined;
+    const sourceModifiedAt =
+      values['source-modified-at'] !== undefined
+        ? normalizeCliDate(values['source-modified-at'], '--source-modified-at')
+        : undefined;
+    const seriesIndex =
+      values['series-index'] !== undefined
+        ? parseSeriesIndex(values['series-index'])
+        : undefined;
     const sceneBreaks = parseToggle(
       values['scene-breaks'],
       true,
@@ -433,8 +483,20 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     };
     for (const text of [
       values.title,
+      values.subtitle,
+      values['title-sort'],
+      values['author-sort'],
+      values.publisher,
+      values.description,
+      values['book-version'],
+      values.rights,
+      values.series,
+      values['book-producer'],
+      values.isbn,
       values.identifier,
       ...(values.author ?? []),
+      ...(values.subject ?? []),
+      ...(values.contributor ?? []),
     ])
       if (text !== undefined && !text.trim())
         throw new UsageError('Metadata overrides must not be empty.');
@@ -529,6 +591,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     if (output !== '-') {
       await protectSource(input, output);
       if (presetPath) await protectSource(presetPath, output);
+      if (values.metadata) await protectSource(values.metadata, output);
       if (values.cover) await protectSource(values.cover, output);
       if (values['search-replace'])
         await protectSource(values['search-replace'], output);
@@ -539,6 +602,9 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
           await protectSource(join(values['formula-model-dir'], file), output);
     }
     let stylePreset: Record<string, StyleMapping> | undefined;
+    const metadataSidecar = values.metadata
+      ? await loadMetadataSidecar(values.metadata)
+      : undefined;
     if (presetPath) {
       const preset = importStylePreset(
         new TextDecoder().decode(await readBounded(presetPath, 1024 * 1024)),
@@ -899,34 +965,96 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         return 0;
       }
     }
-    if (values.title !== undefined)
-      model.metadata.title = userValue(values.title);
-    if (values.language !== undefined)
-      model.metadata.language = userValue(values.language);
-    else if (
-      !model.metadata.language?.value ||
-      !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(
-        model.metadata.language.value,
-      )
-    ) {
-      model.metadata.language = {
-        value: 'en',
-        provenance: {
-          source: 'CLI default language',
-          method: 'default',
-          confidence: 'low',
-          reason:
-            'Document language is missing or invalid; override with --language.',
-        },
-      };
-      io.stderr(
-        'warning: Document language is missing or invalid; using en. Override with --language if needed.\n',
+    if (metadataSidecar)
+      model.metadata = applyMetadataSidecar(model.metadata, metadataSidecar);
+    for (const [option, field] of [
+      ['title', 'title'],
+      ['subtitle', 'subtitle'],
+      ['title-sort', 'titleSort'],
+      ['author-sort', 'authorSort'],
+      ['language', 'language'],
+      ['publisher', 'publisher'],
+      ['description', 'description'],
+      ['book-version', 'version'],
+      ['rights', 'rights'],
+      ['series', 'series'],
+      ['book-producer', 'bookProducer'],
+      ['identifier', 'identifier'],
+      ['isbn', 'isbn'],
+    ] as const) {
+      const value = values[option];
+      if (value !== undefined)
+        Object.assign(model.metadata, { [field]: userValue(value) });
+    }
+    if (publicationDate !== undefined)
+      model.metadata.publicationDate = userValue(publicationDate);
+    if (sourceCreatedAt !== undefined)
+      model.metadata.sourceCreatedAt = userValue(sourceCreatedAt);
+    if (sourceModifiedAt !== undefined)
+      model.metadata.sourceModifiedAt = userValue(sourceModifiedAt);
+    if (seriesIndex !== undefined)
+      model.metadata.seriesIndex = userValue(seriesIndex);
+    if (values.subject !== undefined)
+      model.metadata.subjects = values.subject.map((subject) =>
+        userValue(subject),
+      );
+    const authorSort = values['author-sort'];
+    if (values.author !== undefined)
+      model.metadata.authors = values.author.map((name) =>
+        userValue({
+          name,
+          ...(authorSort !== undefined ? { sortAs: authorSort } : {}),
+        }),
+      );
+    else if (authorSort !== undefined) {
+      model.metadata.authors = model.metadata.authors.map(({ value }) =>
+        userValue({ ...value, sortAs: authorSort }),
       );
     }
-    if (values.identifier !== undefined)
-      model.metadata.identifier = userValue(values.identifier);
-    if (values.author !== undefined)
-      model.metadata.authors = values.author.map((name) => userValue({ name }));
+    if (values.contributor !== undefined)
+      model.metadata.contributors = values.contributor.map((name) =>
+        userValue({ name, role: 'ctb' }),
+      );
+    if (values.language === undefined) {
+      try {
+        const language = model.metadata.language?.value;
+        if (!language) throw new RangeError();
+        const normalized = normalizeLanguageTag(language);
+        if (normalized !== language && model.metadata.language)
+          model.metadata.language = {
+            ...model.metadata.language,
+            value: normalized,
+          };
+      } catch {
+        model.metadata.language = {
+          value: 'en',
+          provenance: {
+            source: 'CLI default language',
+            method: 'default',
+            confidence: 'low',
+            reason:
+              'Document language is missing or invalid; override with --language.',
+          },
+        };
+        io.stderr(
+          'warning: Document language is missing or invalid; using en. Override with --language if needed.\n',
+        );
+      }
+    }
+    const isbn = model.metadata.isbn?.value;
+    if (isbn && !isValidIsbn(isbn)) {
+      const message =
+        'ISBN checksum is invalid; verify the ISBN-10 or ISBN-13 value.';
+      if (values['strict-isbn']) throw new UsageError(message);
+      io.stderr(`warning: ${message}\n`);
+    }
+    if (
+      model.metadata.seriesIndex !== undefined &&
+      !model.metadata.series?.value.trim()
+    )
+      throw new UsageError('--series-index requires a series name.');
+    if (model.metadata.authorSort && model.metadata.authors.length === 0)
+      throw new UsageError('--author-sort requires at least one author.');
     const cover = values.cover
       ? await readCover(values.cover, model)
       : undefined;
@@ -987,7 +1115,25 @@ function parseArguments(argv: string[]) {
         force: { type: 'boolean' },
         'style-preset': { type: 'string' },
         title: { type: 'string' },
+        subtitle: { type: 'string' },
+        'title-sort': { type: 'string' },
+        'author-sort': { type: 'string' },
         author: { type: 'string', multiple: true },
+        publisher: { type: 'string' },
+        description: { type: 'string' },
+        subject: { type: 'string', multiple: true },
+        'book-version': { type: 'string' },
+        rights: { type: 'string' },
+        series: { type: 'string' },
+        'series-index': { type: 'string' },
+        contributor: { type: 'string', multiple: true },
+        'book-producer': { type: 'string' },
+        'source-created-at': { type: 'string' },
+        'source-modified-at': { type: 'string' },
+        pubdate: { type: 'string' },
+        isbn: { type: 'string' },
+        'strict-isbn': { type: 'boolean' },
+        metadata: { type: 'string' },
         cover: { type: 'string' },
         'frontpage-cover': { type: 'boolean' },
         'crop-top': { type: 'string' },
@@ -1221,6 +1367,41 @@ function isIsoDate(value: string): boolean {
     date.toISOString().slice(0, 19) ===
       (value.length === 10 ? `${value}T00:00:00` : value.slice(0, 19))
   );
+}
+
+function normalizeCliDate(value: string, option: string): string {
+  try {
+    return normalizeIsoDate(value);
+  } catch {
+    throw new UsageError(
+      `${option} must be a valid ISO 8601 date or timestamp.`,
+    );
+  }
+}
+
+function parseSeriesIndex(value: string): number {
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value))
+    throw new UsageError(
+      '--series-index must be a positive number no greater than 1000000.',
+    );
+  const index = Number(value);
+  if (!Number.isFinite(index) || index <= 0 || index > 1_000_000)
+    throw new UsageError(
+      '--series-index must be a positive number no greater than 1000000.',
+    );
+  return index;
+}
+
+async function loadMetadataSidecar(path: string) {
+  try {
+    return parseMetadataSidecar(
+      await readBounded(path, MAX_METADATA_FILE_BYTES),
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'could not be read.';
+    throw new UsageError(`Invalid metadata sidecar: ${message}`);
+  }
 }
 
 function userValue<T>(value: T): InferredValue<T> {

@@ -1,6 +1,6 @@
 # 0040 Complete publication metadata and add CLI overrides with a sidecar file
 
-Status: open
+Status: done
 Priority: medium
 Owner: unassigned
 Agent: pi

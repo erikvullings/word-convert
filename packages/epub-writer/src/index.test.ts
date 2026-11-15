@@ -408,7 +408,9 @@ describe('writeEpub', () => {
     expect(opf).toContain(
       '<dc:identifier id="pub-id">urn:uuid:12345678-1234-1234-1234-123456789abc</dc:identifier>',
     );
-    expect(opf).toContain('<dc:title>A &lt;safe&gt; title</dc:title>');
+    expect(opf).toContain(
+      '<dc:title id="title">A &lt;safe&gt; title</dc:title>',
+    );
     expect(opf).toContain('<dc:language>nl-NL</dc:language>');
     expect(opf).toContain(
       '<meta property="dcterms:modified">2026-07-15T08:30:00Z</meta>',
@@ -419,10 +421,151 @@ describe('writeEpub', () => {
     expect(strFromU8(files['EPUB/title.xhtml'] ?? new Uint8Array())).toContain(
       '<h1>A &lt;safe&gt; title</h1>',
     );
+    expect(opf).not.toContain('<dc:publisher>');
+    expect(opf).not.toContain('<dc:subject>');
+    expect(opf).not.toContain('belongs-to-collection');
     expect(output[8]).toBe(0);
     expect(output[9]).toBe(0);
     const firstNameLength = (output[26] ?? 0) | ((output[27] ?? 0) << 8);
     expect(strFromU8(output.slice(30, 30 + firstNameLength))).toBe('mimetype');
+  });
+
+  it('emits all populated publication metadata with EPUB 3 refinements', async () => {
+    const input = model();
+    const provenance = {
+      source: 'test',
+      method: 'user' as const,
+      confidence: 'certain' as const,
+    };
+    input.metadata = {
+      title: { value: 'A <title>', provenance },
+      titleSort: { value: 'Title, A', provenance },
+      subtitle: { value: 'A subtitle', provenance },
+      authors: [
+        {
+          value: { name: 'Ada & Grace', sortAs: 'Example, Ada' },
+          provenance,
+        },
+      ],
+      authorSort: { value: 'Example, Ada', provenance },
+      language: { value: 'en-GB', provenance },
+      publisher: { value: 'Press & Co', provenance },
+      description: { value: 'A <description>', provenance },
+      subjects: [
+        { value: 'History & culture', provenance },
+        { value: 'Research', provenance },
+      ],
+      version: { value: '2.1', provenance },
+      sourceCreatedAt: { value: '2020-01-02', provenance },
+      sourceModifiedAt: { value: '2021-02-03T04:05:06Z', provenance },
+      publicationDate: { value: '2022-03-04', provenance },
+      conversionDate: { value: '2026-07-15', provenance },
+      identifier: { value: 'urn:test:book', provenance },
+      isbn: { value: '9780306406157', provenance },
+      rights: { value: 'Copyright & permissions', provenance },
+      series: { value: 'Field Notes', provenance },
+      seriesIndex: { value: 2.5, provenance },
+      contributors: [
+        {
+          value: { name: 'Editor One', role: 'edt' },
+          provenance,
+        },
+      ],
+      bookProducer: { value: 'Studio One', provenance },
+    };
+    const files = unzipSync(
+      await writeEpub(input, {
+        conversionDate: '2026-07-15',
+        identifier: 'urn:test:book',
+        title: 'A <title>',
+        language: 'en-GB',
+      }),
+    );
+    const opf = strFromU8(files['EPUB/package.opf'] ?? new Uint8Array());
+
+    expect(opf).toContain('<dc:title id="title">A &lt;title&gt;</dc:title>');
+    expect(opf).toContain(
+      '<meta refines="#title" property="file-as">Title, A</meta>',
+    );
+    expect(opf).toContain(
+      '<dc:title id="subtitle">A subtitle</dc:title><meta refines="#subtitle" property="title-type">subtitle</meta>',
+    );
+    expect(opf).toContain(
+      '<dc:creator id="creator-1">Ada &amp; Grace</dc:creator>',
+    );
+    expect(opf).toContain(
+      '<meta refines="#creator-1" property="file-as">Example, Ada</meta>',
+    );
+    expect(opf).toContain('<dc:publisher>Press &amp; Co</dc:publisher>');
+    expect(opf).toContain(
+      '<dc:description>A &lt;description&gt;</dc:description>',
+    );
+    expect(opf.match(/<dc:subject>/g)).toHaveLength(2);
+    expect(opf).toContain('<meta property="dcterms:hasVersion">2.1</meta>');
+    expect(opf).toContain(
+      '<dc:date id="source-created">2020-01-02T00:00:00Z</dc:date><meta refines="#source-created" property="event">creation</meta>',
+    );
+    expect(opf).toContain(
+      '<dc:date id="source-modified">2021-02-03T04:05:06Z</dc:date><meta refines="#source-modified" property="event">modification</meta>',
+    );
+    expect(opf).toContain(
+      '<dc:date id="publication-date">2022-03-04T00:00:00Z</dc:date><meta refines="#publication-date" property="event">publication</meta>',
+    );
+    expect(opf).toContain('<dc:date>2026-07-15T00:00:00Z</dc:date>');
+    expect(opf).toContain(
+      '<dc:identifier id="isbn-id">9780306406157</dc:identifier><meta refines="#isbn-id" property="identifier-type" scheme="onix:codelist5">15</meta>',
+    );
+    expect(opf).toContain('<dc:rights>Copyright &amp; permissions</dc:rights>');
+    expect(opf).toContain(
+      '<meta property="belongs-to-collection" id="series">Field Notes</meta><meta refines="#series" property="collection-type">series</meta><meta refines="#series" property="group-position">2.5</meta>',
+    );
+    expect(opf).toContain(
+      '<meta refines="#contributor-1" property="role" scheme="marc:relators">edt</meta>',
+    );
+    expect(opf).toContain(
+      '<meta refines="#book-producer" property="role" scheme="marc:relators">bkp</meta>',
+    );
+    expect(opf).toContain(
+      '<meta property="dcterms:modified">2026-07-15T00:00:00Z</meta>',
+    );
+  });
+
+  it('rejects unbounded metadata and a series index without a series', async () => {
+    const input = model();
+    input.metadata.publisher = {
+      value: 'x'.repeat(4097),
+      provenance: {
+        source: 'test',
+        method: 'user',
+        confidence: 'certain',
+      },
+    };
+    await expect(
+      writeEpub(input, {
+        conversionDate: '2026-07-15',
+        identifier: 'urn:test',
+        title: 'Book',
+        language: 'en',
+      }),
+    ).rejects.toThrow('no longer than');
+
+    input.metadata.publisher = undefined;
+    input.metadata.seriesIndex = {
+      value: 1,
+      provenance: {
+        source: 'test',
+        method: 'user',
+        confidence: 'certain',
+      },
+    };
+    await expect(
+      writeEpub(input, {
+        conversionDate: '2026-07-15',
+        identifier: 'urn:test',
+        title: 'Book',
+        language: 'en',
+      }),
+    ).rejects.toThrow('series index requires a series name');
   });
 
   it('keeps preamble with the first chapter and splits only after substantive sections', async () => {
@@ -665,7 +808,9 @@ describe('writeEpub', () => {
     expect(chapter).toContain('epub:type="footnote"');
     expect(chapter).toContain('<figcaption>Caption</figcaption>');
     expect(opf).toContain('href="images/image-001.png" media-type="image/png"');
-    expect(opf).toContain('<dc:creator>Jane &amp; John</dc:creator>');
+    expect(opf).toContain(
+      '<dc:creator id="creator-1">Jane &amp; John</dc:creator>',
+    );
   });
 
   it('is deterministic and excludes active content, remote URLs, unsafe SVG, and undeclared resources', async () => {

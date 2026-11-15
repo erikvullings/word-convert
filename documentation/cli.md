@@ -172,6 +172,86 @@ to the document. This option requires PDF input, EPUB output, and the native
 runtime even when `--no-layout` is set. The two cover options cannot be combined,
 and existing EPUB input remains optimization-only.
 
+## Publication metadata
+
+The following options override reader-inferred values for semantic conversions:
+
+| Option | Value |
+| --- | --- |
+| `--title <text>` / `--subtitle <text>` | Main title and subtitle |
+| `--title-sort <text>` / `--author-sort <text>` | EPUB title and creator file-as values |
+| Repeat `--author <name>` | Replace the author list |
+| `--language <tag>` | Valid BCP 47 language tag |
+| `--publisher <text>` / `--description <text>` / repeat `--subject <text>` | Publisher, description, and subjects |
+| `--book-version <text>` / `--rights <text>` | Publication version and rights statement |
+| `--identifier <text>` / `--isbn <number>` | Package identifier and a separate ISBN-10/ISBN-13 identifier |
+| `--source-created-at <ISO>` / `--source-modified-at <ISO>` / `--pubdate <ISO>` | Source creation, source modification, and publication dates |
+| `--series <name>` / `--series-index <number>` | Collection name and positive position (maximum 1,000,000); an index requires a series |
+| Repeat `--contributor <name>` / `--book-producer <name>` | Contributors and the book producer |
+| `--metadata <file>` | Read a version 1 JSON metadata sidecar |
+| `--conversion-date <ISO>` | Existing option: conversion date and default package modification date |
+| `--strict-isbn` | Fail instead of warning when an ISBN checksum is invalid |
+
+Dates accept an ISO 8601 date or timezone-qualified timestamp and normalize to
+UTC second precision for EPUB output. Language tags are validated and
+canonicalized as BCP 47. ISBN-10 and ISBN-13 checksums are checked; a bad
+checksum is retained with a warning unless `--strict-isbn` is present.
+
+The sidecar is UTF-8 JSON with a maximum size of 32 KiB. It accepts no unknown
+keys, markup, file paths, asset data, or remote URLs. Its shape is:
+
+```json
+{
+  "schema": "wordconvert.metadata",
+  "version": 1,
+  "metadata": {
+    "title": "Field guide",
+    "titleSort": "Field guide",
+    "subtitle": "A practical reference",
+    "authors": ["Ada Example"],
+    "authorSort": "Example, Ada",
+    "language": "en-GB",
+    "publisher": "Example Press",
+    "description": "A short description.",
+    "subjects": ["Reference", "Field work"],
+    "version": "2.0",
+    "rights": "Copyright Example Press",
+    "identifier": "urn:example:field-guide",
+    "isbn": "9780306406157",
+    "sourceCreatedAt": "2022-01-02",
+    "sourceModifiedAt": "2023-02-03",
+    "publicationDate": "2024-03-04",
+    "series": "Field guides",
+    "seriesIndex": 2,
+    "contributors": ["Editor One"],
+    "bookProducer": "Example Studio"
+  }
+}
+```
+
+The `metadata` object may contain any subset of the listed fields. Strings are
+bounded to 16,384 characters, arrays contain at most 100 non-empty strings, and
+`seriesIndex` must be greater than zero and at most 1,000,000. Dates and
+language tags are validated before conversion. `conversionDate` is intentionally
+not a sidecar field: set it with `--conversion-date` to keep reproducible build
+settings explicit. The precedence is **CLI flag > sidecar > reader inference >
+filename/derived defaults**, applied independently per field; repeatable CLI
+`--subject` and `--author` values replace the sidecar list when supplied.
+
+EPUB output uses Dublin Core elements for publisher, description, subjects,
+rights, creators, contributors, and dates. Date refinements identify creation,
+modification, and publication; the conversion date is also emitted as a `dc:date`,
+while the required `dcterms:modified` remains independently controlled by
+`--conversion-date`/the writer option and does not follow the fixed ZIP timestamp.
+ISBN is an additional `dc:identifier` qualified with EPUB 3's
+`identifier-type`/`onix:codelist5` refinement. Series uses
+`belongs-to-collection`, `collection-type`, and `group-position`; the book
+producer is a contributor with the MARC `bkp` role.
+
+`--cover <path>` is separate from the metadata sidecar and continues through the
+bounded, signature-checked cover generator. The generated `cover-image`
+declaration is retained, and the semantic XHTML title page remains in the spine.
+
 ## Shrink an existing EPUB
 
 ```sh

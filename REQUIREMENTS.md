@@ -247,8 +247,10 @@ Extract candidate metadata from:
 Extract and display editable fields for:
 
 - title;
+- title sort value;
 - subtitle;
 - one or more authors;
+- author sort value;
 - language;
 - publisher;
 - description;
@@ -256,6 +258,9 @@ Extract and display editable fields for:
 - version;
 - rights;
 - identifier;
+- ISBN;
+- series and series index;
+- contributors and book producer;
 - original document creation date;
 - original document modification date;
 - publication date;
@@ -272,6 +277,10 @@ Show the provenance and confidence of every inferred metadata field so users can
 Support multiple authors as structured entries rather than one comma-separated string.
 
 Generate valid EPUB metadata, including the required package identifier, title, language and modified timestamp.
+
+Emit populated metadata using EPUB 3 Dublin Core elements and refinements,
+including separate source creation, source modification, publication, and
+conversion dates. ISBN identifiers use the EPUB 3 `identifier-type` refinement.
 
 ## Markdown output
 

@@ -16,7 +16,7 @@ export {
 
 export type EditableMetadataField = Exclude<
   keyof DocumentMetadata,
-  'authors' | 'subjects'
+  'authors' | 'subjects' | 'contributors' | 'seriesIndex'
 >;
 
 const USER_PROVENANCE = {
@@ -65,6 +65,34 @@ export function setSubjects(
       .filter(Boolean)
       .map(userValue),
   };
+}
+
+export function setContributors(
+  metadata: DocumentMetadata,
+  values: readonly string[],
+): DocumentMetadata {
+  return {
+    ...metadata,
+    contributors: values
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((name) => userValue({ name, role: 'ctb' })),
+  };
+}
+
+export function setSeriesIndex(
+  metadata: DocumentMetadata,
+  value: string,
+): DocumentMetadata {
+  const next = { ...metadata };
+  if (value.trim() === '') {
+    delete next.seriesIndex;
+    return next;
+  }
+  const index = Number(value);
+  if (!Number.isFinite(index) || index <= 0 || index > 1_000_000) return next;
+  next.seriesIndex = userValue(index);
+  return next;
 }
 
 export function parseAuthors(value: string): Person[] {

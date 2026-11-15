@@ -202,6 +202,7 @@ export interface RawPdfMetadata {
   author?: string;
   subject?: string;
   keywords?: string[];
+  producer?: string;
   language?: string;
   createdAt?: string;
   modifiedAt?: string;
@@ -4649,6 +4650,14 @@ function metadata(
     ...(raw.metadata.language
       ? {
           language: value(raw.metadata.language, extracted('catalog:Lang')),
+        }
+      : {}),
+    ...(raw.metadata.producer
+      ? {
+          bookProducer: value(
+            raw.metadata.producer,
+            extracted('document-info:Producer'),
+          ),
         }
       : {}),
     ...(raw.metadata.subject

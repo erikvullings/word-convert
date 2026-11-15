@@ -40,6 +40,14 @@ describe('PDF XMP metadata extraction', () => {
       expect(model.metadata.authors).toEqual([]);
       expect(raw.metadata.title).toBe('XMP book');
       expect(raw.metadata.language).toBe('en');
+      expect(model.metadata.bookProducer).toMatchObject({
+        value: 'WordConvert test',
+        provenance: {
+          source: 'pdf-metadata',
+          location: 'document-info:Producer',
+          method: 'extracted',
+        },
+      });
     },
   );
 

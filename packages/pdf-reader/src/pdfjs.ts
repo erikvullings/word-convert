@@ -3099,12 +3099,15 @@ async function readMetadata(
     .map((keyword) => keyword.trim())
     .filter(Boolean);
   const language = xmpText(metadata?.get('dc:language'));
+  const producer =
+    stringValue(info.Producer) ?? xmpText(metadata?.get('pdf:Producer'));
   return {
     ...(title ? { title } : {}),
     ...(author ? { author } : {}),
     ...(subject ? { subject } : {}),
     ...(keywords?.length ? { keywords } : {}),
     ...(language ? { language } : {}),
+    ...(producer ? { producer } : {}),
     ...dateFields(info),
   };
 }

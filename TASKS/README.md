@@ -81,7 +81,7 @@ and reverses one of 0031's rejections; it shares no sequence with the other subt
 - [x] 0037 Build hierarchical filtered tables of contents for PDF books *(needs 0036)*
 - [x] 0038 Add scene break blank paragraph and punctuation normalization
 - [x] 0039 Add bounded user pattern rules for furniture and text cleanup
-- [ ] 0040 Complete publication metadata and add CLI overrides with a sidecar file
+- [x] 0040 Complete publication metadata and add CLI overrides with a sidecar file
 - [ ] 0041 Split oversized EPUB chapters by content size
 - [ ] 0042 Add EPUB styling cover and navigation landmark output options *(cover: source needs 0043)*
 - [ ] 0043 Extract PDF image alt text captions and cover candidates

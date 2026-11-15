@@ -187,6 +187,9 @@ describe('CLI arguments and output', () => {
     expect((await invoke(['--help'])).output[0]).toContain('--header-regex');
     expect((await invoke(['--help'])).output[0]).toContain('--footer-regex');
     expect((await invoke(['--help'])).output[0]).toContain('--no-images');
+    expect((await invoke(['--help'])).output[0]).toContain('--metadata');
+    expect((await invoke(['--help'])).output[0]).toContain('--series-index');
+    expect((await invoke(['--help'])).output[0]).toContain('--strict-isbn');
     expect((await invoke(['--help'])).output[0]).toContain('--debug-pipeline');
     expect((await invoke(['--help'])).output[0]).toContain(
       '--debug-pipeline-assets',
@@ -966,6 +969,169 @@ describe('CLI arguments and output', () => {
     expect(result.output[0]).not.toContain('Standard heading');
   });
 
+  it('applies sidecar metadata and lets explicit CLI values take precedence', async () => {
+    const root = await workspaceDirectory();
+    const metadataPath = join(root, 'metadata.json');
+    const dump = join(root, 'dump');
+    await writeFile(
+      metadataPath,
+      JSON.stringify({
+        schema: 'wordconvert.metadata',
+        version: 1,
+        metadata: {
+          title: 'Sidecar title',
+          titleSort: 'Sidecar sort',
+          subtitle: 'Sidecar subtitle',
+          authors: ['Sidecar Author'],
+          authorSort: 'Sidecar author sort',
+          language: 'en-GB',
+          publisher: 'Sidecar Publisher',
+          description: 'Sidecar description',
+          subjects: ['Sidecar subject'],
+          version: '2.0',
+          sourceCreatedAt: '2020-01-02',
+          sourceModifiedAt: '2021-02-03',
+          publicationDate: '2022-03-04',
+          identifier: 'urn:sidecar',
+          isbn: '9780306406157',
+          rights: 'Sidecar rights',
+          series: 'Sidecar series',
+          seriesIndex: 1.5,
+          contributors: ['Sidecar editor'],
+          bookProducer: 'Sidecar producer',
+        },
+      }),
+    );
+    const result = await invoke([
+      fixture,
+      '--metadata',
+      metadataPath,
+      '--title',
+      'CLI title',
+      '--subtitle',
+      'CLI subtitle',
+      '--title-sort',
+      'CLI sort',
+      '--author',
+      'CLI Author',
+      '--author-sort',
+      'CLI author sort',
+      '--language',
+      'fr',
+      '--publisher',
+      'CLI Publisher',
+      '--description',
+      'CLI description',
+      '--subject',
+      'CLI subject one',
+      '--subject',
+      'CLI subject two',
+      '--isbn',
+      '0-306-40615-2',
+      '--book-version',
+      '3.0',
+      '--rights',
+      'CLI rights',
+      '--series',
+      'CLI series',
+      '--series-index',
+      '2.5',
+      '--contributor',
+      'CLI Editor',
+      '--book-producer',
+      'CLI Producer',
+      '--pubdate',
+      '2024-05-06',
+      '--source-created-at',
+      '2019-01-02',
+      '--source-modified-at',
+      '2020-03-04T05:06:07Z',
+      '-o',
+      '-',
+      '--debug-pipeline',
+      dump,
+      '--force',
+      ...fixedDate,
+    ]);
+
+    expect(result.code, result.errors).toBe(0);
+    const output = result.output[0];
+    if (!(output instanceof Uint8Array))
+      throw new Error('Expected EPUB bytes.');
+    const files = unzipSync(output);
+    const opf = new TextDecoder().decode(files['EPUB/package.opf']);
+    expect(opf).toContain('<dc:title id="title">CLI title</dc:title>');
+    expect(opf).toContain('<dc:title id="subtitle">CLI subtitle</dc:title>');
+    expect(opf).toContain(
+      '<meta refines="#title" property="file-as">CLI sort</meta>',
+    );
+    expect(opf).toContain('<dc:creator id="creator-1">CLI Author</dc:creator>');
+    expect(opf).toContain(
+      '<meta refines="#creator-1" property="file-as">CLI author sort</meta>',
+    );
+    expect(opf).toContain('<dc:publisher>CLI Publisher</dc:publisher>');
+    expect(opf).toContain('<dc:language>fr</dc:language>');
+    expect(opf).toContain('<dc:description>CLI description</dc:description>');
+    expect(opf).toContain('<dc:subject>CLI subject one</dc:subject>');
+    expect(opf).toContain('<dc:subject>CLI subject two</dc:subject>');
+    expect(opf).not.toContain('Sidecar subject');
+    expect(opf).toContain(
+      '<dc:identifier id="isbn-id">0-306-40615-2</dc:identifier>',
+    );
+    expect(opf).toContain('belongs-to-collection" id="series">CLI series');
+    expect(opf).toContain('property="group-position">2.5</meta>');
+    expect(opf).toContain(
+      '<dc:contributor id="contributor-1">CLI Editor</dc:contributor>',
+    );
+    expect(opf).toContain(
+      '<dc:contributor id="book-producer">CLI Producer</dc:contributor>',
+    );
+    expect(opf).toContain('<dc:rights>CLI rights</dc:rights>');
+    expect(opf).toContain('<meta property="dcterms:hasVersion">3.0</meta>');
+    expect(opf).toContain(
+      '<dc:date id="publication-date">2024-05-06T00:00:00Z',
+    );
+    expect(opf).toContain('<dc:date id="source-created">2019-01-02T00:00:00Z');
+    expect(opf).toContain('<dc:date id="source-modified">2020-03-04T05:06:07Z');
+    expect(opf).toContain('property="dcterms:modified">2026-01-02T00:00:00Z');
+    const model = await readJson(join(dump, '3-model.json'));
+    const metadata = model.metadata as Record<
+      string,
+      { provenance: { source: string } }
+    >;
+    expect(metadata.title?.provenance.source).toBe('CLI option');
+    expect(metadata.identifier?.provenance.source).toBe('metadata sidecar');
+  });
+
+  it('warns for an invalid ISBN unless strict ISBN checking is requested', async () => {
+    const root = await directory();
+    const input = join(root, 'book.md');
+    await writeFile(input, '# Book\n\nText.');
+
+    const warning = await invoke([
+      input,
+      '--isbn',
+      '9780306406158',
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+    expect(warning.code).toBe(0);
+    expect(warning.errors).toContain('ISBN checksum is invalid');
+
+    const strict = await invoke([
+      input,
+      '--isbn',
+      '9780306406158',
+      '--strict-isbn',
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+    expect(strict.code).toBe(2);
+    expect(strict.errors).toContain('ISBN checksum is invalid');
+  });
+
   it('embeds a supplied image as the EPUB cover', async () => {
     const cover = join(await directory(), 'cover.png');
     await writeFile(
@@ -995,6 +1161,10 @@ describe('CLI arguments and output', () => {
       'href="cover.svg" media-type="image/svg+xml" properties="cover-image"',
     );
     expect(files['EPUB/cover.xhtml']).toBeDefined();
+    expect(opf).toContain('<itemref idref="title-page"/>');
+    expect(new TextDecoder().decode(files['EPUB/title.xhtml'])).toContain(
+      '<h1>Fixture Corpus</h1>',
+    );
     expect(coverSvg).toContain('data:image/png;base64,');
   });
 

@@ -206,6 +206,8 @@ export interface AppController {
   loadPreset(name: string): void;
   setMetadata(field: EditableMetadataField, value: string): void;
   setSubjects(value: string): void;
+  setContributors(value: string): void;
+  setSeriesIndex(value: string): void;
   setAuthors(value: string): void;
   addAuthor(): void;
   updateAuthor(index: number, person: Person): void;
@@ -2512,8 +2514,10 @@ function styleEditor(controller: AppController): m.Vnode {
 
 const METADATA_FIELDS: readonly [EditableMetadataField, string, string][] = [
   ['title', 'Title', 'text'],
+  ['titleSort', 'Title sort', 'text'],
   ['subtitle', 'Subtitle', 'text'],
   ['language', 'Language', 'text'],
+  ['authorSort', 'Author sort', 'text'],
   ['publisher', 'Publisher', 'text'],
   ['description', 'Description', 'textarea'],
   ['version', 'Version', 'text'],
@@ -2523,6 +2527,8 @@ const METADATA_FIELDS: readonly [EditableMetadataField, string, string][] = [
   ['conversionDate', 'Conversion date', 'date'],
   ['identifier', 'Identifier', 'text'],
   ['rights', 'Rights', 'textarea'],
+  ['series', 'Series', 'text'],
+  ['bookProducer', 'Book producer', 'text'],
 ];
 
 function metadataEditor(controller: AppController): m.Vnode {
@@ -2546,6 +2552,33 @@ function metadataEditor(controller: AppController): m.Vnode {
           ),
       }),
       provenance(metadata.subjects[0]),
+    ]),
+    m('label.metadata-field', [
+      m('span', 'Series index'),
+      m('input', {
+        type: 'number',
+        min: '0',
+        step: 'any',
+        value: metadata.seriesIndex?.value ?? '',
+        oninput: (event: Event) =>
+          controller.setSeriesIndex(
+            (event.currentTarget as HTMLInputElement).value,
+          ),
+      }),
+      provenance(metadata.seriesIndex),
+    ]),
+    m('label.metadata-field', [
+      m('span', 'Contributors (comma separated)'),
+      m('input', {
+        value:
+          metadata.contributors?.map(({ value }) => value.name).join(', ') ??
+          '',
+        oninput: (event: Event) =>
+          controller.setContributors(
+            (event.currentTarget as HTMLInputElement).value,
+          ),
+      }),
+      provenance(metadata.contributors?.[0]),
     ]),
     m('fieldset.authors', [
       m('legend', 'Authors'),

@@ -11,7 +11,9 @@ import {
   parseAuthors,
   removeAuthor,
   setAuthors,
+  setContributors,
   setMetadataField,
+  setSeriesIndex,
   setSubjects,
   updateAuthor,
   type EditableMetadataField,
@@ -2216,6 +2218,24 @@ export function createBrowserController(): AppController {
       state.model = {
         ...state.model,
         metadata: setSubjects(state.model.metadata, value.split(',')),
+      };
+      state.outputSaved = false;
+      refreshEpubPreview();
+    },
+    setContributors(value: string) {
+      if (!state.model) return;
+      state.model = {
+        ...state.model,
+        metadata: setContributors(state.model.metadata, value.split(',')),
+      };
+      state.outputSaved = false;
+      refreshEpubPreview();
+    },
+    setSeriesIndex(value: string) {
+      if (!state.model) return;
+      state.model = {
+        ...state.model,
+        metadata: setSeriesIndex(state.model.metadata, value),
       };
       state.outputSaved = false;
       refreshEpubPreview();

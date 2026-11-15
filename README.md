@@ -46,6 +46,18 @@ image in EPUB output. For PDF input whose first page is the cover,
 the body. Front-page cover rendering requires the native runtime, including
 when PDF layout analysis is disabled.
 
+Set publication metadata in batch conversions with `--title`, `--title-sort`,
+`--subtitle`, repeatable `--author` and `--subject`, `--author-sort`,
+`--language`, `--publisher`, `--description`, `--book-version`, `--rights`,
+`--identifier`, `--source-created-at`, `--source-modified-at`, `--pubdate`,
+`--isbn`, `--series`, `--series-index`, repeatable `--contributor`,
+`--book-producer`, and `--metadata <file>`. `--conversion-date` remains the
+reproducible conversion/package-modified date. ISBN checksums warn by default;
+`--strict-isbn` turns them into errors. Explicit CLI values override sidecar
+values, which override reader inference and filename-derived defaults. The
+versioned, 32 KiB-limited JSON sidecar schema and field validation are documented
+in the [publication metadata CLI guide](documentation/cli.md#publication-metadata).
+
 ```sh
 wordconvert book.pdf --cover downloaded-cover.jpg -o book.epub
 wordconvert scan.pdf --frontpage-cover -o scan.epub
