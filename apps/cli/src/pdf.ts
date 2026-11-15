@@ -28,6 +28,7 @@ export interface CliPdfOptions extends ConversionOptions {
   formulaModelDir?: string;
   rasterize?: boolean;
   frontPageCover?: boolean;
+  removeFirstImage?: boolean;
   pdfTables?: PdfTableOptions;
   crop?: Partial<PdfCropOptions>;
   removeDetectedFurniture?: boolean;
@@ -200,6 +201,7 @@ export async function readPdf(
       ...(options.retainedCandidateIds
         ? { retainedCandidateIds: options.retainedCandidateIds }
         : {}),
+      ...(options.removeFirstImage ? { removeFirstImage: true } : {}),
       ...(options.unwrapFactor !== undefined
         ? { unwrapFactor: options.unwrapFactor }
         : {}),

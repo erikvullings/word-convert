@@ -956,6 +956,50 @@ describe('App', () => {
     expect(rendered).toContain('Accessible MathML');
   });
 
+  it('offers image descriptions, captions, and cover confidence for review', () => {
+    const state = createInitialState('2026-07-15');
+    state.stage = 1;
+    state.status = 'ready';
+    state.sourceFormat = 'pdf';
+    state.model = editorModel();
+    state.pdfAnalysis = {
+      pageCount: 1,
+      analysedPages: [1],
+      crop: { top: 0, bottom: 0 },
+      candidates: [],
+      scannedPages: [1],
+      imageCandidates: [
+        {
+          page: 1,
+          assetId: 'diagram',
+          source: 'embedded',
+          alt: 'A diagram',
+          caption: 'Figure 1: Diagram.',
+          coverConfidence: 'high',
+          removedFromBody: false,
+        },
+      ],
+      coverCandidates: [
+        {
+          page: 1,
+          assetId: 'diagram',
+          coverage: 0.9,
+          confidence: 'high',
+        },
+      ],
+    };
+
+    expect(JSON.stringify(renderApp(controllerFor(state)))).toContain(
+      'Review images (1)',
+    );
+    state.review = 'images';
+    const review = JSON.stringify(renderApp(controllerFor(state)));
+    expect(review).toContain('A diagram');
+    expect(review).toContain('Figure 1: Diagram.');
+    expect(review).toContain('high confidence');
+    expect(review).toContain('Use as EPUB cover');
+  });
+
   it('keeps format-specific settings inside their output cards', () => {
     const state = createInitialState('2026-07-15');
     state.stage = 1;

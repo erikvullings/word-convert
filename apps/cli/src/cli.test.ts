@@ -28,6 +28,9 @@ const pdf = fileURLToPath(
 const nestedPdf = fileURLToPath(
   new URL('../../../tests/fixtures/pdf/nested-outline.pdf', import.meta.url),
 );
+const imageSemanticsPdf = fileURLToPath(
+  new URL('../../../tests/fixtures/pdf/image-semantics.pdf', import.meta.url),
+);
 const existingPdfFixtures = [
   'one-column-book.pdf',
   'nested-outline.pdf',
@@ -225,6 +228,9 @@ describe('CLI arguments and output', () => {
     expect((await invoke(['--help'])).output[0]).toContain('--header-regex');
     expect((await invoke(['--help'])).output[0]).toContain('--footer-regex');
     expect((await invoke(['--help'])).output[0]).toContain('--no-images');
+    expect((await invoke(['--help'])).output[0]).toContain(
+      '--remove-first-image',
+    );
     expect((await invoke(['--help'])).output[0]).toContain('--metadata');
     expect((await invoke(['--help'])).output[0]).toContain('--series-index');
     expect((await invoke(['--help'])).output[0]).toContain('--strict-isbn');
@@ -593,6 +599,7 @@ describe('CLI arguments and output', () => {
     [fixture, '--image-quality', '80', '--format', 'markdown'],
     [fixture, '--cover', 'cover.png', '--format', 'html'],
     [fixture, '--frontpage-cover'],
+    [fixture, '--remove-first-image'],
     [pdf, '--frontpage-cover', '--format', 'html'],
     [pdf, '--cover', 'cover.png', '--frontpage-cover'],
     [fixture, '--conversion-date', '2026-02-30'],
@@ -638,6 +645,7 @@ describe('CLI arguments and output', () => {
     [fixture, '--crop-top', '0.1'],
     ['book.epub', '--no-images'],
     [pdf, '--list-furniture', '--output', 'book.md'],
+    [pdf, '--list-furniture', '--remove-first-image'],
   ])('rejects invalid arguments %j', async (...args) => {
     const result = await invoke(args);
     expect(result.code).toBe(2);
@@ -848,6 +856,33 @@ describe('CLI arguments and output', () => {
     expect(result.errors).toMatch(
       /image extraction is disabled; \d+ image placement/,
     );
+  }, 30_000);
+
+  it('removes only the detected high-confidence source cover from PDF body output', async () => {
+    const output = await invoke([
+      imageSemanticsPdf,
+      '--no-layout',
+      '--format',
+      'html',
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+    const withoutCover = await invoke([
+      imageSemanticsPdf,
+      '--no-layout',
+      '--remove-first-image',
+      '--format',
+      'html',
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+
+    expect(output.code, output.errors).toBe(0);
+    expect(withoutCover.code, withoutCover.errors).toBe(0);
+    expect(String(output.output[0]).match(/<img\b/g)).toHaveLength(3);
+    expect(String(withoutCover.output[0]).match(/<img\b/g)).toHaveLength(2);
   }, 30_000);
 
   it('keeps existing PDF corpus output byte-identical by default', async () => {

@@ -172,6 +172,11 @@ to the document. This option requires PDF input, EPUB output, and the native
 runtime even when `--no-layout` is set. The two cover options cannot be combined,
 and existing EPUB input remains optimization-only.
 
+For PDFs with an embedded cover image but no need to render the full first page,
+`--remove-first-image` omits only a high-confidence, source-embedded cover
+candidate from body content. It does not remove rendered page or figure assets
+and does not choose an EPUB cover; use `--cover` to provide one.
+
 ## Publication metadata
 
 The following options override reader-inferred values for semantic conversions:

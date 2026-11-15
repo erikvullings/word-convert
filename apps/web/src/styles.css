@@ -725,6 +725,36 @@ h1 {
   color: var(--muted);
 }
 
+.pdf-image-review {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.pdf-image-candidates {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pdf-image-candidate {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+}
+
+.pdf-image-candidate small {
+  color: var(--muted);
+}
+
+.pdf-image-candidate label {
+  display: grid;
+  gap: 0.25rem;
+}
+
 .format-card {
   display: flex;
   flex-direction: column;

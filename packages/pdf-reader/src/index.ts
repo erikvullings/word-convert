@@ -30,6 +30,7 @@ import {
   type TocEntry,
   type TableNode,
   createTocFromHeadings,
+  sanitizeImageText,
 } from '@wordconvert/document-model';
 import { PdfReadError } from './error.ts';
 import {
@@ -52,6 +53,8 @@ import {
 } from './formula/index.ts';
 import {
   extractPdfWithPdfJs,
+  isFigureCaption,
+  isFigureCredit,
   type PdfDensePageMode,
   type PdfDensePageResolver,
   type PdfFigureRasterizer,
@@ -138,6 +141,8 @@ export interface RawPdfImage {
   pixelHeight: number;
   mediaType: 'image/png' | 'image/jpeg';
   data: Uint8Array;
+  alt?: string;
+  markedContentId?: string;
   source?:
     'embedded' | 'rendered-figure' | 'rendered-equation' | 'rendered-page';
   /** Page-relative top used for reading-order placement when it differs from `top`. */
@@ -190,6 +195,8 @@ export interface RawPdfStrokeSegment {
 export interface RawPdfStructureNode {
   role: string;
   markedContentId?: string;
+  alt?: string;
+  language?: string;
   /** Declared `/ColSpan` of a table cell, present only when greater than one. */
   colSpan?: number;
   /** Declared `/RowSpan` of a table cell, present only when greater than one. */
@@ -265,6 +272,8 @@ export interface PdfAnalysisOptions extends ConversionOptions {
   manualFormulaRegions?: readonly PdfManualFormulaRegion[];
   formulaRecognizer?: PdfFormulaRecognizer;
   formulaLimits?: Partial<PdfFormulaLimits>;
+  /** Omit the high-confidence source cover from body content to prevent duplication. */
+  removeFirstImage?: boolean;
 }
 
 export interface PdfFurnitureCandidate {
@@ -297,12 +306,31 @@ export interface PdfAnalysisSummary {
   candidates: PdfFurnitureCandidate[];
   scannedPages: number[];
   imageBackedPages?: number[];
+  imageCandidates?: PdfImageCandidate[];
+  coverCandidates?: PdfCoverCandidate[];
   densePages?: number[];
   fallbackPages?: Array<RawPdfPageFallback & { page: number }>;
   formulaCandidates?: PdfFormulaCandidate[];
   formulaImageRegions?: PdfFormulaImageRegion[];
   tables?: PdfDetectedTable[];
   tocSource?: PdfTocSource;
+}
+
+export interface PdfImageCandidate {
+  page: number;
+  assetId: string;
+  source: 'embedded' | 'rendered-figure';
+  alt?: string;
+  caption?: string;
+  coverConfidence?: 'medium' | 'high';
+  removedFromBody: boolean;
+}
+
+export interface PdfCoverCandidate {
+  page: number;
+  assetId: string;
+  coverage: number;
+  confidence: 'medium' | 'high';
 }
 
 export interface PdfReflowIssue {
@@ -683,6 +711,20 @@ export async function analysePdf(
       retainedPages.push({ ...retainedPage, spans: [] });
     } else retainedPages.push(retainedPage);
   }
+  const coverCandidates = detectCoverCandidates(retainedPages);
+  const removableCover = options.removeFirstImage
+    ? coverCandidates.find(({ confidence }) => confidence === 'high')
+    : undefined;
+  const removedCoverIds = new Set(
+    removableCover ? [removableCover.assetId] : [],
+  );
+  if (options.removeFirstImage && !removableCover)
+    warnings.push({
+      code: 'pdf-first-image-not-removed',
+      severity: 'info',
+      message:
+        'No high-confidence source cover candidate was found; no image was removed.',
+    });
 
   if (croppedSpanIds.size > 0)
     warnings.push({
@@ -919,7 +961,7 @@ export async function analysePdf(
     message: 'Building the document.',
   });
   const {
-    blocks: tabledBlocks,
+    blocks: parsedBlocks,
     unresolvedTablePages,
     truncatedGeometryPages,
     tables,
@@ -941,6 +983,54 @@ export async function analysePdf(
     unwrapFactor,
     wordEvidence,
   );
+  const imageBlocksById = new Map(
+    parsedBlocks
+      .filter(
+        (block): block is Extract<BlockNode, { type: 'imageBlock' }> =>
+          block.type === 'imageBlock',
+      )
+      .map((block) => [block.assetId, block]),
+  );
+  const tabledBlocks = parsedBlocks.filter(
+    (block) =>
+      block.type !== 'imageBlock' || !removedCoverIds.has(block.assetId),
+  );
+  const coverConfidenceByAsset = new Map(
+    coverCandidates.map(({ assetId, confidence }) => [assetId, confidence]),
+  );
+  const imageCandidates: PdfImageCandidate[] = retainedPages.flatMap((page) =>
+    page.images.flatMap((image) => {
+      if (image.source !== 'embedded' && image.source !== 'rendered-figure')
+        return [];
+      const block = imageBlocksById.get(image.id);
+      const caption = block?.caption
+        ? sanitizeImageText(inlineText(block.caption))
+        : undefined;
+      return [
+        {
+          page: page.number,
+          assetId: image.id,
+          source: image.source,
+          ...(block?.alt ? { alt: block.alt } : {}),
+          ...(caption ? { caption } : {}),
+          ...(coverConfidenceByAsset.has(image.id)
+            ? { coverConfidence: coverConfidenceByAsset.get(image.id)! }
+            : {}),
+          removedFromBody: removedCoverIds.has(image.id),
+        },
+      ];
+    }),
+  );
+  const missingImageDescriptions = imageCandidates.filter(
+    ({ alt, removedFromBody }) => !alt && !removedFromBody,
+  ).length;
+  if (missingImageDescriptions > 0)
+    warnings.push({
+      code: 'pdf-images-missing-alt',
+      severity: 'warning',
+      message: `${missingImageDescriptions} PDF image${missingImageDescriptions === 1 ? '' : 's'} have no alternative description.`,
+      details: { images: missingImageDescriptions },
+    });
   const inlineDehyphenation = wordEvidence
     ? await dehyphenateBodyBlocks(
         tabledBlocks,
@@ -1152,6 +1242,8 @@ export async function analysePdf(
             page.images.some(({ width, height }) => width * height >= 0.7),
         )
         .map(({ number }) => number),
+      imageCandidates,
+      coverCandidates,
       densePages: raw.pages
         .filter(({ dense }) => dense)
         .map(({ number }) => number),
@@ -2933,9 +3025,23 @@ async function linesToBlocks(
           equationImages.some((image) => intersectsBounds(span, image)),
         ),
     );
+    const imageAltByMark = taggedImageAlts(page.taggedStructure);
     const placements = imagePlacements(
       pageLines,
-      page.images.filter(({ source }) => source !== 'rendered-equation'),
+      page.images
+        .filter(({ source }) => source !== 'rendered-equation')
+        .map((image) => {
+          const taggedAlt = image.markedContentId
+            ? imageAltByMark.get(image.markedContentId)
+            : undefined;
+          const alt = taggedAlt ?? sanitizeImageText(image.alt);
+          return { ...image, ...(alt ? { alt } : {}) };
+        }),
+    );
+    const attachedCaptionLines = new Set(
+      [...placements.values()].flatMap((items) =>
+        items.flatMap(({ caption }) => (caption ? [caption] : [])),
+      ),
     );
     const signals = resolveTableSignals(options);
     const taggedDiscovery = signals.tagged
@@ -3135,12 +3241,23 @@ async function linesToBlocks(
         ? [{ block: previousBlock, lastLine: previousPageLine }]
         : [];
     for (let index = 0; index <= pageLines.length; index++) {
-      for (const image of placements.get(index) ?? []) {
-        blocks.push(imageBlock(image));
+      for (const placement of placements.get(index) ?? []) {
+        blocks.push(
+          imageBlock(
+            placement.image,
+            placement.caption
+              ? sanitizeImageText(placement.caption.text)
+              : undefined,
+          ),
+        );
         previousLine = undefined;
       }
       const line = pageLines[index];
       if (!line) continue;
+      if (attachedCaptionLines.has(line)) {
+        previousLine = undefined;
+        continue;
+      }
       if (processed++ % 250 === 0) await analysisCheckpoint(options);
       const placedLineFormula = formulaCandidates.find(
         (candidate) =>
@@ -3705,6 +3822,7 @@ function coversRenderedEquation(
 
 function imageBlock(
   image: RawPdfImage,
+  caption?: string,
 ): Extract<BlockNode, { type: 'imageBlock' }> {
   const width = image.width >= 0.8 ? 1 : image.width;
   const center = image.x + image.width / 2;
@@ -3714,27 +3832,65 @@ function imageBlock(
       : center < 0.5
         ? 'left'
         : 'right';
-  return { type: 'imageBlock', assetId: image.id, width, alignment };
+  const alt = sanitizeImageText(image.alt);
+  return {
+    type: 'imageBlock',
+    assetId: image.id,
+    ...(alt ? { alt } : {}),
+    ...(caption
+      ? { caption: [{ type: 'text', text: caption } satisfies InlineNode] }
+      : {}),
+    width,
+    alignment,
+  };
+}
+
+interface ImagePlacement {
+  image: RawPdfImage;
+  caption?: PdfLine;
 }
 
 function imagePlacements(
   lines: readonly PdfLine[],
   images: readonly RawPdfImage[],
-): Map<number, RawPdfImage[]> {
-  const placements = new Map<number, RawPdfImage[]>();
+): Map<number, ImagePlacement[]> {
+  const placements = new Map<number, ImagePlacement[]>();
+  const captionAssignments = new Map<RawPdfImage, PdfLine>();
+  const captionCandidates = images.flatMap((image) =>
+    lines.flatMap((line) => {
+      if (!isFigureCaption(line.text) || isFigureCredit(line.text)) return [];
+      const gap =
+        line.top + line.height <= image.top
+          ? image.top - (line.top + line.height)
+          : image.top + image.height <= line.top
+            ? line.top - (image.top + image.height)
+            : -0.01;
+      const horizontalOverlap =
+        line.x < image.x + image.width && line.x + line.width > image.x;
+      return horizontalOverlap && gap <= 0.08 && gap >= -0.015
+        ? [{ image, line, gap: Math.max(0, gap) }]
+        : [];
+    }),
+  );
+  const assignedCaptions = new Set<PdfLine>();
+  captionCandidates
+    .sort(
+      (left, right) =>
+        left.gap - right.gap ||
+        placementTop(left.image) - placementTop(right.image),
+    )
+    .forEach(({ image, line }) => {
+      if (captionAssignments.has(image) || assignedCaptions.has(line)) return;
+      captionAssignments.set(image, line);
+      assignedCaptions.add(line);
+    });
   for (const image of [...images].sort(
     (left, right) =>
       placementTop(left) - placementTop(right) || left.x - right.x,
   )) {
     const top = placementTop(image);
-    const captionIndex = lines.findIndex(
-      (line) =>
-        /^fig(?:ure)?\s+\d+[.:]/i.test(line.text.trim()) &&
-        line.top >= image.top + image.height - 0.015 &&
-        line.top <= image.top + image.height + 0.08 &&
-        line.x < image.x + image.width &&
-        line.x + line.width > image.x,
-    );
+    const caption = captionAssignments.get(image);
+    const captionIndex = caption ? lines.indexOf(caption) : -1;
     const imageIsLeft = image.x + image.width / 2 < 0.5;
     const sameColumn = lines
       .map((line, index) => ({ line, index }))
@@ -3756,10 +3912,61 @@ function imagePlacements(
               ? geometricIndex
               : lines.length));
     const group = placements.get(index) ?? [];
-    group.push(image);
+    group.push({ image, ...(caption ? { caption } : {}) });
     placements.set(index, group);
   }
   return placements;
+}
+
+function detectCoverCandidates(
+  pages: readonly RawPdfPage[],
+): PdfCoverCandidate[] {
+  return pages
+    .filter(({ number }) => number <= 3)
+    .flatMap((page) =>
+      page.images.flatMap((image) => {
+        if (image.source !== 'embedded') return [];
+        const coverage = image.width * image.height;
+        const right = image.x + image.width;
+        const bottom = image.top + image.height;
+        const edgeInset = Math.max(image.x, image.top, 1 - right, 1 - bottom);
+        const imageAspect =
+          (image.width * page.width) / (image.height * page.height);
+        const pageAspect = page.width / page.height;
+        const aspectDifference = Math.abs(imageAspect / pageAspect - 1);
+        if (
+          coverage < 0.72 ||
+          image.width < 0.8 ||
+          image.height < 0.8 ||
+          edgeInset > 0.12 ||
+          aspectDifference > 0.35
+        )
+          return [];
+        const confidence: PdfCoverCandidate['confidence'] =
+          page.number === 1 &&
+          coverage >= 0.88 &&
+          image.width >= 0.9 &&
+          image.height >= 0.9 &&
+          edgeInset <= 0.03 &&
+          aspectDifference <= 0.12
+            ? 'high'
+            : 'medium';
+        return [
+          {
+            page: page.number,
+            assetId: image.id,
+            coverage,
+            confidence,
+          },
+        ];
+      }),
+    )
+    .sort(
+      (left, right) =>
+        left.page - right.page ||
+        right.coverage - left.coverage ||
+        left.assetId.localeCompare(right.assetId),
+    );
 }
 
 function placementTop(image: RawPdfImage): number {
@@ -4230,6 +4437,32 @@ function taggedRoles(
   };
   if (root) visit(root);
   return roles;
+}
+
+function taggedImageAlts(
+  root: RawPdfStructureNode | undefined,
+): ReadonlyMap<string, string> {
+  const alts = new Map<string, string>();
+  const visit = (
+    node: RawPdfStructureNode,
+    inheritedRole?: string,
+    inheritedAlt?: string,
+  ): void => {
+    const role = node.role === 'NonStruct' ? inheritedRole : node.role;
+    const alt =
+      sanitizeImageText(node.alt) ??
+      (role === inheritedRole ? inheritedAlt : undefined);
+    if (
+      node.markedContentId &&
+      alt &&
+      (role === 'Figure' || role === 'Img') &&
+      !alts.has(node.markedContentId)
+    )
+      alts.set(node.markedContentId, alt);
+    for (const child of node.children) visit(child, role, alt);
+  };
+  if (root) visit(root);
+  return alts;
 }
 
 interface DetectedFurniture {

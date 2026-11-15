@@ -52,6 +52,7 @@ export interface PdfImportSettings {
   samplePageCount: number;
   enhancedFigureDetection: boolean;
   removeDetectedFurniture: boolean;
+  removeFirstImage: boolean;
   removedCandidateIds: string[];
   retainedCandidateIds: string[];
   formulaDecisions: Record<string, PdfFormulaDecision>;
@@ -159,7 +160,7 @@ export interface AppState {
   styleMappings: Record<string, StyleMapping>;
   presetText: string;
   editorNotice?: string;
-  review?: 'styles' | 'metadata' | 'formula';
+  review?: 'styles' | 'metadata' | 'formula' | 'images';
   formulaReviewFilter: FormulaReviewFilter;
   formulaReviewSelectedId?: string;
   formulaDrafts: Record<string, string>;
@@ -234,6 +235,7 @@ export function createInitialState(
       samplePageCount: 5,
       enhancedFigureDetection: false,
       removeDetectedFurniture: true,
+      removeFirstImage: false,
       removedCandidateIds: [],
       retainedCandidateIds: [],
       formulaDecisions: {},

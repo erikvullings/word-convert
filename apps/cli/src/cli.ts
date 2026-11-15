@@ -131,6 +131,7 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
                                keeps cover-image declaration and semantic title page
       --frontpage-cover        Use the first PDF page as the EPUB cover and omit
                                its images from the body
+      --remove-first-image     Omit a high-confidence source cover image from PDF body content
       --language <tag>         Override language; missing/invalid document tag defaults to en
       --identifier <text>      Override publication identifier
       --conversion-date <ISO>  Fixed conversion/package-modified date
@@ -581,6 +582,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       );
     if (values['frontpage-cover'] && extension !== '.pdf')
       throw new UsageError('--frontpage-cover requires PDF input.');
+    if (values['remove-first-image'] && extension !== '.pdf')
+      throw new UsageError('--remove-first-image requires PDF input.');
     if (values['chapter-detection'] !== undefined && extension !== '.pdf')
       throw new UsageError('--chapter-detection requires PDF input.');
     if (values['pdf-tables'] && extension !== '.pdf')
@@ -589,10 +592,11 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       values['list-furniture'] &&
       (values['split-chapters'] ||
         values['frontpage-cover'] ||
+        values['remove-first-image'] ||
         values.cover !== undefined)
     )
       throw new UsageError(
-        '--list-furniture cannot be combined with output or cover options.',
+        '--list-furniture cannot be combined with output, cover, or image-removal options.',
       );
     if (
       (values['unwrap-factor'] !== undefined ||
@@ -706,6 +710,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
             : 'not-used',
         rasterize: values.rasterize ?? false,
         frontPageCover: values['frontpage-cover'] ?? false,
+        removeFirstImage: values['remove-first-image'] ?? false,
         crop: extension === '.pdf' ? (crop ?? null) : null,
         removeDetectedFurniture:
           extension === '.pdf'
@@ -925,6 +930,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         ...(values['list-furniture'] ? { listFurniture: true } : {}),
         ...(values.rasterize ? { rasterize: true } : {}),
         ...(values['frontpage-cover'] ? { frontPageCover: true } : {}),
+        ...(values['remove-first-image'] ? { removeFirstImage: true } : {}),
         ...(pdfTables ? { pdfTables } : {}),
         ...(unwrapFactor !== undefined ? { unwrapFactor } : {}),
         ...(dehyphenate !== undefined ? { dehyphenate } : {}),
@@ -1158,6 +1164,7 @@ function parseArguments(argv: string[]) {
         metadata: { type: 'string' },
         cover: { type: 'string' },
         'frontpage-cover': { type: 'boolean' },
+        'remove-first-image': { type: 'boolean' },
         'crop-top': { type: 'string' },
         'crop-bottom': { type: 'string' },
         'no-remove-furniture': { type: 'boolean' },

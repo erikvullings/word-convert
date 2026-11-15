@@ -131,6 +131,42 @@ describe('secure DOCX reader', () => {
     });
   });
 
+  it('uses DOCX image descriptions and attaches adjacent figure captions', async () => {
+    const input = createZip([
+      {
+        name: '[Content_Types].xml',
+        data: `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>`,
+      },
+      {
+        name: 'word/document.xml',
+        data: `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body><w:p><w:r><w:drawing><wp:inline><wp:docPr id="1" name="Diagram" descr="&lt;b&gt;DOCX diagram&lt;/b&gt;"/><a:blip r:embed="rId1"/></wp:inline></w:drawing></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Caption"/></w:pPr><w:r><w:t>Figure 1: DOCX caption.</w:t></w:r></w:p><w:p><w:r><w:t>Photo credit: Example.</w:t></w:r></w:p></w:body></w:document>`,
+      },
+      {
+        name: 'word/_rels/document.xml.rels',
+        data: `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image.png"/></Relationships>`,
+      },
+      {
+        name: 'word/styles.xml',
+        data: `<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="Caption"/></w:style></w:styles>`,
+      },
+      { name: 'word/media/image.png', data: 'image fixture' },
+    ]);
+
+    const model = await secureDocxReader.read(input, options);
+
+    expect(model.blocks).toMatchObject([
+      {
+        type: 'imageBlock',
+        alt: 'DOCX diagram',
+        caption: [{ type: 'text', text: 'Figure 1: DOCX caption.' }],
+      },
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Photo credit: Example.' }],
+      },
+    ]);
+  });
+
   it('keeps numbered heading styles out of semantic lists', async () => {
     const model = await secureDocxReader.read(numberedHeadingDocx(), options);
 

@@ -3,11 +3,13 @@ import {
   DOCUMENT_MODEL_SCHEMA,
   DOCUMENT_MODEL_VERSION,
   DEFAULT_CHAPTER_DETECTION,
+  MAX_IMAGE_TEXT_LENGTH,
   createTocFromHeadings,
   deserializeDocumentModel,
   isConversionError,
   mergeHeadingRuns,
   nestTocEntries,
+  sanitizeImageText,
   serializeDocumentModel,
   toJsonValue,
   validateChapterDetection,
@@ -100,6 +102,17 @@ const model: DocumentModel = {
 };
 
 describe('DocumentModel contracts', () => {
+  it('sanitizes and bounds image text as plain text', () => {
+    expect(sanitizeImageText('  A <script>hidden</script> & clear  ')).toBe(
+      'A hidden & clear',
+    );
+    expect(
+      sanitizeImageText(` ${'x'.repeat(MAX_IMAGE_TEXT_LENGTH + 1)} `),
+    ).toBe('x'.repeat(MAX_IMAGE_TEXT_LENGTH));
+    expect(sanitizeImageText('before\u0000\u0085after')).toBe('before after');
+    expect(sanitizeImageText(' \n\t ')).toBeUndefined();
+  });
+
   it('merges same-style heading runs without losing identifiers, numbering, or marks', () => {
     const merged = mergeHeadingRuns([
       {

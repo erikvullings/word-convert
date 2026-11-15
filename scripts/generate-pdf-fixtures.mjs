@@ -34,6 +34,8 @@ await save('reflow-verse.pdf', await reflowVerse());
 await save('reflow-loose-leading.pdf', await reflowLooseLeading());
 await save('reflow-glossary.pdf', await reflowGlossary());
 await save('tagged-article.pdf', await taggedArticle());
+await save('image-semantics.pdf', await imageSemantics());
+await save('hostile-image-alt.pdf', await hostileImageAlt());
 await save('tagged-table.pdf', await taggedTable());
 await save('tagged-table-spans.pdf', await taggedTableSpans());
 await save('ruled-table.pdf', await ruledTable());
@@ -154,6 +156,22 @@ await writeFile(
         {
           file: 'tagged-article.pdf',
           covers: ['tagged structure', 'marked content'],
+        },
+        {
+          file: 'image-semantics.pdf',
+          covers: [
+            'tagged figure alternative text',
+            'embedded XMP alternative text',
+            'captions above and below images',
+            'near-full-page source cover candidate',
+          ],
+        },
+        {
+          file: 'hostile-image-alt.pdf',
+          covers: [
+            'oversized markup-looking tagged alternative text',
+            'image without a marked-content link',
+          ],
         },
         {
           file: 'tagged-table-spans.pdf',
@@ -682,6 +700,124 @@ async function taggedArticle() {
   );
   document.catalog.set(PDFName.of('Lang'), PDFString.of('en'));
   return document;
+}
+
+async function imageSemantics() {
+  const document = await baseDocument('PDF Image Semantics');
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  const imageData =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nS8AAAAASUVORK5CYII=';
+
+  const coverPage = document.addPage([600, 800]);
+  const coverImage = await document.embedPng(imageData);
+  coverPage.drawImage(coverImage, {
+    x: 15,
+    y: 15,
+    width: 570,
+    height: 770,
+  });
+
+  const taggedPage = document.addPage([600, 800]);
+  const taggedImage = await document.embedPng(imageData);
+  taggedPage.drawText('Figure 1: Tagged diagram.', {
+    x: 180,
+    y: 265,
+    size: 12,
+    font,
+  });
+  taggedPage.pushOperators(
+    PDFOperator.of('BDC', [
+      PDFName.of('Figure'),
+      document.context.obj({ MCID: 0 }),
+    ]),
+  );
+  taggedPage.drawImage(taggedImage, {
+    x: 180,
+    y: 300,
+    width: 240,
+    height: 240,
+  });
+  taggedPage.pushOperators(PDFOperator.of('EMC'));
+  addFigureStructure(document, taggedPage, 0, 'A tagged diagram.');
+
+  const xmpPage = document.addPage([600, 800]);
+  const xmpImage = await document.embedPng(imageData);
+  xmpPage.drawText('Figure 2: XMP diagram.', {
+    x: 180,
+    y: 560,
+    size: 12,
+    font,
+  });
+  xmpPage.drawImage(xmpImage, { x: 180, y: 280, width: 240, height: 240 });
+  await xmpImage.embed();
+  const imageStream = document.context.lookup(xmpImage.ref);
+  const xmp = document.context.flateStream(
+    new TextEncoder().encode(
+      '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:Iptc4xmpCore="http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/"><Iptc4xmpCore:AltTextAccessibility><rdf:Alt><rdf:li xml:lang="x-default">An XMP accessibility description.</rdf:li></rdf:Alt></Iptc4xmpCore:AltTextAccessibility></rdf:Description></rdf:RDF></x:xmpmeta>',
+    ),
+  );
+  const xmpReference = document.context.register(xmp);
+  imageStream.dict.set(PDFName.of('Metadata'), xmpReference);
+  xmpPage.drawText('Source: Image archive', {
+    x: 180,
+    y: 250,
+    size: 9,
+    font,
+  });
+
+  return document;
+}
+
+async function hostileImageAlt() {
+  const document = await baseDocument('Hostile PDF Image Alt');
+  const page = document.addPage([600, 800]);
+  const image = await document.embedPng(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nS8AAAAASUVORK5CYII=',
+  );
+  const taggedAlt = `<img src=x onerror=alert(1)> ${'oversized '.repeat(80)}`;
+  page.pushOperators(
+    PDFOperator.of('BDC', [
+      PDFName.of('Figure'),
+      document.context.obj({ MCID: 0 }),
+    ]),
+  );
+  page.drawImage(image, { x: 80, y: 500, width: 160, height: 160 });
+  page.pushOperators(PDFOperator.of('EMC'));
+  page.drawImage(image, { x: 320, y: 200, width: 160, height: 160 });
+  addFigureStructure(document, page, 0, taggedAlt, 'ActualText');
+  return document;
+}
+
+function addFigureStructure(
+  document,
+  page,
+  markedContentId,
+  alt,
+  alternateTextKey = 'Alt',
+) {
+  const root = document.context.obj({ Type: 'StructTreeRoot', K: [] });
+  const rootReference = document.context.register(root);
+  const figure = document.context.obj({
+    Type: 'StructElem',
+    S: 'Figure',
+    P: rootReference,
+    Pg: page.ref,
+    K: markedContentId,
+    [alternateTextKey]: PDFString.of(alt),
+  });
+  const figureReference = document.context.register(figure);
+  root.set(PDFName.of('K'), document.context.obj([figureReference]));
+  root.set(
+    PDFName.of('ParentTree'),
+    document.context.obj({ Nums: [0, [figureReference]] }),
+  );
+  page.node.set(PDFName.of('StructParents'), document.context.obj(0));
+  document.catalog.set(PDFName.of('StructTreeRoot'), rootReference);
+  document.catalog.set(
+    PDFName.of('MarkInfo'),
+    document.context.obj({ Marked: true }),
+  );
+  document.catalog.set(PDFName.of('Lang'), PDFString.of('en'));
 }
 
 async function taggedTable() {

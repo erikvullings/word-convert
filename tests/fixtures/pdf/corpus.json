@@ -88,6 +88,22 @@
       "covers": ["tagged structure", "marked content"]
     },
     {
+      "file": "image-semantics.pdf",
+      "covers": [
+        "tagged figure alternative text",
+        "embedded XMP alternative text",
+        "captions above and below images",
+        "near-full-page source cover candidate"
+      ]
+    },
+    {
+      "file": "hostile-image-alt.pdf",
+      "covers": [
+        "oversized markup-looking tagged alternative text",
+        "image without a marked-content link"
+      ]
+    },
+    {
       "file": "tagged-table-spans.pdf",
       "covers": [
         "tagged structure",

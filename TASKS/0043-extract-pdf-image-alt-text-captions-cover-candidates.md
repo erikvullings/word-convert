@@ -1,6 +1,6 @@
 # 0043 Extract PDF image alt text captions and cover candidates
 
-Status: open
+Status: done
 Priority: low
 Owner: unassigned
 Agent: pi

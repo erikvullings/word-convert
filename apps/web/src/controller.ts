@@ -1,5 +1,8 @@
 import m from 'mithril';
-import { DEFAULT_CHAPTER_DETECTION } from '@wordconvert/document-model';
+import {
+  DEFAULT_CHAPTER_DETECTION,
+  sanitizeImageText,
+} from '@wordconvert/document-model';
 import type { Person, StyleMapping } from '@wordconvert/document-model';
 
 import type { AppController } from './app.ts';
@@ -1826,6 +1829,48 @@ export function createBrowserController(): AppController {
       if (candidate) candidate.removed = remove;
       state.outputSaved = false;
     },
+    setPdfImageText(assetId, field, value) {
+      const text = sanitizeImageText(value);
+      const analysis = state.pdfAnalysis;
+      const candidate = analysis?.imageCandidates?.find(
+        ({ assetId: candidateAssetId }) => candidateAssetId === assetId,
+      );
+      if (!candidate || !state.model || !analysis) return;
+      if (field === 'alt') {
+        if (text) candidate.alt = text;
+        else delete candidate.alt;
+      } else {
+        if (text) candidate.caption = text;
+        else delete candidate.caption;
+      }
+      for (const block of state.model.blocks) {
+        if (block.type !== 'imageBlock' || block.assetId !== assetId) continue;
+        if (field === 'alt') {
+          if (text) block.alt = text;
+          else delete block.alt;
+        } else if (text) {
+          block.caption = [{ type: 'text', text }];
+        } else delete block.caption;
+      }
+      const missing = (analysis.imageCandidates ?? []).filter(
+        ({ alt, removedFromBody }) => !alt && !removedFromBody,
+      ).length;
+      state.model.warnings = state.model.warnings.filter(
+        ({ code }) => code !== 'pdf-images-missing-alt',
+      );
+      if (missing > 0)
+        state.model.warnings.push({
+          code: 'pdf-images-missing-alt',
+          severity: 'warning',
+          message: `${missing} PDF image${missing === 1 ? '' : 's'} have no alternative description.`,
+          details: { images: missing },
+        });
+      state.outputSaved = false;
+    },
+    setPdfRemoveFirstImage(remove) {
+      state.pdfImport.removeFirstImage = remove;
+      state.outputSaved = false;
+    },
     setFormulaDecision(decision) {
       state.pdfImport.formulaDecisions = {
         ...state.pdfImport.formulaDecisions,
@@ -2547,6 +2592,7 @@ function pdfWorkerOptions(
       bottom: state.pdfImport.cropBottom,
     },
     removeDetectedFurniture: state.pdfImport.removeDetectedFurniture,
+    removeFirstImage: state.pdfImport.removeFirstImage,
     removedCandidateIds: [...removedCandidateIds],
     retainedCandidateIds: [...state.pdfImport.retainedCandidateIds],
     formulaDecisions: { ...state.pdfImport.formulaDecisions },

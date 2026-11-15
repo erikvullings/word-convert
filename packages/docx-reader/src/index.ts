@@ -14,6 +14,7 @@ import {
   type StyleMapping,
   type TableCell,
   type TextMark,
+  sanitizeImageText,
 } from '@wordconvert/document-model';
 import { convertOmml } from '@wordconvert/math-converter';
 import { strFromU8 } from 'fflate';
@@ -462,10 +463,20 @@ function parseRun(run: XmlNode, context: ParseContext): InlineNode[] {
           noteId: `${name === 'footnoteReference' ? 'footnote' : 'endnote'}-${id}`,
         });
     } else if (name === 'drawing' || name === 'pict') {
+      const alt = sanitizeImageText(
+        descendants(child, 'docPr')
+          .map((node) => attribute(node, 'descr'))
+          .find((value): value is string => value !== undefined),
+      );
       for (const blip of descendants(child, 'blip')) {
         const id = attribute(blip, 'embed');
         const assetId = id && assetForRelationship(id, context);
-        if (assetId) result.push({ type: 'image', assetId });
+        if (assetId)
+          result.push({
+            type: 'image',
+            assetId,
+            ...(alt ? { alt } : {}),
+          });
       }
     }
   }
@@ -648,7 +659,65 @@ function parseBlocks(parent: XmlNode, context: ParseContext): BlockNode[] {
     else if (name === 'sdt' || name === 'sdtContent')
       blocks.push(...parseBlocks(child, context));
   }
-  return blocks;
+  return attachFigureCaptions(blocks, context.styleMappings);
+}
+
+function attachFigureCaptions(
+  blocks: readonly BlockNode[],
+  mappings: Readonly<Record<string, StyleMapping>>,
+): BlockNode[] {
+  const parsed = blocks.map((block): BlockNode => {
+    if (
+      block.type !== 'paragraph' ||
+      block.children.length !== 1 ||
+      block.children[0]?.type !== 'image'
+    )
+      return block;
+    const image = block.children[0];
+    return {
+      type: 'imageBlock',
+      assetId: image.assetId,
+      ...(image.alt ? { alt: image.alt } : {}),
+    };
+  });
+  const result: BlockNode[] = [];
+  for (let index = 0; index < parsed.length; index++) {
+    const current = parsed[index]!;
+    const next = parsed[index + 1];
+    const currentCaption = isDocxFigureCaption(current, mappings);
+    if (currentCaption && next?.type === 'imageBlock') {
+      result.push({
+        ...next,
+        caption: current.children,
+      });
+      index++;
+    } else if (
+      current.type === 'imageBlock' &&
+      isDocxFigureCaption(next, mappings)
+    ) {
+      result.push({ ...current, caption: next.children });
+      index++;
+    } else result.push(current);
+  }
+  return result;
+}
+
+function isDocxFigureCaption(
+  block: BlockNode | undefined,
+  mappings: Readonly<Record<string, StyleMapping>>,
+): block is Extract<BlockNode, { type: 'paragraph' }> {
+  if (
+    block?.type !== 'paragraph' ||
+    mappings[block.styleId ?? ''] !== 'caption'
+  )
+    return false;
+  const text = block.children
+    .map((child) =>
+      child.type === 'text' ? child.text : child.type === 'link' ? '' : '',
+    )
+    .join('')
+    .trim();
+  return /^(?:\([^)]+\)\s*)?fig(?:ure)?\s+\d+[.:]/i.test(text);
 }
 
 function indexHeadingBookmarks(

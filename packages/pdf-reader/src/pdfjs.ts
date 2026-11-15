@@ -16,6 +16,8 @@ import type {
   TextItem,
 } from 'pdfjs-dist/types/src/display/api.d.ts';
 import type { PageViewport } from 'pdfjs-dist/types/src/display/page_viewport.d.ts';
+import { unzlibSync } from 'fflate';
+import { sanitizeImageText } from '@wordconvert/document-model';
 
 import type {
   RawPdfDocument,
@@ -108,6 +110,7 @@ export interface PdfExtractionOptions {
   densePageMode?: PdfDensePageMode;
   /** Asked once, at the first dense page, when `densePageMode` is not set. */
   resolveDensePageMode?: PdfDensePageResolver;
+  imageXmpAltByRef?: ReadonlyMap<string, string>;
 }
 
 type PdfOperatorList = Awaited<ReturnType<PDFPageProxy['getOperatorList']>>;
@@ -173,6 +176,7 @@ interface PdfJsImage {
   height: number;
   kind?: number;
   data?: Uint8Array | Uint8ClampedArray;
+  ref?: string;
 }
 
 interface PdfJsAnnotation {
@@ -250,6 +254,7 @@ export async function extractPdfWithPdfJs(
   });
   let document: PDFDocumentProxy | undefined;
   try {
+    const imageXmpAltByRef = readImageXmpAlts(input);
     document = await loading.promise;
     if (document.numPages > options.limits.maxPages)
       throw new PdfReadError('resource-limit', 'PDF exceeds the page limit.', {
@@ -299,6 +304,7 @@ export async function extractPdfWithPdfJs(
         try {
           const extracted = await readGuardedPage(page, pageNumber, {
             options,
+            imageXmpAltByRef,
             imageBudget,
             formulaBudget,
             includeImages: !isSample && options.extractImages !== false,
@@ -423,6 +429,7 @@ export function representativePageNumbers(
 
 export interface GuardedPageContext {
   options: PdfExtractionOptions;
+  imageXmpAltByRef?: ReadonlyMap<string, string>;
   imageBudget: PdfImageBudget;
   formulaBudget: PdfFormulaBudget;
   includeImages: boolean;
@@ -533,6 +540,7 @@ export async function readGuardedPage(
             !dense && !context.guard.timedOut,
             options.tableSignals,
             context.resolveDestination,
+            context.imageXmpAltByRef,
           ),
     );
     const densePage = dense ? { dense: true } : {};
@@ -1211,6 +1219,7 @@ async function readPage(
     ruled: true,
   },
   resolveDestination?: PdfDestinationResolver,
+  imageXmpAltByRef: ReadonlyMap<string, string> = new Map(),
 ): Promise<RawPdfPage> {
   const viewport = page.getViewport({ scale: 1 });
   const [text, annotations, structure, operators] = await Promise.all([
@@ -1273,6 +1282,7 @@ async function readPage(
         layoutRegions,
         {
           operators,
+          imageXmpAltByRef,
           protectedTableRegions,
           onPageBackdrop: () => {
             imageBacked = true;
@@ -1532,6 +1542,7 @@ export async function readImages(
   layoutRegions: readonly PdfLayoutRegion[] = [],
   scan: {
     operators?: PdfOperatorList;
+    imageXmpAltByRef?: ReadonlyMap<string, string>;
     onPageBackdrop?: () => void;
     protectedTableRegions?: readonly NormalizedBounds[];
   } = {},
@@ -1541,7 +1552,9 @@ export async function readImages(
   const images: RawPdfImage[] = [];
   const stack: Matrix[] = [];
   const vectorBounds: NormalizedBounds[] = [];
+  const markedContentStack: Array<string | undefined> = [];
   let imageBacked = false;
+  let markedContentId: string | undefined;
   let transform: Matrix = [1, 0, 0, 1, 0, 0];
   for (let index = 0; index < operators.fnArray.length; index++) {
     if (index % 100 === 0) {
@@ -1554,6 +1567,19 @@ export async function readImages(
     else if (operation === OPS.restore) transform = stack.pop() ?? transform;
     else if (operation === OPS.transform && isNumberArray(args, 6))
       transform = multiply(transform, args);
+    else if (
+      operation === OPS.beginMarkedContent ||
+      operation === OPS.beginMarkedContentProps
+    ) {
+      markedContentStack.push(markedContentId);
+      markedContentId =
+        operation === OPS.beginMarkedContentProps &&
+        typeof args?.[1] === 'number' &&
+        Number.isInteger(args[1])
+          ? `p${page.ref?.num ?? page.pageNumber - 1}R_mc${args[1]}`
+          : undefined;
+    } else if (operation === OPS.endMarkedContent)
+      markedContentId = markedContentStack.pop();
     else if (
       operation === OPS.constructPath &&
       isNumberSequence(args?.[2]) &&
@@ -1591,6 +1617,10 @@ export async function readImages(
           limits,
           imageBudget,
           cancellation,
+          undefined,
+          false,
+          markedContentId,
+          imageXmpAlt(image, scan.imageXmpAltByRef),
         );
     } else if (
       operation === OPS.paintInlineImageXObject &&
@@ -1610,6 +1640,9 @@ export async function readImages(
         limits,
         imageBudget,
         cancellation,
+        undefined,
+        false,
+        markedContentId,
       );
     } else if (
       operation === OPS.paintInlineImageXObjectGroup &&
@@ -1630,6 +1663,9 @@ export async function readImages(
           limits,
           imageBudget,
           cancellation,
+          undefined,
+          false,
+          markedContentId,
         );
       }
     } else if (
@@ -1663,6 +1699,8 @@ export async function readImages(
           cancellation,
           data,
           true,
+          markedContentId,
+          imageXmpAlt(image, scan.imageXmpAltByRef),
         );
       }
     }
@@ -2038,11 +2076,11 @@ function hasFollowingFigureCaption(
   });
 }
 
-function isFigureCaption(text: string): boolean {
+export function isFigureCaption(text: string): boolean {
   return /^(?:\([^)]+\)\s*)?fig(?:ure)?\s+\d+[.:]/i.test(text.trim());
 }
 
-function isFigureCredit(text: string): boolean {
+export function isFigureCredit(text: string): boolean {
   return /^(?:source|credit|©)\s*[:.]?/i.test(text.trim());
 }
 
@@ -2768,6 +2806,8 @@ async function appendImage(
   cancellation?: CancellationSignal,
   encodedData?: Uint8Array,
   reserved = false,
+  markedContentId?: string,
+  alt?: string,
 ): Promise<void> {
   if (!image.data || image.width <= 0 || image.height <= 0) return;
   enforceImageLimit(image, limits);
@@ -2780,6 +2820,7 @@ async function appendImage(
   );
   const data = encodedData ?? (await encodeImage(image, cancellation));
   throwIfCancelled(cancellation);
+  const sanitizedAlt = sanitizeImageText(alt);
   images.push({
     id: `pdf-image-${page.pageNumber}-${images.length}`,
     ...bounds,
@@ -2787,7 +2828,18 @@ async function appendImage(
     pixelHeight: image.height,
     mediaType: 'image/png',
     data,
+    source: 'embedded',
+    ...(sanitizedAlt ? { alt: sanitizedAlt } : {}),
+    ...(markedContentId ? { markedContentId } : {}),
   });
+}
+
+function imageXmpAlt(
+  image: PdfJsImage,
+  alts: ReadonlyMap<string, string> | undefined,
+): string | undefined {
+  const reference = image.ref?.match(/^(\d+)R$/)?.[1];
+  return reference ? alts?.get(reference) : undefined;
 }
 
 async function encodeImage(
@@ -3062,10 +3114,208 @@ function readStructure(value: unknown): RawPdfStructureNode {
   return {
     role: typeof value.role === 'string' ? value.role : 'NonStruct',
     ...(typeof value.id === 'string' ? { markedContentId: value.id } : {}),
+    ...(typeof value.alt === 'string' ? { alt: value.alt } : {}),
+    ...(typeof value.lang === 'string' ? { language: value.lang } : {}),
     ...declaredTableSpan(value, 'colSpan'),
     ...declaredTableSpan(value, 'rowSpan'),
     children,
   };
+}
+
+const MAX_PDF_XMP_BYTES = 128 * 1024;
+const MAX_PDF_OBJECT_HEADER_BYTES = 32 * 1024;
+const MAX_PDF_OBJECTS_TO_SCAN = 100_000;
+const MAX_PDF_OBJECT_HEADER_SCAN_BYTES = 64 * 1024 * 1024;
+const MAX_PDF_XMP_STREAMS = 1_000;
+const MAX_PDF_TOTAL_XMP_BYTES = 8 * 1024 * 1024;
+
+function readImageXmpAlts(input: Uint8Array): ReadonlyMap<string, string> {
+  const source = new TextDecoder('latin1').decode(input);
+  const objectPattern = /(?:^|[\r\n])(\d+)\s+(\d+)\s+obj\b/g;
+  const imageMetadata = new Map<string, string>();
+  const objectOffsets = new Map<string, number>();
+  let scanned = 0;
+  let headerBytes = 0;
+  for (const match of source.matchAll(objectPattern)) {
+    if (++scanned > MAX_PDF_OBJECTS_TO_SCAN) break;
+    const bodyStart = (match.index ?? 0) + match[0].length;
+    objectOffsets.set(`${match[1]} ${match[2]}`, bodyStart);
+    const remainingBudget = MAX_PDF_OBJECT_HEADER_SCAN_BYTES - headerBytes;
+    if (remainingBudget <= 0) continue;
+    const header = source.slice(
+      bodyStart,
+      bodyStart + Math.min(MAX_PDF_OBJECT_HEADER_BYTES, remainingBudget),
+    );
+    headerBytes += header.length;
+    const stream = streamMarker(header, 0);
+    const objectEnd = header.indexOf('endobj');
+    if (!stream || (objectEnd >= 0 && objectEnd < stream.index)) continue;
+    const dictionary = header.slice(0, stream.index);
+    if (!/\/Subtype\s*\/Image\b/.test(dictionary)) continue;
+    const metadata = /\/Metadata\s+(\d+)\s+(\d+)\s+R\b/.exec(dictionary);
+    if (!metadata) continue;
+    imageMetadata.set(`${match[1]}R`, `${metadata[1]} ${metadata[2]}`);
+  }
+  const alts = new Map<string, string>();
+  let xmpStreams = 0;
+  let totalXmpBytes = 0;
+  for (const [imageRef, metadataRef] of imageMetadata) {
+    if (
+      xmpStreams >= MAX_PDF_XMP_STREAMS ||
+      totalXmpBytes >= MAX_PDF_TOTAL_XMP_BYTES
+    )
+      break;
+    const metadataStream = pdfMetadataStream(
+      source,
+      input,
+      metadataRef,
+      objectOffsets,
+    );
+    if (!metadataStream) continue;
+    xmpStreams++;
+    const { dictionary, data } = metadataStream;
+    if (data.byteLength > MAX_PDF_TOTAL_XMP_BYTES - totalXmpBytes) continue;
+    totalXmpBytes += data.byteLength;
+    let xmlBytes = data;
+    if (
+      /\/Filter\s*(?:\/FlateDecode|\[\s*\/FlateDecode\s*\])/.test(dictionary)
+    ) {
+      try {
+        xmlBytes = unzlibSync(data, {
+          out: new Uint8Array(MAX_PDF_XMP_BYTES),
+        });
+      } catch {
+        continue;
+      }
+    } else if (/\/Filter\b/.test(dictionary)) continue;
+    if (
+      xmlBytes.byteLength > MAX_PDF_XMP_BYTES ||
+      xmlBytes.byteLength > MAX_PDF_TOTAL_XMP_BYTES - totalXmpBytes
+    )
+      continue;
+    totalXmpBytes += xmlBytes.byteLength;
+    const alt = xmpAccessibilityAlt(new TextDecoder().decode(xmlBytes));
+    if (alt) alts.set(imageRef.slice(0, -1), alt);
+  }
+  return alts;
+}
+
+function pdfMetadataStream(
+  source: string,
+  input: Uint8Array,
+  reference: string,
+  objectOffsets: ReadonlyMap<string, number>,
+): { dictionary: string; data: Uint8Array } | undefined {
+  const objectStart = objectOffsets.get(reference);
+  if (objectStart === undefined) return undefined;
+  const header = source.slice(
+    objectStart,
+    objectStart + MAX_PDF_OBJECT_HEADER_BYTES,
+  );
+  const marker = streamMarker(header, 0);
+  const objectEnd = header.indexOf('endobj');
+  if (!marker || (objectEnd >= 0 && objectEnd < marker.index)) return undefined;
+  const dictionary = header.slice(0, marker.index);
+  const [objectNumber, generation] = reference.split(' ');
+  if (!objectNumber || !generation) return undefined;
+  const directLength = /\/Length\s+(\d+)\b(?!\s+\d+\s+R\b)/.exec(
+    dictionary,
+  )?.[1];
+  const dataStart = objectStart + marker.dataStart;
+  const directByteLength = directLength ? Number(directLength) : undefined;
+  if (
+    directByteLength !== undefined &&
+    (!Number.isSafeInteger(directByteLength) ||
+      directByteLength < 0 ||
+      directByteLength > MAX_PDF_XMP_BYTES)
+  )
+    return undefined;
+  const endstreamSearchLength = Math.min(
+    MAX_PDF_XMP_BYTES + 8,
+    input.byteLength - dataStart,
+  );
+  const endstreamOffset = source
+    .slice(dataStart, dataStart + endstreamSearchLength)
+    .indexOf('endstream');
+  const endMarker = endstreamOffset >= 0 ? dataStart + endstreamOffset : -1;
+  const byteLength = directByteLength ?? endMarker - dataStart;
+  if (
+    !Number.isSafeInteger(byteLength) ||
+    byteLength < 0 ||
+    byteLength > MAX_PDF_XMP_BYTES ||
+    dataStart + byteLength > input.byteLength ||
+    endMarker < dataStart + byteLength ||
+    endMarker > dataStart + byteLength + 2
+  )
+    return undefined;
+  return {
+    dictionary,
+    data: input.subarray(dataStart, dataStart + byteLength),
+  };
+}
+
+function streamMarker(
+  source: string,
+  start: number,
+): { index: number; dataStart: number } | undefined {
+  const match = /\bstream(?:\r\n|\n|\r)/g;
+  match.lastIndex = start;
+  const result = match.exec(source);
+  return result
+    ? { index: result.index, dataStart: match.lastIndex }
+    : undefined;
+}
+
+function xmpAccessibilityAlt(xml: string): string | undefined {
+  if (/<!DOCTYPE|<!ENTITY/i.test(xml)) return undefined;
+  const property = (name: string): string | undefined => {
+    const escapedName = name.replaceAll(':', '\\:');
+    return new RegExp(
+      `<${escapedName}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${escapedName}\\s*>`,
+      'i',
+    ).exec(xml)?.[1];
+  };
+  const alternatives = property('Iptc4xmpCore:AltTextAccessibility');
+  const descriptions = property('dc:description');
+  for (const value of [alternatives, descriptions]) {
+    if (!value) continue;
+    const items = [
+      ...value.matchAll(
+        /<(?:[\w.-]+:)?li\b([^>]*)>([\s\S]*?)<\/(?:[\w.-]+:)?li\s*>/gi,
+      ),
+    ];
+    const selected =
+      items.find((item) =>
+        /\bxml:lang\s*=\s*["']x-default["']/i.test(item[1] ?? ''),
+      ) ?? items[0];
+    const text = selected?.[2] ?? value;
+    const decoded = text
+      .replace(/<[^>]*>/gu, ' ')
+      .replace(
+        /&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos);/giu,
+        (_match, entity: string) => {
+          if (entity.startsWith('#x') || entity.startsWith('#')) {
+            const codepoint = entity.startsWith('#x')
+              ? Number.parseInt(entity.slice(2), 16)
+              : Number.parseInt(entity.slice(1), 10);
+            return Number.isInteger(codepoint) &&
+              codepoint >= 0 &&
+              codepoint <= 0x10ffff &&
+              !(codepoint >= 0xd800 && codepoint <= 0xdfff)
+              ? String.fromCodePoint(codepoint)
+              : '';
+          }
+          return (
+            { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }[
+              entity.toLowerCase()
+            ] ?? ''
+          );
+        },
+      );
+    const alt = sanitizeImageText(decoded);
+    if (alt) return alt;
+  }
+  return undefined;
 }
 
 /**

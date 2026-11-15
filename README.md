@@ -46,6 +46,10 @@ image in EPUB output. For PDF input whose first page is the cover,
 the body. Front-page cover rendering requires the native runtime, including
 when PDF layout analysis is disabled.
 
+`--remove-first-image` instead omits only a high-confidence, source-embedded
+cover candidate from PDF body content; it does not select or generate an EPUB
+cover.
+
 Set publication metadata in batch conversions with `--title`, `--title-sort`,
 `--subtitle`, repeatable `--author` and `--subject`, `--author-sort`,
 `--language`, `--publisher`, `--description`, `--book-version`, `--rights`,
@@ -61,6 +65,7 @@ in the [publication metadata CLI guide](documentation/cli.md#publication-metadat
 ```sh
 wordconvert book.pdf --cover downloaded-cover.jpg -o book.epub
 wordconvert scan.pdf --frontpage-cover -o scan.epub
+wordconvert book.pdf --remove-first-image -o book.epub
 ```
 
 Existing EPUBs can also be shrunk without rebuilding their chapters, navigation,

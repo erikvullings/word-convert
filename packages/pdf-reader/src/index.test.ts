@@ -79,6 +79,237 @@ function rawDocument(
   };
 }
 
+describe('PDF image semantics', () => {
+  it('uses tagged Figure alt text only for its linked marked-content id', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [],
+          links: [],
+          images: [
+            {
+              id: 'tagged-image',
+              x: 0.2,
+              top: 0.2,
+              width: 0.3,
+              height: 0.3,
+              pixelWidth: 100,
+              pixelHeight: 100,
+              mediaType: 'image/png',
+              data: new Uint8Array([1]),
+              source: 'embedded',
+              markedContentId: 'p0_mc0',
+            },
+            {
+              id: 'unlinked-image',
+              x: 0.21,
+              top: 0.21,
+              width: 0.3,
+              height: 0.3,
+              pixelWidth: 100,
+              pixelHeight: 100,
+              mediaType: 'image/png',
+              data: new Uint8Array([2]),
+              source: 'embedded',
+            },
+          ],
+          taggedStructure: {
+            role: 'Document',
+            children: [
+              {
+                role: 'Figure',
+                alt: '<b>Mountain view</b>',
+                language: 'en',
+                children: [
+                  {
+                    role: 'NonStruct',
+                    markedContentId: 'p0_mc0',
+                    children: [],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks).toMatchObject([
+      { type: 'imageBlock', assetId: 'tagged-image', alt: 'Mountain view' },
+      { type: 'imageBlock', assetId: 'unlinked-image' },
+    ]);
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'pdf-images-missing-alt',
+        details: { images: 1 },
+      }),
+    );
+    expect(result.analysis.imageCandidates).toMatchObject([
+      { assetId: 'tagged-image', alt: 'Mountain view' },
+      { assetId: 'unlinked-image' },
+    ]);
+  });
+
+  it.each([
+    { position: 'below', captionTop: 0.62 },
+    { position: 'above', captionTop: 0.25 },
+  ])(
+    'attaches a figure caption placed $position and keeps its credit',
+    async ({ captionTop }) => {
+      const result = await analysePdf(
+        rawDocument([
+          {
+            number: 1,
+            width: 600,
+            height: 800,
+            rotation: 0,
+            spans: [
+              span('Figure 2: A sample diagram.', 0.3, captionTop, {
+                width: 0.4,
+              }),
+              span('Source: Example Archive', 0.3, 0.66, { width: 0.4 }),
+            ],
+            links: [],
+            images: [
+              {
+                id: 'captioned-image',
+                x: 0.25,
+                top: 0.3,
+                width: 0.5,
+                height: 0.3,
+                pixelWidth: 100,
+                pixelHeight: 100,
+                mediaType: 'image/png',
+                data: new Uint8Array([1]),
+                source: 'embedded',
+              },
+            ],
+          },
+        ]),
+        { conversionDate: '2026-08-29' },
+      );
+
+      expect(result.model.blocks).toMatchObject([
+        {
+          type: 'imageBlock',
+          assetId: 'captioned-image',
+          caption: [{ type: 'text', text: 'Figure 2: A sample diagram.' }],
+        },
+        {
+          type: 'paragraph',
+          children: [{ type: 'text', text: 'Source: Example Archive' }],
+        },
+      ]);
+      expect(result.analysis.imageCandidates?.[0]?.caption).toBe(
+        'Figure 2: A sample diagram.',
+      );
+    },
+  );
+
+  it('keeps unattached figure captions as paragraphs', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [span('Figure 3: Unattached caption.', 0.1, 0.8)],
+          links: [],
+          images: [
+            {
+              id: 'far-image',
+              x: 0.2,
+              top: 0.1,
+              width: 0.2,
+              height: 0.2,
+              pixelWidth: 100,
+              pixelHeight: 100,
+              mediaType: 'image/png',
+              data: new Uint8Array([1]),
+              source: 'embedded',
+            },
+          ],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks).toContainEqual({
+      type: 'paragraph',
+      children: [{ type: 'text', text: 'Figure 3: Unattached caption.' }],
+      styleId: expect.any(String),
+    });
+  });
+
+  it('removes only a high-confidence embedded cover when requested', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [],
+          links: [],
+          images: [
+            {
+              id: 'source-cover',
+              x: 0.02,
+              top: 0.02,
+              width: 0.96,
+              height: 0.96,
+              pixelWidth: 600,
+              pixelHeight: 800,
+              mediaType: 'image/png',
+              data: new Uint8Array([1]),
+              source: 'embedded',
+            },
+            {
+              id: 'rendered-page',
+              x: 0,
+              top: 0,
+              width: 1,
+              height: 1,
+              pixelWidth: 600,
+              pixelHeight: 800,
+              mediaType: 'image/png',
+              data: new Uint8Array([2]),
+              source: 'rendered-page',
+            },
+          ],
+        },
+      ]),
+      { conversionDate: '2026-08-29', removeFirstImage: true },
+    );
+
+    expect(result.analysis.coverCandidates).toEqual([
+      {
+        page: 1,
+        assetId: 'source-cover',
+        coverage: 0.9216,
+        confidence: 'high',
+      },
+    ]);
+    expect(result.analysis.imageCandidates).toContainEqual(
+      expect.objectContaining({
+        assetId: 'source-cover',
+        removedFromBody: true,
+        coverConfidence: 'high',
+      }),
+    );
+    expect(result.model.blocks).not.toContainEqual(
+      expect.objectContaining({ type: 'imageBlock', assetId: 'source-cover' }),
+    );
+    expect(result.model.assets['source-cover']).toBeDefined();
+  });
+});
+
 describe('PDF layout analysis', () => {
   it('resolves fonts in each Form XObject resource scope and restores the parent font', async () => {
     const document = await PDFDocument.create();
@@ -2022,6 +2253,55 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
       });
     });
 
+    it('extracts tagged and XMP image descriptions, captions, and a cover candidate', async () => {
+      const result = await pdfJsReader.read(
+        await fixture('image-semantics.pdf'),
+        { conversionDate: '2026-08-29' },
+      );
+
+      expect(result.analysis.imageCandidates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            page: 2,
+            alt: 'A tagged diagram.',
+            caption: 'Figure 1: Tagged diagram.',
+            source: 'embedded',
+          }),
+          expect.objectContaining({
+            page: 3,
+            alt: 'An XMP accessibility description.',
+            caption: 'Figure 2: XMP diagram.',
+            source: 'embedded',
+          }),
+        ]),
+      );
+      expect(result.analysis.coverCandidates).toEqual([
+        expect.objectContaining({
+          page: 1,
+          confidence: 'high',
+        }),
+      ]);
+    });
+
+    it('bounds hostile tagged image descriptions and leaves unlinked images undescribed', async () => {
+      const result = await pdfJsReader.read(
+        await fixture('hostile-image-alt.pdf'),
+        { conversionDate: '2026-08-29' },
+      );
+      const images = result.analysis.imageCandidates ?? [];
+
+      expect(images).toHaveLength(2);
+      expect(images[0]?.alt?.length).toBeLessThanOrEqual(500);
+      expect(images[0]?.alt).not.toContain('<');
+      expect(images[1]?.alt).toBeUndefined();
+      expect(result.model.warnings).toContainEqual(
+        expect.objectContaining({
+          code: 'pdf-images-missing-alt',
+          details: { images: 1 },
+        }),
+      );
+    });
+
     it('detects generated formula layouts without classifying deliberate false positives', async () => {
       const [formulaLayouts, falsePositives] = await Promise.all([
         pdfJsReader.read(await fixture('formula-layouts.pdf'), {
@@ -2346,13 +2626,13 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
     expect(result.model.blocks.map(({ type }) => type)).toEqual([
       'imageBlock',
       'paragraph',
-      'paragraph',
     ]);
-    expect(result.model.blocks[0]).toEqual({
+    expect(result.model.blocks[0]).toMatchObject({
       type: 'imageBlock',
       assetId: 'figure-1',
       width: 0.36,
       alignment: 'center',
+      caption: [{ type: 'text', text: 'Figure 1: Model architecture.' }],
     });
   });
 

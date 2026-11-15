@@ -25,6 +25,7 @@ export interface PdfWorkerOptions {
   samplePageCount?: number;
   crop?: Partial<PdfCropOptions>;
   removeDetectedFurniture?: boolean;
+  removeFirstImage?: boolean;
   removedCandidateIds?: string[];
   retainedCandidateIds?: string[];
   formulaDecisions?: Readonly<Record<string, PdfFormulaDecision>>;

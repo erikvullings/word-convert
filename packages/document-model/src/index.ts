@@ -1,5 +1,7 @@
 import type { TextReplacementRule } from './normalization/pattern-rules.ts';
 
+export { MAX_IMAGE_TEXT_LENGTH, sanitizeImageText } from './image-text.ts';
+
 export const DOCUMENT_MODEL_SCHEMA = 'wordconvert.document' as const;
 export const DOCUMENT_MODEL_VERSION = 1 as const;
 

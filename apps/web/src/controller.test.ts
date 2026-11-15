@@ -2284,6 +2284,65 @@ describe('browser controller', () => {
       },
     });
   });
+
+  it('sanitizes reviewed PDF image text and reapplies cover removal', async () => {
+    vi.spyOn(m, 'redraw').mockImplementation(() => undefined);
+    const worker = new WorkerStub();
+    stubWorkers(worker);
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => undefined,
+    });
+    const controller = createBrowserController();
+    controller.selectFiles([
+      new File([new Uint8Array([1])], 'image-review.pdf', {
+        type: 'application/pdf',
+      }),
+    ]);
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalledOnce());
+    controller.state.model = model();
+    controller.state.model.blocks = [
+      { type: 'imageBlock', assetId: 'diagram' },
+    ];
+    controller.state.pdfAnalysis = {
+      pageCount: 1,
+      analysedPages: [1],
+      crop: { top: 0, bottom: 0 },
+      candidates: [],
+      scannedPages: [1],
+      imageCandidates: [
+        {
+          page: 1,
+          assetId: 'diagram',
+          source: 'embedded',
+          removedFromBody: false,
+        },
+      ],
+    };
+
+    controller.setPdfImageText?.('diagram', 'alt', '<b>Edited description</b>');
+    controller.setPdfImageText?.('diagram', 'caption', '<i>Figure caption</i>');
+
+    expect(controller.state.model.blocks[0]).toMatchObject({
+      type: 'imageBlock',
+      assetId: 'diagram',
+      alt: 'Edited description',
+      caption: [{ type: 'text', text: 'Figure caption' }],
+    });
+    expect(controller.state.pdfAnalysis.imageCandidates?.[0]).toMatchObject({
+      alt: 'Edited description',
+      caption: 'Figure caption',
+    });
+    expect(
+      controller.state.model.warnings.some(
+        ({ code }) => code === 'pdf-images-missing-alt',
+      ),
+    ).toBe(false);
+    controller.setPdfRemoveFirstImage?.(true);
+    expect(controller.state.pdfImport.removeFirstImage).toBe(true);
+    controller.rerunAnalysis();
+    expect(lastPdfOptions(worker)).toMatchObject({ removeFirstImage: true });
+  });
 });
 
 function lastPdfFormulaDecisions(worker: WorkerStub): unknown {

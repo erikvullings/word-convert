@@ -167,6 +167,12 @@ export interface AppController {
   setPdfImageSelectionBounds?(bounds: PdfBounds): void;
   setPdfImageSelectionAlt?(alt: string): void;
   insertPdfImageSelection?(): void;
+  setPdfImageText?(
+    assetId: string,
+    field: 'alt' | 'caption',
+    value: string,
+  ): void;
+  setPdfRemoveFirstImage?(remove: boolean): void;
   setPdfSamplePageCount?(pageCount: number): void;
   setPdfEnhancedFigureDetection?(enabled: boolean): void;
   rescanPdfSample?(): void;
@@ -443,6 +449,7 @@ function stageContent(controller: AppController): m.Children {
   if (state.review === 'styles') return styleEditor(controller);
   if (state.review === 'metadata') return metadataEditor(controller);
   if (state.review === 'formula') return formulaReviewEditor(controller);
+  if (state.review === 'images') return pdfImageReviewEditor(controller);
   if (state.stage === 1) return outputChooser(controller);
   if (state.stage === 2) return preview(controller);
   return downloadPanel(controller);
@@ -492,6 +499,17 @@ function outputChooser(controller: AppController): m.Vnode {
             },
           },
           'Review formulas',
+        )
+      : null,
+    state.sourceFormat === 'pdf' &&
+    (state.pdfAnalysis?.imageCandidates?.length ?? 0) > 0
+      ? m(
+          'button.formula-review-entry',
+          {
+            type: 'button',
+            onclick: () => openReview(state, 'images'),
+          },
+          `Review images (${state.pdfAnalysis?.imageCandidates?.length ?? 0})`,
         )
       : null,
     requiresFullPdfAnalysis
@@ -568,6 +586,100 @@ function outputChooser(controller: AppController): m.Vnode {
             ]),
           ),
         ),
+  ]);
+}
+
+function pdfImageReviewEditor(controller: AppController): m.Vnode {
+  const { state } = controller;
+  const images = state.pdfAnalysis?.imageCandidates ?? [];
+  const hasHighConfidenceCover = state.pdfAnalysis?.coverCandidates?.some(
+    ({ confidence }) => confidence === 'high',
+  );
+  return m('section#pdf-image-review.pdf-image-review', [
+    m('h3', 'PDF image review'),
+    m(
+      'p',
+      'Review detected descriptions and captions. Edits are applied to the document model immediately.',
+    ),
+    m(
+      'ul.pdf-image-candidates',
+      images.map((candidate) =>
+        m('li.pdf-image-candidate', { key: candidate.assetId }, [
+          m('strong', `Page ${candidate.page} · ${candidate.source}`),
+          candidate.coverConfidence
+            ? m(
+                'small',
+                `Cover candidate · ${candidate.coverConfidence} confidence`,
+              )
+            : null,
+          m('label', [
+            'Alternative description',
+            m('input', {
+              type: 'text',
+              maxLength: 500,
+              value: candidate.alt ?? '',
+              oninput: (event: Event) =>
+                controller.setPdfImageText?.(
+                  candidate.assetId,
+                  'alt',
+                  (event.currentTarget as HTMLInputElement).value,
+                ),
+            }),
+          ]),
+          m('label', [
+            'Figure caption',
+            m('input', {
+              type: 'text',
+              maxLength: 500,
+              value: candidate.caption ?? '',
+              oninput: (event: Event) =>
+                controller.setPdfImageText?.(
+                  candidate.assetId,
+                  'caption',
+                  (event.currentTarget as HTMLInputElement).value,
+                ),
+            }),
+          ]),
+          candidate.source === 'embedded'
+            ? m(
+                'button.secondary-button',
+                {
+                  type: 'button',
+                  onclick: () =>
+                    controller.selectExtractedCover(candidate.assetId),
+                },
+                'Use as EPUB cover',
+              )
+            : null,
+        ]),
+      ),
+    ),
+    hasHighConfidenceCover
+      ? [
+          m(InputCheckbox, {
+            checked: state.pdfImport.removeFirstImage,
+            onchange: (remove) => controller.setPdfRemoveFirstImage?.(remove),
+            label:
+              'Remove the detected high-confidence source cover from the body',
+          }),
+          m(
+            'button.secondary-button',
+            {
+              type: 'button',
+              onclick: () => controller.rerunAnalysis(),
+            },
+            'Apply and reprocess PDF',
+          ),
+        ]
+      : null,
+    m(Button, {
+      label: 'Back',
+      onclick: () => {
+        navigateBackFromReview(state, () => {
+          if (state.output) controller.convert();
+        });
+      },
+    }),
   ]);
 }
 
@@ -2616,7 +2728,7 @@ function metadataEditor(controller: AppController): m.Vnode {
 
 function openReview(
   state: AppState,
-  review: 'styles' | 'metadata' | 'formula',
+  review: 'styles' | 'metadata' | 'formula' | 'images',
 ): void {
   state.review = review;
   if (typeof history !== 'undefined') {
