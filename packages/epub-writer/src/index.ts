@@ -26,12 +26,10 @@ import {
   renderEquation as renderMathEquation,
   type MathOutputMode,
 } from '@wordconvert/math-converter';
-import {
-  ident as cssIdent,
-  parse as parseCss,
-  walk as walkCss,
-} from 'css-tree';
+import parseCss from 'css-tree/parser';
 import type { CssLocation, CssNode } from 'css-tree';
+import { ident as cssIdent } from 'css-tree/utils';
+import walkCss from 'css-tree/walker';
 
 export type EpubCoverPolicy = 'source' | 'generated' | 'file' | 'none';
 

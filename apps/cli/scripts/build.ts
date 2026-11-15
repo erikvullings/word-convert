@@ -74,6 +74,18 @@ if (result.error) throw result.error;
 if (result.status !== 0)
   throw new Error(`CLI compilation failed with exit code ${result.status}.`);
 
+const metadata = JSON.parse(
+  await readFile(join(cli, 'package.json'), 'utf8'),
+) as { version: string };
+const smokeTest = spawnSync(executable, ['--version'], { encoding: 'utf8' });
+if (smokeTest.error) throw smokeTest.error;
+if (smokeTest.status !== 0 || smokeTest.stdout.trim() !== metadata.version) {
+  const detail = smokeTest.stderr.trim() || smokeTest.stdout.trim();
+  throw new Error(
+    `Compiled CLI startup smoke test failed${detail ? `: ${detail}` : '.'}`,
+  );
+}
+
 if (!values['no-runtime']) {
   const require = createRequire(join(cli, 'package.json'));
   const ortPackage =
@@ -129,7 +141,4 @@ if (!values['no-runtime']) {
 }
 for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'LICENSES'])
   await cp(join(root, name), join(output, name), { recursive: true });
-const metadata = JSON.parse(
-  await readFile(join(cli, 'package.json'), 'utf8'),
-) as { version: string };
 console.log(`WordConvert ${metadata.version}: ${resolve(output)}`);

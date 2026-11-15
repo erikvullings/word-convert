@@ -12,3 +12,7 @@ declare module 'css-tree/walker' {
   import { walk } from 'css-tree';
   export default walk;
 }
+
+declare module 'css-tree/utils' {
+  export { ident } from 'css-tree';
+}

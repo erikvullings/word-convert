@@ -4,6 +4,6 @@
     "lib": ["ES2024", "WebWorker"],
     "skipLibCheck": true
   },
-  "include": ["src/worker/**/*.ts"],
+  "include": ["src/css-tree.d.ts", "src/worker/**/*.ts"],
   "exclude": ["src/worker/**/*.test.ts"]
 }
