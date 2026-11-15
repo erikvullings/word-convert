@@ -1187,6 +1187,7 @@ export const secureDocxReader: DocxReader = {
       styles,
       warnings,
     };
+    options.onStage?.({ stage: 'model', data: model });
     options.onProgress?.({ phase: 'read', completed: 1, total: 1 });
     return model;
   },

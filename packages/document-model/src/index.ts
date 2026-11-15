@@ -322,10 +322,25 @@ export interface ConversionOptions {
   onProgress?: (progress: ConversionProgress) => void;
 }
 
+export type PipelineStageName = 'raw' | 'analysis' | 'model' | 'output';
+
+export type PipelineStageEvent =
+  | { stage: 'raw'; data: unknown }
+  | { stage: 'analysis'; data: unknown }
+  | { stage: 'model'; data: unknown }
+  | { stage: 'output'; data: WriterArtifacts };
+
+export type PipelineDebugSink<
+  E extends PipelineStageEvent = PipelineStageEvent,
+> = (event: E) => void;
+
+export type WriterArtifacts = Readonly<Record<string, Uint8Array>>;
+
 export interface DocxReaderOptions extends ConversionOptions {
   filename?: string;
   stylePreset?: Readonly<Record<string, StyleMapping>>;
   styleMappings?: Readonly<Record<string, StyleMapping>>;
+  onStage?: PipelineDebugSink<{ stage: 'model'; data: DocumentModel }>;
   limits?: {
     maxCompressedBytes?: number;
     maxUncompressedBytes?: number;
@@ -340,7 +355,9 @@ export interface DocxReader {
   read(input: Uint8Array, options: DocxReaderOptions): Promise<DocumentModel>;
 }
 
-export interface WriterOptions extends ConversionOptions {}
+export interface WriterOptions extends ConversionOptions {
+  onStage?: PipelineDebugSink<{ stage: 'output'; data: WriterArtifacts }>;
+}
 
 export interface TextWriter<O extends WriterOptions = WriterOptions> {
   write(model: DocumentModel, options: O): string;

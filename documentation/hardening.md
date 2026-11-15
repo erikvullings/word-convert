@@ -52,6 +52,21 @@ Source documents, presets, and model inputs are protected, including aliases;
 temporary output is removed on failure. CLI I/O and overwrite assertions live
 in `apps/cli/src/cli.test.ts`.
 
+`--debug-pipeline` creates a new mode-restricted directory beneath the current
+working directory, or outside it only with `--force`; existing targets, the
+input directory and its ancestors are rejected. The parent must already exist.
+The output file cannot be placed inside the dump directory.
+Readers and writers expose typed `onStage` snapshots from their existing
+conversion pass. The CLI serializes each stage through explicit allowlists,
+caps JSON stages at 16 MiB and writer artifacts at 64 MiB, truncates long text
+and collections, and replaces raw/model asset bytes with SHA-256 references.
+Stage-4 writer assets are omitted by default; `--debug-pipeline-assets` opts in
+to copying exact stage-4 files and preserving embedded data URLs, and requires
+`--debug-pipeline`. Treat opted-in dumps as containing all converted assets.
+Dump filesystem failures warn and do not change conversion results. Boundary,
+truncation, default-asset-omission, opt-in exact-output, and output-identity checks are covered by
+`apps/cli/src/cli.test.ts` and `apps/cli/src/pipeline-debug.test.ts`.
+
 Text input is fatal-decoded UTF-8 under the same 50 MiB bound. parse5 parses
 HTML inertly without scripting, resource requests, or XML external entities.
 The semantic reader drops active elements, styles and unsafe destinations

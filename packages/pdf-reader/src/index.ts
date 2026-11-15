@@ -10,6 +10,7 @@ import {
   type InferredValue,
   type InlineNode,
   type Person,
+  type PipelineDebugSink,
   type Provenance,
   type StyleMapping,
   type TableNode,
@@ -208,6 +209,7 @@ export interface PdfCropOptions {
 }
 
 export interface PdfAnalysisOptions extends ConversionOptions {
+  onStage?: PipelineDebugSink<PdfPipelineStageEvent>;
   filename?: string;
   /** Short-line threshold used when PDF line endings show hard breaks. */
   unwrapFactor?: number;
@@ -271,6 +273,11 @@ export interface PdfAnalysisResult {
   model: DocumentModel;
   analysis: PdfAnalysisSummary;
 }
+
+export type PdfPipelineStageEvent =
+  | { stage: 'raw'; data: RawPdfDocument }
+  | { stage: 'analysis'; data: PdfAnalysisSummary }
+  | { stage: 'model'; data: DocumentModel };
 
 /**
  * Which table signals the reader may use. Tagged and ruled signals are on by
@@ -338,7 +345,7 @@ export const pdfJsReader: PdfReader = {
   implementation: 'pdfjs',
   async readRaw(input, options) {
     validateInput(input);
-    return extractPdfWithPdfJs(input, {
+    const raw = await extractPdfWithPdfJs(input, {
       limits: { ...DEFAULT_LIMITS, ...options.limits },
       ...(options.cancellation ? { cancellation: options.cancellation } : {}),
       ...(options.onProgress ? { onProgress: options.onProgress } : {}),
@@ -369,6 +376,8 @@ export const pdfJsReader: PdfReader = {
         ...options.formulaLimits,
       },
     });
+    options.onStage?.({ stage: 'raw', data: raw });
+    return raw;
   },
   async read(input, options) {
     const raw = await this.readRaw(input, options);
@@ -846,7 +855,7 @@ export async function analysePdf(
         bounds: { x, top, width, height },
       })),
   );
-  return {
+  const result: PdfAnalysisResult = {
     model: {
       schema: DOCUMENT_MODEL_SCHEMA,
       version: DOCUMENT_MODEL_VERSION,
@@ -896,6 +905,9 @@ export async function analysePdf(
       ...(tables.length > 0 ? { tables } : {}),
     },
   };
+  options.onStage?.({ stage: 'analysis', data: result.analysis });
+  options.onStage?.({ stage: 'model', data: result.model });
+  return result;
 }
 
 function densePageWarnings(pages: readonly RawPdfPage[]): ConversionWarning[] {

@@ -2,6 +2,10 @@ import { posix } from 'node:path';
 import type { Element } from '@xmldom/xmldom';
 import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import type { EpubImageResizer } from '@wordconvert/epub-writer';
+import type {
+  PipelineDebugSink,
+  WriterArtifacts,
+} from '@wordconvert/document-model';
 import { inspectRasterImage } from './image-resizer.ts';
 import {
   EpubStructure,
@@ -25,6 +29,7 @@ export interface ShrinkEpubOptions {
   quality: number;
   splitChapters?: boolean;
   resize?: EpubImageResizer;
+  onStage?: PipelineDebugSink<{ stage: 'output'; data: WriterArtifacts }>;
   warn(message: string): void;
 }
 
@@ -276,6 +281,7 @@ export async function shrinkEpub(
   if (options.splitChapters) structure.splitChapters();
   structure.addMissingToc();
   const rewritten = structure.finish();
+  options.onStage?.({ stage: 'output', data: entries });
   if (!changed && !rewritten) return input;
   const files: Zippable = Object.create(null);
   files.mimetype = [strToU8('application/epub+zip'), { level: 0 }];

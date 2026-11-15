@@ -264,7 +264,19 @@ export async function writeEpub(
     );
   }
   for (const entry of assets) files[entry.path] = entry.asset.data;
+  if (options.onStage) {
+    const artifacts: Record<string, Uint8Array> = {};
+    for (const [path, value] of Object.entries(files))
+      artifacts[path] = artifactBytes(value);
+    options.onStage({ stage: 'output', data: artifacts });
+  }
   return zipSync(files, { level: 9, mtime: ZIP_TIME });
+}
+
+function artifactBytes(value: Zippable[string]): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (Array.isArray(value) && value[0] instanceof Uint8Array) return value[0];
+  throw new TypeError('Writer artifact is not a byte array.');
 }
 
 function resolveSourceAssetPaths(

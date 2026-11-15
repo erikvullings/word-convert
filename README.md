@@ -85,6 +85,18 @@ short-line handling and opt-in `--dehyphenate on` for evidence-based word joins.
 The reader reports suspicious multi-column ordering for review rather than
 treating the PDF text layer as authoritative. See [the CLI guide](documentation/cli.md#pdf-text-reflow).
 
+Use repeatable `--verbose` (up to twice) for stage timings and object counts,
+then applied options and inference provider/model details. `--debug-pipeline
+<dir>` also enables stage timings and writes a versioned request, PDF raw and
+analysis data, the final semantic model, and pre-packaged writer text files.
+The DOCX reader and existing-EPUB shrinker identify unavailable semantic stages
+explicitly. Dumps contain document text, are created in a new private directory,
+and omit asset bytes in favor of size/SHA-256 references by default. Use
+`--debug-pipeline-assets` to include exact stage-4 writer artifacts, including
+embedded base64 data URLs. Keep dumps private;
+`--force` is required for a dump directory outside the current working directory
+and never permits using the input directory or one of its ancestors.
+
 With [Bun 1.3.11](https://bun.sh/) installed for development:
 
 ```sh

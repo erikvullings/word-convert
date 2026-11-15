@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   copyFile,
   link,
+  mkdir,
   mkdtemp,
   readFile,
   rm,
@@ -50,6 +51,12 @@ async function directory() {
   return path;
 }
 
+async function workspaceDirectory() {
+  const path = await mkdtemp(join(process.cwd(), '.wordconvert-cli-test-'));
+  directories.push(path);
+  return path;
+}
+
 async function invoke(args: string[]) {
   const output: Array<string | Uint8Array> = [];
   const errors: string[] = [];
@@ -62,6 +69,10 @@ async function invoke(args: string[]) {
     },
   });
   return { code, output, errors: errors.join('') };
+}
+
+async function readJson(path: string) {
+  return JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
 }
 
 afterEach(async () => {
@@ -130,7 +141,251 @@ describe('CLI arguments and output', () => {
     );
     expect((await invoke(['--help'])).output[0]).toContain('--unwrap-factor');
     expect((await invoke(['--help'])).output[0]).toContain('--dehyphenate');
+    expect((await invoke(['--help'])).output[0]).toContain('--debug-pipeline');
+    expect((await invoke(['--help'])).output[0]).toContain(
+      '--debug-pipeline-assets',
+    );
+    expect((await invoke(['--help'])).output[0]).toContain('--verbose');
+    expect((await invoke(['--help'])).output[0]).toContain(
+      'Pipeline dumps contain document text',
+    );
     expect((await invoke(['--version'])).output[0]).toBe(`${version}\n`);
+  });
+
+  it('dumps the same PDF stages and preserves output bytes', async () => {
+    const debug = join(await directory(), 'pdf-dump');
+    const args = [
+      pdf,
+      '--no-layout',
+      '--offline',
+      '-f',
+      'epub',
+      '-o',
+      '-',
+      ...fixedDate,
+    ];
+    const baseline = await invoke(args);
+    const result = await invoke([
+      ...args,
+      '--debug-pipeline',
+      debug,
+      '--force',
+    ]);
+
+    expect(result.code, result.errors).toBe(0);
+    expect(result.output).toEqual(baseline.output);
+    expect(result.errors).toContain('Stage raw:');
+    expect(result.errors).toContain('Stage analysis:');
+    expect(result.errors).toContain('Stage model:');
+    expect(result.errors).toContain('Stage output:');
+    const request = await readJson(join(debug, '0-request.json'));
+    const raw = await readJson(join(debug, '1-raw.json'));
+    const analysis = await readJson(join(debug, '2-analysis.json'));
+    const model = await readJson(join(debug, '3-model.json'));
+    const packageFile = await readFile(
+      join(debug, '4-output/EPUB/package.opf'),
+      'utf8',
+    );
+    expect(request.schema).toBe(1);
+    expect(request.stage).toBe('request');
+    expect(JSON.stringify(request)).not.toContain(process.cwd());
+    expect(raw.pageCount).toBeGreaterThan(0);
+    expect(Array.isArray(raw.pages)).toBe(true);
+    expect(analysis.crop).toBeDefined();
+    expect(Array.isArray(analysis.candidates)).toBe(true);
+    expect(Array.isArray(model.blocks)).toBe(true);
+    expect(packageFile).toContain('<package');
+    const repeatedDebug = join(await directory(), 'pdf-dump-repeat');
+    const repeated = await invoke([
+      ...args,
+      '--debug-pipeline',
+      repeatedDebug,
+      '--force',
+    ]);
+    expect(repeated.code, repeated.errors).toBe(0);
+    for (const stageFile of [
+      '0-request.json',
+      '1-raw.json',
+      '2-analysis.json',
+      '3-model.json',
+      '4-output/EPUB/package.opf',
+    ])
+      expect(await readFile(join(repeatedDebug, stageFile))).toEqual(
+        await readFile(join(debug, stageFile)),
+      );
+  }, 30_000);
+
+  it('dumps the DOCX semantic model and records unavailable reader stages', async () => {
+    const debug = join(await directory(), 'docx-dump');
+    const args = [fixture, '-f', 'html', '-o', '-', ...fixedDate];
+    const baseline = await invoke(args);
+    const result = await invoke([
+      ...args,
+      '--debug-pipeline',
+      debug,
+      '--force',
+    ]);
+
+    expect(result.code, result.errors).toBe(0);
+    expect(result.output).toEqual(baseline.output);
+    expect((await readJson(join(debug, '1-raw.json'))).status).toBe(
+      'not-applicable',
+    );
+    expect((await readJson(join(debug, '2-analysis.json'))).status).toBe(
+      'not-applicable',
+    );
+    expect((await readJson(join(debug, '3-model.json'))).blocks).toBeDefined();
+    const dumpedHtml = await readFile(
+      join(debug, '4-output/document.html'),
+      'utf8',
+    );
+    expect(dumpedHtml).not.toContain('base64,');
+    expect(
+      dumpedHtml.match(/wordconvert-asset-ref:inline-asset-\d+/g),
+    ).toHaveLength(2);
+    expect(
+      (await readJson(join(debug, '4-output/assets.json'))).assets,
+    ).toHaveLength(2);
+    const exactDebug = join(await directory(), 'docx-exact-dump');
+    const exact = await invoke([
+      ...args,
+      '--debug-pipeline',
+      exactDebug,
+      '--debug-pipeline-assets',
+      '--force',
+    ]);
+    expect(exact.code, exact.errors).toBe(0);
+    expect(exact.output).toEqual(baseline.output);
+    const baselineHtml = baseline.output[0];
+    if (baselineHtml === undefined) throw new Error('Expected HTML output.');
+    expect(await readFile(join(exactDebug, '4-output/document.html'))).toEqual(
+      Buffer.from(baselineHtml),
+    );
+    const exactAssets = (
+      await readJson(join(exactDebug, '4-output/assets.json'))
+    ).assets as Array<{ included: boolean }>;
+    expect(exactAssets).toHaveLength(2);
+    expect(exactAssets.every((asset) => asset.included)).toBe(true);
+    const verbose = await invoke([...args, '--verbose', '--verbose']);
+    expect(verbose.code).toBe(0);
+    expect(verbose.output).toEqual(baseline.output);
+    expect(verbose.errors).toContain('Stage model:');
+    expect(verbose.errors).toContain('Options: format=html');
+    expect(verbose.errors).toContain('Models: provider=not-used');
+  }, 30_000);
+
+  it('dumps EPUB-shrink artifacts without changing the repacked bytes', async () => {
+    const sourcePath = join(await directory(), 'source.epub');
+    const created = await invoke([
+      fixture,
+      '--max-image-size',
+      '0',
+      '-f',
+      'epub',
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+    expect(created.code, created.errors).toBe(0);
+    const source = created.output[0];
+    if (!(source instanceof Uint8Array))
+      throw new Error('Expected generated EPUB bytes.');
+    await writeFile(sourcePath, source);
+    const args = [sourcePath, '--max-image-size', '0', '-o', '-'];
+    const baseline = await invoke(args);
+    const debug = join(await directory(), 'epub-dump');
+    const result = await invoke([
+      ...args,
+      '--debug-pipeline',
+      debug,
+      '--force',
+    ]);
+
+    expect(result.code, result.errors).toBe(0);
+    expect(result.output).toEqual(baseline.output);
+    expect((await readJson(join(debug, '1-raw.json'))).status).toBe(
+      'not-applicable',
+    );
+    expect((await readJson(join(debug, '3-model.json'))).status).toBe(
+      'not-applicable',
+    );
+    expect(
+      await readFile(join(debug, '4-output/EPUB/nav.xhtml'), 'utf8'),
+    ).toContain('<nav');
+  }, 30_000);
+
+  it('bounds verbose levels and enforces pipeline dump path boundaries', async () => {
+    expect((await invoke([fixture, '--debug-pipeline-assets'])).code).toBe(2);
+    expect(
+      (await invoke([fixture, '--verbose', '--verbose', '--verbose'])).code,
+    ).toBe(2);
+    const outside = join(await directory(), 'outside-dump');
+    expect(
+      (
+        await invoke([
+          fixture,
+          '-f',
+          'html',
+          '-o',
+          '-',
+          '--debug-pipeline',
+          outside,
+        ])
+      ).code,
+    ).toBe(2);
+
+    const outputDump = join(await directory(), 'dump-with-output');
+    expect(
+      (
+        await invoke([
+          fixture,
+          '-f',
+          'html',
+          '-o',
+          join(outputDump, 'document.html'),
+          '--debug-pipeline',
+          outputDump,
+        ])
+      ).code,
+    ).toBe(2);
+
+    const parent = await workspaceDirectory();
+    const inputDirectory = join(parent, 'source');
+    await mkdir(inputDirectory);
+    const input = join(inputDirectory, 'document.docx');
+    await copyFile(fixture, input);
+    expect(
+      (
+        await invoke([
+          input,
+          '-f',
+          'html',
+          '-o',
+          '-',
+          '--debug-pipeline',
+          parent,
+          '--force',
+        ])
+      ).code,
+    ).toBe(2);
+
+    const existing = join(await directory(), 'existing');
+    await mkdir(existing);
+    await writeFile(join(existing, 'keep.txt'), 'private');
+    expect(
+      (
+        await invoke([
+          fixture,
+          '-f',
+          'html',
+          '-o',
+          '-',
+          '--debug-pipeline',
+          existing,
+          '--force',
+        ])
+      ).code,
+    ).toBe(2);
   });
 
   it.each([

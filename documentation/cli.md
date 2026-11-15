@@ -11,6 +11,47 @@ downloaded once with a warning, then cached; document content stays on-device.
 Use `--offline` to prohibit all network requests, or `--no-layout` for basic PDF
 conversion without a model or native runtime.
 
+## Pipeline diagnostics
+
+`--verbose` is repeatable up to twice. The first level reports elapsed time and
+object counts for each conversion stage to stderr; the second adds a sanitized
+applied-option summary and the selected inference provider/model. It never
+changes stdout. `--debug-pipeline <dir>` implies the first verbosity level and
+writes these versioned (`schema: 1`) artifacts from the same objects the
+conversion uses, without running a second reader or writer pass:
+
+| Artifact | Contents |
+| --- | --- |
+| `0-request.json` | Effective options with filesystem paths reduced to basenames |
+| `1-raw.json` | PDF pages, spans, geometry, links, fonts, tagged structure and image size/SHA-256 references |
+| `2-analysis.json` | PDF crop, furniture candidates, scanned/image-backed/dense/fallback pages, formula candidates/image regions and tables |
+| `3-model.json` | Final semantic model, styles, metadata, equations, warnings and asset size/SHA-256 references |
+| `4-output/` | Pre-packaging writer artifacts (such as XHTML/HTML, CSS, EPUB package and navigation files); `assets.json` lists writer assets by size, SHA-256, and inclusion status |
+
+DOCX and text readers do not expose a raw-PDF or PDF-analysis stage, and the
+archive-preserving EPUB shrink path does not construct a semantic model; those
+stage files explicitly say `not-applicable`. The requested dump directory must
+not already exist, its parent must exist, and it cannot be the input file's
+directory or an ancestor of that directory; the conversion output also cannot
+be placed inside the dump. By default it must be inside the
+current working directory. `--force` permits a location outside that directory,
+but does not relax the input-directory boundary. The tool creates the dump
+directory with private permissions; a dump write failure warns on stderr and
+does not fail or alter conversion output.
+
+Pipeline dumps contain document text and can reveal sensitive content. Review
+and protect them before sharing. The dump metadata adds no timestamp, absolute
+filesystem path, or machine hostname. By default, binary assets are not copied:
+binary stage-4 files are omitted, and base64 data URLs are replaced by
+`wordconvert-asset-ref` markers. Use `--debug-pipeline-assets` with
+`--debug-pipeline <dir>` to include the exact stage-4 writer artifacts, including
+embedded assets; this opt-in does not include raw/model assets in their JSON
+stages. `assets.json` records size, SHA-256, and whether each stage-4 asset was
+included. JSON stages are allowlisted and bounded; long text/collections are
+truncated with `"truncated": true`. Without the opt-in, other writer text
+artifacts are preserved byte-for-byte. No pretty-printed variant is emitted
+because these writers do not expose a separate readable rendering.
+
 ## Markdown and HTML input
 
 ```sh

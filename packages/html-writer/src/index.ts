@@ -75,11 +75,22 @@ export function writeHtml(
         (asset) => dataUrl(asset),
         options.formulaMode ?? 'source',
       );
-  if (options.mode === 'fragment') return fragment;
+  if (options.mode === 'fragment') {
+    options.onStage?.({
+      stage: 'output',
+      data: { 'document.html': strToU8(fragment) },
+    });
+    return fragment;
+  }
   const title = escapeHtml(model.metadata.title?.value ?? 'Untitled document');
   const language = sanitizeLanguage(model.metadata.language?.value ?? 'en');
   const metadata = renderMetadata(model);
-  return `<!doctype html><html lang="${language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="WordConvert">${metadata}<title>${title}</title><style>${embeddedFontCss(model)}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${IMAGE_WIDTH_STYLES}${options.sourceHtml ? SOURCE_HTML_STYLES + SOURCE_HTML_EQUATION_LAYOUT_STYLES + SOURCE_HTML_PARAGRAPH_TITLE_STYLES : ''}${options.sourceCss ?? ''}</style></head><body>${fragment}</body></html>`;
+  const html = `<!doctype html><html lang="${language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="WordConvert">${metadata}<title>${title}</title><style>${embeddedFontCss(model)}${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${IMAGE_WIDTH_STYLES}${options.sourceHtml ? SOURCE_HTML_STYLES + SOURCE_HTML_EQUATION_LAYOUT_STYLES + SOURCE_HTML_PARAGRAPH_TITLE_STYLES : ''}${options.sourceCss ?? ''}</style></head><body>${fragment}</body></html>`;
+  options.onStage?.({
+    stage: 'output',
+    data: { 'document.html': strToU8(html) },
+  });
+  return html;
 }
 
 export async function writeHtmlZip(
@@ -110,6 +121,12 @@ export async function writeHtmlZip(
     ),
   };
   for (const { asset, path } of registry.entries) files[path] = asset.data;
+  if (options.onStage) {
+    const artifacts: Record<string, Uint8Array> = {};
+    for (const [path, value] of Object.entries(files))
+      artifacts[path] = artifactBytes(value);
+    options.onStage({ stage: 'output', data: artifacts });
+  }
   const deterministicFiles: Zippable = {};
   for (const path of Object.keys(files).sort()) {
     const data = files[path];
@@ -119,6 +136,12 @@ export async function writeHtmlZip(
     level: 9,
     mtime: new Date('1980-01-01T00:00:00.000Z'),
   });
+}
+
+function artifactBytes(value: Zippable[string]): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (Array.isArray(value) && value[0] instanceof Uint8Array) return value[0];
+  throw new TypeError('Writer artifact is not a byte array.');
 }
 
 interface ZipAssetEntry {

@@ -34,12 +34,17 @@ export function writeMarkdown(
   model: DocumentModel,
   options: MarkdownWriterOptions,
 ): string {
-  return writeWithAssets(model, options, (assetId) => {
+  const markdown = writeWithAssets(model, options, (assetId) => {
     const asset = model.assets[assetId];
     return asset && isPassiveImage(asset.mediaType)
       ? `data:${asset.mediaType.toLowerCase()};base64,${base64(asset.data)}`
       : undefined;
   });
+  options.onStage?.({
+    stage: 'output',
+    data: { 'document.md': strToU8(markdown) },
+  });
+  return markdown;
 }
 
 export async function writeMarkdownZip(
@@ -60,6 +65,12 @@ export async function writeMarkdownZip(
   files['document.md'] = strToU8(
     writeWithAssets(model, options, (id) => paths.get(id)),
   );
+  if (options.onStage) {
+    const artifacts: Record<string, Uint8Array> = {};
+    for (const [path, value] of Object.entries(files))
+      artifacts[path] = artifactBytes(value);
+    options.onStage({ stage: 'output', data: artifacts });
+  }
   const sortedFiles: Zippable = {};
   for (const path of Object.keys(files).sort()) {
     const data = files[path];
@@ -69,6 +80,12 @@ export async function writeMarkdownZip(
     level: 9,
     mtime: new Date('1980-01-01T00:00:00.000Z'),
   });
+}
+
+function artifactBytes(value: Zippable[string]): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (Array.isArray(value) && value[0] instanceof Uint8Array) return value[0];
+  throw new TypeError('Writer artifact is not a byte array.');
 }
 
 function writeWithAssets(

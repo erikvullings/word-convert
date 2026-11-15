@@ -1,6 +1,6 @@
 # 0044 Add conversion pipeline stage dumps and verbosity levels
 
-Status: open
+Status: done
 Priority: medium
 Owner: unassigned
 Agent: pi
@@ -33,15 +33,17 @@ investigation from scratch.
   3. `3-model.json` — the final `DocumentModel` (blocks, styles, metadata, equations,
      warnings) with assets replaced by references;
   4. `4-output/` — the pre-packaged writer artifacts (XHTML files, `styles.css`,
-     `package.opf`, `nav.xhtml`) exactly as the EPUB/HTML writer produced them, plus a
-     readable/pretty variant where the writer supports it;
+     `package.opf`, `nav.xhtml`); `--debug-pipeline-assets` preserves them exactly,
+     including embedded data URLs, and copies their binary assets. A readable/pretty
+     variant is included where the writer supports it;
   5. `0-request.json` — the effective, sanitized option set actually used.
 - Stage dumps never change conversion behaviour or output bytes: converting with and
   without the flag produces identical output (asserted by test), and dumping is
   best-effort with a warning rather than a fatal error.
 - Dumps are deterministic: no timestamps, no absolute paths, no hostnames, stable key
   order, and no source filename leakage beyond the sanitized basename already used in
-  output; asset bytes are omitted unless a separate explicit flag copies them.
+  output; raw/model assets and stage-4 assets are omitted by default, while the
+  explicit `--debug-pipeline-assets` flag copies exact stage-4 writer assets.
 - Privacy boundaries are explicit and tested: the directory must be created by the tool,
   may not be the input file's directory, an ancestor of it, an existing non-empty
   directory, or outside the current working directory without `--force`; help text and

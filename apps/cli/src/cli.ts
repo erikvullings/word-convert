@@ -15,6 +15,7 @@ import {
   isConversionError,
   type DocumentModel,
   type InferredValue,
+  type PipelineStageEvent,
   type StyleMapping,
 } from '@wordconvert/document-model';
 import { secureDocxReader } from '@wordconvert/docx-reader';
@@ -35,6 +36,10 @@ import {
   ensureModel,
   MODEL_FILES,
 } from './model-cache.ts';
+import {
+  createPipelineDebugDump,
+  PipelineDebugUsageError,
+} from './pipeline-debug.ts';
 
 const FORMATS = [
   'html',
@@ -81,6 +86,9 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --split-chapters        EPUB input: split at chapter headings (opt-in)
                               A missing TOC is generated automatically
       --conversion-date <ISO>  Fixed date or UTC timestamp for reproducible output
+      --debug-pipeline <dir>   Write bounded, privacy-sensitive stage artifacts
+      --debug-pipeline-assets  Include exact stage-4 writer assets; requires --debug-pipeline
+      --verbose                Repeat up to twice for stage timings and options
       --rasterize             Render PDF vectors/pages using the native runtime
       --layout-model <path>   Use a local Heron ONNX model instead of the cached default
       --no-layout             Disable default PDF layout analysis (no Heron download)
@@ -112,6 +120,9 @@ Formula OCR is optional (~245 MiB). Documents are never uploaded.
 Keep runtime/ beside the executable; temporary directories are not needed.
 Auto prefers CoreML on macOS, WebGPU elsewhere, with a warning on CPU fallback.
 Explicit GPU choices fail rather than silently fall back; unsupported operators use CPU.
+Pipeline dumps contain document text and omit asset bytes by default. Use
+--debug-pipeline-assets to include exact stage-4 writer assets; choose a private directory.
+Stages: raw PDF, PDF analysis, semantic model, and pre-packaged writer artifacts.
 
 Examples:
   wordconvert notes.md -o notes.epub
@@ -146,6 +157,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     for (const [name, value] of Object.entries(values))
       if (typeof value === 'string' && !value.trim())
         throw new UsageError(`--${name} must not be empty.`);
+    const requestedVerbose = parseVerbose(values.verbose);
     const cacheDirectory = resolve(
       values['model-cache-dir'] ?? defaultModelCache(),
     );
@@ -168,6 +180,10 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     if (!input || positionals.length !== 1)
       throw new UsageError(
         'Provide exactly one local DOCX, PDF, Markdown, HTML, or EPUB input. See --help.',
+      );
+    if (values['debug-pipeline-assets'] && !values['debug-pipeline'])
+      throw new UsageError(
+        '--debug-pipeline-assets requires --debug-pipeline <dir>.',
       );
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input))
       throw new UsageError(
@@ -224,6 +240,9 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         'split-chapters',
         'runtime-dir',
         'offline',
+        'verbose',
+        'debug-pipeline',
+        'debug-pipeline-assets',
       ]);
       for (const key of Object.keys(values))
         if (!allowed.has(key))
@@ -356,6 +375,101 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         throw new UsageError(preset.error ?? 'Invalid style preset.');
       stylePreset = preset.mappings;
     }
+    const verbose = Math.max(
+      requestedVerbose,
+      values['debug-pipeline'] ? 1 : 0,
+    );
+    const pipelineRequest = {
+      input: sanitizeBasename(input),
+      inputFormat: extension.slice(1),
+      output: output === '-' ? '-' : sanitizeBasename(output),
+      outputFormat: format,
+      options: {
+        conversionDate: extension === '.epub' ? null : conversionDate,
+        formulaMode: extension === '.epub' ? null : formulaMode,
+        maxImageSize,
+        imageFormat,
+        imageQuality,
+        splitChapters: values['split-chapters'] ?? false,
+        force: values.force ?? false,
+        verbose,
+        debugPipeline: Boolean(values['debug-pipeline']),
+        debugPipelineAssets: Boolean(values['debug-pipeline-assets']),
+        layout:
+          extension === '.pdf'
+            ? values['no-layout']
+              ? 'disabled'
+              : 'automatic'
+            : 'not-used',
+        layoutModel: values['layout-model']
+          ? sanitizeBasename(values['layout-model'])
+          : null,
+        formulaOcr: Boolean(
+          values['formula-ocr'] || values['formula-model-dir'],
+        ),
+        formulaModelDirectory: values['formula-model-dir']
+          ? sanitizeBasename(values['formula-model-dir'])
+          : null,
+        executionProvider:
+          extension === '.pdf'
+            ? (values['execution-provider'] ?? 'auto')
+            : 'not-used',
+        rasterize: values.rasterize ?? false,
+        frontPageCover: values['frontpage-cover'] ?? false,
+        pdfTables:
+          extension === '.pdf'
+            ? (pdfTables ?? { tagged: true, ruled: true, borderless: false })
+            : null,
+        unwrapFactor: extension === '.pdf' ? (unwrapFactor ?? 0.45) : null,
+        dehyphenate: extension === '.pdf' ? (dehyphenate ?? false) : null,
+        stylePreset: presetPath ? sanitizeBasename(presetPath) : null,
+        cover: values.cover ? sanitizeBasename(values.cover) : null,
+        title: sanitizeRequestText(values.title),
+        authors: (values.author ?? []).map(sanitizeRequestText),
+        language: sanitizeRequestText(values.language),
+        identifier: sanitizeRequestText(values.identifier),
+        includeExternalImages: values['include-external-images'] ?? false,
+        offline: values.offline ?? false,
+        runtimeConfigured: Boolean(values['runtime-dir']),
+      },
+    };
+    const pipelineDump = values['debug-pipeline']
+      ? await createPipelineDebugDump({
+          directory: values['debug-pipeline'],
+          input,
+          output,
+          cwd: process.cwd(),
+          force: values.force ?? false,
+          includeAssets: values['debug-pipeline-assets'] ?? false,
+          request: pipelineRequest,
+          warn: io.stderr,
+        })
+      : undefined;
+    const diagnostics = new CliStageDiagnostics(verbose);
+    const onStage = (event: PipelineStageEvent): void => {
+      pipelineDump?.onStage(event);
+      diagnostics.record(event);
+    };
+    if (pipelineDump && extension !== '.pdf') {
+      const reason =
+        extension === '.epub'
+          ? 'Existing EPUB shrinking preserves its archive and does not create a raw reader stage.'
+          : extension === '.docx'
+            ? 'The DOCX reader does not expose a raw OOXML stage.'
+            : 'Text inputs are parsed directly into the semantic model.';
+      pipelineDump.onStage({
+        stage: 'raw',
+        data: { status: 'not-applicable', reason },
+      });
+      pipelineDump.onStage({
+        stage: 'analysis',
+        data: {
+          status: 'not-applicable',
+          reason:
+            'This input format does not expose a separate analysis summary.',
+        },
+      });
+    }
     if (extension === '.epub') {
       const { shrinkEpub, MAX_EPUB_INPUT_BYTES } =
         await import('./shrink-epub.ts');
@@ -371,6 +485,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         quality: imageQuality,
         splitChapters: values['split-chapters'] ?? false,
         ...(resize ? { resize } : {}),
+        ...(pipelineDump || verbose ? { onStage } : {}),
         warn: io.stderr,
       });
       if (output === '-') await io.stdout(data);
@@ -384,6 +499,16 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       io.stderr(
         `EPUB size: ${bytes.length} -> ${data.length} bytes (${percent}% ${data.length <= bytes.length ? 'smaller' : 'larger'}).\n`,
       );
+      if (pipelineDump)
+        pipelineDump.onStage({
+          stage: 'model',
+          data: {
+            status: 'not-applicable',
+            reason:
+              'Existing EPUB shrinking does not construct a semantic DocumentModel.',
+          },
+        });
+      diagnostics.report(io.stderr, pipelineRequest);
       return 0;
     }
     const bytes = await readBounded(input, MAX_INPUT_BYTES);
@@ -466,9 +591,23 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         ...(layoutModel ? { layoutModel } : {}),
         ...(formulaModelDir ? { formulaModelDir } : {}),
         ...(values['runtime-dir'] ? { runtimeDir: values['runtime-dir'] } : {}),
+        ...(pipelineDump || verbose
+          ? {
+              onStage: (event) => {
+                if (event.stage !== 'model') onStage(event);
+              },
+            }
+          : {}),
       });
       model = pdfResult.model;
       coverPng = pdfResult.coverPng;
+      diagnostics.setModelSelection({
+        provider: pdfResult.executionProvider ?? 'not-initialized',
+        layout: layoutModel ? sanitizeBasename(layoutModel) : 'disabled',
+        formula: formulaModelDir
+          ? sanitizeBasename(formulaModelDir)
+          : 'disabled',
+      });
     }
     if (values.title !== undefined)
       model.metadata.title = userValue(values.title);
@@ -501,6 +640,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     const cover = values.cover
       ? await readCover(values.cover, model)
       : undefined;
+    if (pipelineDump || verbose) onStage({ stage: 'model', data: model });
     const data = await render(model, format, conversionDate, formulaMode, {
       maxImageSize,
       imageFormat,
@@ -509,6 +649,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       warn: io.stderr,
       ...(cover ? { cover } : {}),
       ...(coverPng ? { coverPng } : {}),
+      ...(pipelineDump || verbose ? { onStage } : {}),
     });
     for (const warning of model.warnings)
       io.stderr(`${warning.severity} [${warning.code}]: ${warning.message}\n`);
@@ -517,9 +658,13 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       await saveOutput(output, data, values.force ?? false);
       io.stderr(`Written ${output}\n`);
     }
+    diagnostics.report(io.stderr, pipelineRequest);
     return 0;
   } catch (error) {
-    const code = error instanceof UsageError ? 2 : 1;
+    const code =
+      error instanceof UsageError || error instanceof PipelineDebugUsageError
+        ? 2
+        : 1;
     const message = isConversionError(error)
       ? `[${error.code}] ${error.message}`
       : typeof error === 'object' &&
@@ -574,6 +719,9 @@ function parseArguments(argv: string[]) {
         'runtime-dir': { type: 'string' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
+        verbose: { type: 'boolean', multiple: true },
+        'debug-pipeline': { type: 'string' },
+        'debug-pipeline-assets': { type: 'boolean' },
       },
     });
   } catch (error) {
@@ -810,9 +958,14 @@ async function render(
     warn: (message: string) => void;
     cover?: EpubWriterOptions['cover'];
     coverPng?: Uint8Array;
+    onStage?: (event: PipelineStageEvent) => void;
   },
 ): Promise<string | Uint8Array> {
-  const options = { conversionDate, formulaMode };
+  const options = {
+    conversionDate,
+    formulaMode,
+    ...(images.onStage ? { onStage: images.onStage } : {}),
+  };
   const markdownOptions = {
     ...options,
     onWarning: (warning: DocumentModel['warnings'][number]) =>
@@ -849,4 +1002,146 @@ async function render(
       });
     }
   }
+}
+
+function parseVerbose(value: boolean | boolean[] | undefined): number {
+  const count = Array.isArray(value) ? value.length : value ? 1 : 0;
+  if (count > 2)
+    throw new UsageError('--verbose may be repeated at most twice.');
+  return count;
+}
+
+function sanitizeBasename(path: string): string {
+  return (
+    basename(path)
+      .replaceAll(/[\\/\p{Cc}]/gu, '_')
+      .slice(0, 255) || '[unnamed]'
+  );
+}
+
+function sanitizeRequestText(value: string | undefined): string | undefined {
+  return value
+    ?.replaceAll(/[\p{Cc}]/gu, ' ')
+    .replaceAll(
+      /(?:^|[\s"'=])(?:\/[^\s"'<>]+|[A-Za-z]:[\\/][^\s"'<>]*)/gu,
+      ' [path]',
+    )
+    .slice(0, 2048);
+}
+
+interface CliStageSnapshot {
+  stage: string;
+  at: number;
+  counts: string;
+}
+
+class CliStageDiagnostics {
+  private readonly startedAt = performance.now();
+  private readonly snapshots: CliStageSnapshot[] = [];
+  private modelSelection = {
+    provider: 'not-used',
+    layout: 'not-used',
+    formula: 'not-used',
+  };
+
+  constructor(private readonly verbosity: number) {}
+
+  record(event: PipelineStageEvent): void {
+    try {
+      const value = isRecord(event.data) ? event.data : {};
+      if (value.status === 'not-applicable') return;
+      this.snapshots.push({
+        stage: event.stage,
+        at: performance.now(),
+        counts: this.counts(event.stage, value),
+      });
+    } catch {
+      this.snapshots.push({
+        stage: event.stage,
+        at: performance.now(),
+        counts: 'counts unavailable',
+      });
+    }
+  }
+
+  setModelSelection(selection: {
+    provider: string;
+    layout: string;
+    formula: string;
+  }): void {
+    this.modelSelection = selection;
+  }
+
+  report(
+    write: (message: string) => void,
+    request: Record<string, unknown>,
+  ): void {
+    if (!this.verbosity) return;
+    const options = isRecord(request.options) ? request.options : {};
+    for (let index = 0; index < this.snapshots.length; index++) {
+      const current = this.snapshots[index]!;
+      const previous = this.snapshots[index - 1];
+      const duration = Math.max(
+        0,
+        (index === this.snapshots.length - 1 ? performance.now() : current.at) -
+          (previous?.at ?? this.startedAt),
+      );
+      write(
+        `Stage ${current.stage}: ${duration.toFixed(1)} ms; ${current.counts}.\n`,
+      );
+    }
+    if (this.verbosity < 2) return;
+    write(
+      `Options: format=${String(request.outputFormat)}; formula-mode=${String(options.formulaMode)}; layout=${String(options.layout)}; pdf-tables=${JSON.stringify(options.pdfTables)}; unwrap-factor=${String(options.unwrapFactor)}; dehyphenate=${String(options.dehyphenate)}; rasterize=${String(options.rasterize)}; formula-ocr=${String(options.formulaOcr)}; image-size=${String(options.maxImageSize)}; image-format=${String(options.imageFormat)}; image-quality=${String(options.imageQuality)}; split-chapters=${String(options.splitChapters)}; style-preset=${options.stylePreset ? 'provided' : 'none'}; cover=${options.cover ? 'provided' : 'none'}; metadata-overrides=${Boolean(options.title || array(options.authors).length || options.language || options.identifier)}.\n`,
+    );
+    write(
+      `Models: provider=${this.modelSelection.provider}; layout=${this.modelSelection.layout}; formula=${this.modelSelection.formula}.\n`,
+    );
+  }
+
+  private counts(stage: string, value: Record<string, unknown>): string {
+    if (stage === 'raw') {
+      const pages = array(value.pages);
+      return `pages=${pages.length}, spans=${pages.reduce<number>((count, page) => count + array(record(page).spans).length, 0)}, images=${pages.reduce<number>((count, page) => count + array(record(page).images).length, 0)}, links=${pages.reduce<number>((count, page) => count + array(record(page).links).length, 0)}`;
+    }
+    if (stage === 'analysis')
+      return `pages=${array(value.analysedPages).length}, furniture=${array(value.candidates).length}, formulas=${array(value.formulaCandidates).length}, formula-images=${array(value.formulaImageRegions).length}`;
+    if (stage === 'model')
+      return `blocks=${countBlocks(value.blocks)}, styles=${array(value.styles).length}, assets=${Object.keys(record(value.assets)).length}, equations=${Object.keys(record(value.equations)).length}, warnings=${array(value.warnings).length}`;
+    if (stage === 'output') {
+      const artifacts = record(value);
+      return `files=${Object.keys(artifacts).length}, bytes=${Object.values(artifacts).reduce<number>((sum, item) => sum + (item instanceof Uint8Array ? item.byteLength : 0), 0)}`;
+    }
+    return 'objects=0';
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function array(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function countBlocks(value: unknown): number {
+  const pending = [...array(value)];
+  let count = 0;
+  while (pending.length && count < 100_000) {
+    const block = record(pending.pop());
+    count++;
+    if (block.type === 'list')
+      for (const item of array(block.items))
+        pending.push(...array(record(item).blocks));
+    else if (block.type === 'table')
+      for (const row of array(block.rows))
+        for (const cell of array(record(row).cells))
+          pending.push(...array(record(cell).blocks));
+    else if (block.type === 'blockquote') pending.push(...array(block.blocks));
+  }
+  return count;
 }

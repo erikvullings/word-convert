@@ -12,9 +12,11 @@ import {
 } from './inference-options.ts';
 import type {
   PdfFigureRasterizer,
+  PdfPipelineStageEvent,
   PdfReaderOptions,
   PdfTableOptions,
 } from '@wordconvert/pdf-reader';
+import type { PipelineDebugSink } from '@wordconvert/document-model';
 
 export interface CliPdfOptions extends ConversionOptions {
   layoutModel?: string;
@@ -27,11 +29,13 @@ export interface CliPdfOptions extends ConversionOptions {
   runtimeDir?: string;
   executionProvider?: ProviderSelection;
   onDiagnostic?: (message: string) => void;
+  onStage?: PipelineDebugSink<PdfPipelineStageEvent>;
 }
 
 export interface CliPdfResult {
   model: DocumentModel;
   coverPng?: Uint8Array;
+  executionProvider?: ProviderSelection;
 }
 
 // PDF.js discovers this in-process worker instead of importing a file at runtime.
@@ -56,6 +60,7 @@ export async function readPdf(
         >
       >
     | undefined;
+  let selectedProvider: ProviderSelection | undefined;
   if (runtime) {
     const { createNativePdfAdapters } = await import('./native-pdf.ts');
     const selection = options.executionProvider ?? 'cpu';
@@ -63,6 +68,7 @@ export async function readPdf(
       selection === 'auto'
         ? automaticProvider(runtime.ort.listSupportedBackends())
         : selection;
+    selectedProvider = provider;
     if (options.layoutModel || options.formulaModelDir)
       options.onDiagnostic?.(
         `Inference provider: ${provider}${selection === 'auto' ? ' (automatic)' : ''}.\n`,
@@ -130,6 +136,7 @@ export async function readPdf(
     const raw = await pdfJsReader.readRaw(input, readerOptions);
     if (options.frontPageCover && raw.pages[0])
       raw.pages[0] = { ...raw.pages[0], images: [] };
+    options.onStage?.({ stage: 'raw', data: raw });
     const { model } = await analysePdf(raw, {
       conversionDate: options.conversionDate,
       filename,
@@ -140,6 +147,7 @@ export async function readPdf(
       ...(options.dehyphenate !== undefined
         ? { dehyphenate: options.dehyphenate }
         : {}),
+      ...(options.onStage ? { onStage: options.onStage } : {}),
     });
     if (!options.rasterize && !options.layoutModel && !options.formulaModelDir)
       model.warnings.push({
@@ -148,7 +156,11 @@ export async function readPdf(
         message:
           'PDF conversion uses geometry and embedded raster images only. Enable --rasterize, --layout-model, or --formula-model-dir for richer extraction.',
       });
-    return { model, ...(coverPng ? { coverPng } : {}) };
+    return {
+      model,
+      ...(coverPng ? { coverPng } : {}),
+      ...(selectedProvider ? { executionProvider: selectedProvider } : {}),
+    };
   } finally {
     await adapters?.dispose();
   }
