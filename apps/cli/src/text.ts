@@ -8,6 +8,7 @@ import {
   sep,
 } from 'node:path';
 import { readTextDocument } from '@wordconvert/text-reader';
+import type { TextNormalizationOptions } from '@wordconvert/document-model';
 import { createHash } from 'node:crypto';
 import { downloadExternalImage } from './external-images.ts';
 
@@ -28,6 +29,7 @@ export async function readLocalText(
   protectImage?: (path: string) => Promise<void>,
   includeExternalImages = false,
   warn?: (message: string) => void,
+  textNormalization?: TextNormalizationOptions,
 ) {
   const root = await realpath(dirname(resolve(input)));
   const model = await readTextDocument(
@@ -36,6 +38,7 @@ export async function readLocalText(
     {
       filename: input.split(/[\\/]/).at(-1) ?? 'document',
       conversionDate,
+      ...(textNormalization ? { textNormalization } : {}),
       async loadImage(source) {
         if (
           includeExternalImages &&

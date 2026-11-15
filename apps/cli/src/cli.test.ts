@@ -139,6 +139,9 @@ describe('CLI arguments and output', () => {
     ['--chapter-split-level', '7', '--chapter-split-level must be'],
     ['--toc-source', 'unknown', '--toc-source must be'],
     ['--toc-filter', '(Chapter)', '--toc-filter must be'],
+    ['--scene-breaks', 'sometimes', '--scene-breaks must be on or off'],
+    ['--blank-paragraphs', 'sometimes', '--blank-paragraphs must be on or off'],
+    ['--replace-scene-breaks', '<hr>', '--replace-scene-breaks must be'],
   ])('rejects invalid %s values', async (option, value, message) => {
     const result = await invoke([pdf, option, value, ...fixedDate]);
 
@@ -159,6 +162,13 @@ describe('CLI arguments and output', () => {
     );
     expect((await invoke(['--help'])).output[0]).toContain('--unwrap-factor');
     expect((await invoke(['--help'])).output[0]).toContain('--dehyphenate');
+    expect((await invoke(['--help'])).output[0]).toContain('--keep-ligatures');
+    expect((await invoke(['--help'])).output[0]).toContain(
+      '--smarten-punctuation',
+    );
+    expect((await invoke(['--help'])).output[0]).toContain(
+      '--replace-scene-breaks',
+    );
     expect((await invoke(['--help'])).output[0]).toContain('--toc-source');
     expect((await invoke(['--help'])).output[0]).toContain('--toc-inline');
     expect((await invoke(['--help'])).output[0]).toContain('--toc-filter');
@@ -183,6 +193,32 @@ describe('CLI arguments and output', () => {
       'Pipeline dumps contain document text',
     );
     expect((await invoke(['--version'])).output[0]).toBe(`${version}\n`);
+  });
+
+  it('passes safe text-normalization options through the CLI', async () => {
+    const directoryPath = await directory();
+    const input = join(directoryPath, 'normalization.md');
+    const output = join(directoryPath, 'normalization.out.html');
+    await writeFile(input, 'He said, "hello"... ﬁ\n\n***\n\nAfter', 'utf8');
+
+    const result = await invoke([
+      input,
+      '--format',
+      'html',
+      '--output',
+      output,
+      '--language',
+      'en',
+      '--smarten-punctuation',
+      '--replace-scene-breaks',
+      'dots',
+      ...fixedDate,
+    ]);
+
+    expect(result.code).toBe(0);
+    const html = await readFile(output, 'utf8');
+    expect(html).toContain('“hello”… fi');
+    expect(html).toContain('· · ·');
   });
 
   it('passes PDF TOC source and visible contents options through to EPUB output', async () => {

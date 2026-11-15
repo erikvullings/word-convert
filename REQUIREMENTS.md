@@ -104,6 +104,10 @@ Do not include page headers, page footers, watermark shapes or other repetitive 
 
 Support PDF input by reflowing its text into the neutral document model. Page geometry belongs to the reader: writers never see page numbers or coordinates.
 
+Before PDF line merging and chapter splitting, centered curated ornament lines
+and sufficiently large same-page body-text gaps may become semantic
+`thematicBreak` blocks. A page transition alone is never a scene break.
+
 Extract tables when the source states them. A tagged PDF whose structure tree declares a `Table` element with `TR` rows and `TH`/`TD`/`TC` cells converts to a table block:
 
 - keep the declared row and cell order, and mark `TH` cells as header cells;

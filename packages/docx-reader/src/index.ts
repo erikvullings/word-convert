@@ -1,6 +1,7 @@
 import {
   DOCUMENT_MODEL_SCHEMA,
   DOCUMENT_MODEL_VERSION,
+  normalizeDocumentText,
   type AnalysedStyle,
   type BlockNode,
   type ConversionWarning,
@@ -1187,6 +1188,9 @@ export const secureDocxReader: DocxReader = {
       styles,
       warnings,
     };
+    await normalizeDocumentText(model, options.textNormalization, async () => {
+      checkCancellation(options);
+    });
     options.onStage?.({ stage: 'model', data: model });
     options.onProgress?.({ phase: 'read', completed: 1, total: 1 });
     return model;

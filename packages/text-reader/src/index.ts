@@ -3,6 +3,9 @@ import { marked } from 'marked';
 import {
   DOCUMENT_MODEL_SCHEMA,
   DOCUMENT_MODEL_VERSION,
+  normalizeDocumentText,
+  type ConversionOptions,
+  type TextNormalizationOptions,
   type DocumentModel,
   type InferredValue,
 } from '@wordconvert/document-model';
@@ -14,9 +17,9 @@ import {
 
 type Node = DefaultTreeAdapterMap['node'];
 type Element = DefaultTreeAdapterMap['element'];
-export interface TextReaderOptions {
+export interface TextReaderOptions extends ConversionOptions {
   filename: string;
-  conversionDate: string;
+  textNormalization?: TextNormalizationOptions;
   loadImage?: (
     source: string,
   ) => Promise<{ mediaType: string; data: Uint8Array } | undefined>;
@@ -447,5 +450,9 @@ export async function readTextDocument(
     if (id) aliases.set(source, id);
   }
   model.blocks = markdownToBlocks(markdown, model, aliases);
+  await normalizeDocumentText(model, options.textNormalization, async () => {
+    if (options.cancellation?.cancelled)
+      throw new Error('Text reading was cancelled.');
+  });
   return model;
 }

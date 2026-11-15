@@ -23,6 +23,16 @@ export {
 } from './chapter-detection.ts';
 export { createTocFromHeadings, nestTocEntries } from './toc.ts';
 export type { NestedTocEntry } from './toc.ts';
+export {
+  createSceneBreakBlock,
+  DEFAULT_TEXT_NORMALIZATION_OPTIONS,
+  MAX_TEXT_NORMALIZATION_NODES,
+  MAX_TEXT_NORMALIZATION_TEXT,
+  createTextNormalizationWarning,
+  isSceneBreakOrnament,
+  normalizeDocumentBlocks,
+  normalizeDocumentText,
+} from './normalization/text.ts';
 
 export type Confidence = 'low' | 'medium' | 'high' | 'certain';
 
@@ -357,6 +367,7 @@ export interface ConversionOptions {
   conversionDate: string;
   cancellation?: CancellationSignal;
   onProgress?: (progress: ConversionProgress) => void;
+  textNormalization?: TextNormalizationOptions;
 }
 
 export type PipelineStageName = 'raw' | 'analysis' | 'model' | 'output';
@@ -370,6 +381,27 @@ export type PipelineStageEvent =
 export type PipelineDebugSink<
   E extends PipelineStageEvent = PipelineStageEvent,
 > = (event: E) => void;
+
+export type SceneBreakMarker = 'asterisks' | 'dots' | 'floral' | 'em-dash';
+
+export interface TextNormalizationOptions {
+  sceneBreaks?: boolean;
+  blankParagraphs?: boolean;
+  ligatures?: boolean;
+  smartenPunctuation?: boolean;
+  unsmartenPunctuation?: boolean;
+  sceneBreakMarker?: SceneBreakMarker;
+  language?: string;
+}
+
+export interface TextNormalizationSummary {
+  sceneBreaks: number;
+  blankParagraphsRemoved: number;
+  ligatures: number;
+  punctuationSmartened: number;
+  punctuationUnsmartened: number;
+  budgetExceeded: boolean;
+}
 
 export type WriterArtifacts = Readonly<Record<string, Uint8Array>>;
 

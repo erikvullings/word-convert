@@ -23,6 +23,7 @@ import {
   type InferredValue,
   type PipelineStageEvent,
   type StyleMapping,
+  type TextNormalizationOptions,
 } from '@wordconvert/document-model';
 import { secureDocxReader } from '@wordconvert/docx-reader';
 import { writeHtml, writeHtmlZip } from '@wordconvert/html-writer';
@@ -127,6 +128,12 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --unwrap-factor <0..1>  Keep short PDF lines separate; default 0.45
       --dehyphenate <on|off>  Use document-wide evidence to remove PDF word-break
                               hyphens; default off
+      --scene-breaks <on|off> Detect ornament and multi-blank scene breaks; default on
+      --blank-paragraphs <on|off> Remove confidently detected blank paragraphs; default on
+      --keep-ligatures         Preserve ﬁ-style ligature characters; default normalizes
+      --smarten-punctuation    Convert unambiguous quotes, dashes, and ellipses
+      --unsmarten-punctuation  Convert typographic quotes, dashes, and ellipses to ASCII
+      --replace-scene-breaks <marker> Use asterisks, dots, floral, or em-dash instead of rules
       --formula-ocr           Enable TexTeller OCR, downloading missing models once
       --formula-model-dir <dir> Enable TexTeller (encoder.onnx, decoder.onnx,
                               tokenizer.json); overrides cached formula models
@@ -388,6 +395,36 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(values.language)
     )
       throw new UsageError('Language must be a valid BCP 47 language tag.');
+    const sceneBreaks = parseToggle(
+      values['scene-breaks'],
+      true,
+      'scene-breaks',
+    );
+    const blankParagraphs = parseToggle(
+      values['blank-paragraphs'],
+      true,
+      'blank-paragraphs',
+    );
+    const sceneBreakMarker = parseSceneBreakMarker(
+      values['replace-scene-breaks'],
+    );
+    if (sceneBreakMarker && !sceneBreaks)
+      throw new UsageError(
+        '--replace-scene-breaks cannot be combined with --scene-breaks off.',
+      );
+    if (values['smarten-punctuation'] && values['unsmarten-punctuation'])
+      throw new UsageError(
+        '--smarten-punctuation and --unsmarten-punctuation cannot be combined.',
+      );
+    const textNormalization: TextNormalizationOptions = {
+      sceneBreaks,
+      blankParagraphs,
+      ligatures: !(values['keep-ligatures'] ?? false),
+      smartenPunctuation: values['smarten-punctuation'] ?? false,
+      unsmartenPunctuation: values['unsmarten-punctuation'] ?? false,
+      ...(sceneBreakMarker ? { sceneBreakMarker } : {}),
+      ...(values.language ? { language: values.language } : {}),
+    };
     for (const text of [
       values.title,
       values.identifier,
@@ -558,6 +595,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
             : null,
         unwrapFactor: extension === '.pdf' ? (unwrapFactor ?? 0.45) : null,
         dehyphenate: extension === '.pdf' ? (dehyphenate ?? false) : null,
+        textNormalization,
         chapterDetection: extension === '.pdf' ? chapterDetection : null,
         chapterMark,
         chapterSplitLevel,
@@ -709,7 +747,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
             await protectSource(join(formulaModelDir, file), output);
       }
     }
-    const options = { conversionDate };
+    const options = { conversionDate, textNormalization };
     const filename = basename(input);
     let model: DocumentModel;
     let coverPng: Uint8Array | undefined;
@@ -730,6 +768,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         output === '-' ? undefined : (path) => protectSource(path, output),
         values['include-external-images'] ?? false,
         io.stderr,
+        textNormalization,
       );
     else {
       const pdfResult = await (
@@ -902,6 +941,12 @@ function parseArguments(argv: string[]) {
         'no-images': { type: 'boolean' },
         'unwrap-factor': { type: 'string' },
         dehyphenate: { type: 'string' },
+        'scene-breaks': { type: 'string' },
+        'blank-paragraphs': { type: 'string' },
+        'keep-ligatures': { type: 'boolean' },
+        'smarten-punctuation': { type: 'boolean' },
+        'unsmarten-punctuation': { type: 'boolean' },
+        'replace-scene-breaks': { type: 'string' },
         'chapter-detection': { type: 'string' },
         'chapter-mark': { type: 'string' },
         'chapter-split-level': { type: 'string' },
@@ -992,6 +1037,33 @@ function parseDehyphenate(value: string | undefined): boolean | undefined {
   if (value === 'on') return true;
   if (value === 'off') return false;
   throw new UsageError('--dehyphenate must be on or off.');
+}
+
+function parseToggle(
+  value: string | undefined,
+  fallback: boolean,
+  name: string,
+): boolean {
+  if (value === undefined) return fallback;
+  if (value === 'on') return true;
+  if (value === 'off') return false;
+  throw new UsageError(`--${name} must be on or off.`);
+}
+
+function parseSceneBreakMarker(
+  value: string | undefined,
+): TextNormalizationOptions['sceneBreakMarker'] {
+  if (value === undefined) return undefined;
+  if (
+    value === 'asterisks' ||
+    value === 'dots' ||
+    value === 'floral' ||
+    value === 'em-dash'
+  )
+    return value;
+  throw new UsageError(
+    '--replace-scene-breaks must be asterisks, dots, floral, or em-dash.',
+  );
 }
 
 function parsePdfCrop(

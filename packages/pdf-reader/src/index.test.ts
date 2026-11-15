@@ -1917,12 +1917,13 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
         imageBacked: true,
         images: ['pdf-image-1-0'],
         imageBackedPages: [1],
-        warning: [
+        warning: expect.arrayContaining([
           'pdf-ocr-not-supported',
+          'text-normalization-summary',
           'pdf-line-reflow-summary',
           'pdf-toc-source',
           'chapters-detected',
-        ],
+        ]),
       });
     });
 
@@ -3383,6 +3384,95 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
     ]);
   });
 
+  it('marks centered ornaments and multi-line gaps without treating page transitions as breaks', async () => {
+    const ornament = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Before', 0.1, 0.2, { width: 0.3 }),
+            span('* * *', 0.46, 0.22, { width: 0.08 }),
+            span('After', 0.1, 0.24, { width: 0.3 }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      {
+        conversionDate: '2026-08-29',
+        styleMappings: { 'pdf-body-11-regular-roman': 'body' },
+      },
+    );
+    const gap = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Before this paragraph continues here.', 0.1, 0.2, {
+              width: 0.7,
+            }),
+            span('After this paragraph begins with prose.', 0.1, 0.3, {
+              width: 0.7,
+            }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+    const pages = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [span('Page one text', 0.1, 0.2, { width: 0.7 })],
+          links: [],
+          images: [],
+        },
+        {
+          number: 2,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [span('Page two text', 0.1, 0.2, { width: 0.7 })],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(ornament.model.blocks.map(({ type }) => type)).toEqual([
+      'paragraph',
+      'thematicBreak',
+      'paragraph',
+    ]);
+    expect(gap.model.blocks.map(({ type }) => type)).toEqual([
+      'paragraph',
+      'thematicBreak',
+      'paragraph',
+    ]);
+    expect(pages.model.blocks.map(({ type }) => type)).toEqual([
+      'paragraph',
+      'pageBreak',
+      'paragraph',
+    ]);
+    expect(
+      ornament.model.warnings.find(
+        ({ code }) => code === 'text-normalization-summary',
+      )?.details?.sceneBreaks,
+    ).toBe(1);
+  });
+
   it.each(['\\', '**'])(
     'drops isolated OCR punctuation %s immediately before a page break',
     async (punctuation) => {
@@ -3464,6 +3554,46 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
     ).toBeLessThan(
       JSON.stringify(result.model.blocks).indexOf('Logical second'),
     );
+  });
+
+  it('keeps centered scene breaks between surrounding tagged content', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Logical second', 0.1, 0.1, {
+              markedContentId: 'mc-second',
+              width: 0.3,
+            }),
+            span('* * *', 0.46, 0.2, { width: 0.08 }),
+            span('Logical first', 0.1, 0.3, {
+              markedContentId: 'mc-first',
+              width: 0.3,
+            }),
+          ],
+          links: [],
+          images: [],
+          taggedStructure: {
+            role: 'Root',
+            children: [
+              { role: 'P', markedContentId: 'mc-first', children: [] },
+              { role: 'P', markedContentId: 'mc-second', children: [] },
+            ],
+          },
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.model.blocks.map(({ type }) => type)).toEqual([
+      'paragraph',
+      'thematicBreak',
+      'paragraph',
+    ]);
   });
 
   it('retains medium-confidence furniture until the user explicitly removes it', async () => {

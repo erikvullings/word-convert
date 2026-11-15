@@ -602,6 +602,35 @@ evidence scan is bounded. Use `--dehyphenate off` to disable it.
 wordconvert book.pdf --unwrap-factor 0.4 --dehyphenate on --format epub
 ```
 
+### Text normalization
+
+The shared semantic-text pass runs for DOCX, PDF, Markdown, and HTML input.
+Ligatures in U+FB00–U+FB06 and the IJ digraph characters are decoded by default;
+`--keep-ligatures` preserves them. Centered curated PDF ornaments and runs of
+multiple blank paragraphs become scene breaks, while single blank paragraphs
+are removed only when blank-line use is sufficiently consistent. PDF page
+transitions are not treated as scene breaks. Use `--scene-breaks off` to keep
+ornaments and blank runs, or `--blank-paragraphs off` to preserve blank
+paragraphs. A replacement is selected from a fixed marker list, never supplied
+as markup:
+
+```sh
+wordconvert book.pdf --replace-scene-breaks floral
+wordconvert article.html --scene-breaks off --keep-ligatures
+```
+
+Accepted replacement markers are `asterisks`, `dots`, `floral`, and `em-dash`.
+Punctuation smartening is opt-in with `--smarten-punctuation`; it uses the
+resolved document language (`--language` overrides it), handles nested quotes,
+and leaves ambiguous apostrophes, numeric primes, and URL text unchanged.
+`--unsmarten-punctuation` maps typographic quotes, dashes, and ellipses back to
+straight ASCII punctuation; it cannot recover distinctions absent from the
+typographic input. The two punctuation options are mutually exclusive.
+Transform counts and the bounded-work result are included in a deterministic
+`text-normalization-summary` warning. The pass is limited to 5,000,000 text
+characters and 500,000 semantic nodes per document; code, code blocks, link
+destinations, equations, and asset bytes are not rewritten.
+
 ### PDF tables
 
 Tables are converted when the source states them or the geometry closes.

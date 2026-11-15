@@ -1,6 +1,6 @@
 # 0038 Add scene break blank paragraph and punctuation normalization
 
-Status: open
+Status: done
 Priority: medium
 Owner: unassigned
 Agent: pi

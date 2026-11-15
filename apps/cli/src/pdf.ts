@@ -121,6 +121,9 @@ export async function readPdf(
     const readerOptions: PdfReaderOptions = {
       conversionDate: options.conversionDate,
       filename,
+      ...(options.textNormalization
+        ? { textNormalization: options.textNormalization }
+        : {}),
       ...(options.extractImages !== undefined
         ? { extractImages: options.extractImages }
         : {}),
@@ -175,6 +178,9 @@ export async function readPdf(
     const result = await analysePdf(raw, {
       conversionDate: options.conversionDate,
       filename,
+      ...(options.textNormalization
+        ? { textNormalization: options.textNormalization }
+        : {}),
       ...(options.pdfTables ? { pdfTables: options.pdfTables } : {}),
       ...(options.crop ? { crop: options.crop } : {}),
       ...(options.removeDetectedFurniture !== undefined

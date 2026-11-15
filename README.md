@@ -85,6 +85,13 @@ short-line handling and opt-in `--dehyphenate on` for evidence-based word joins.
 The reader reports suspicious multi-column ordering for review rather than
 treating the PDF text layer as authoritative. See [the CLI guide](documentation/cli.md#pdf-text-reflow).
 
+Semantic text normalization decodes ligatures by default and conservatively
+detects scene breaks; punctuation smartening is opt-in with
+`--smarten-punctuation` (or `--unsmarten-punctuation`). Scene-break markers,
+blank-paragraph cleanup, and ligature retention are configurable. These
+transforms preserve code, URLs, equations, and assets and report deterministic
+counts. See [the CLI guide](documentation/cli.md#text-normalization).
+
 PDF chapter detection defaults to `automatic`: repeated, short, spaced body-style
 openers matching chapter/book/section/prologue/epilogue/part are promoted to
 headings only when paragraph segmentation is trustworthy. Explicit style mappings

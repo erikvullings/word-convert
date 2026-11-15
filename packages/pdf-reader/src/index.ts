@@ -2,7 +2,11 @@ import {
   DOCUMENT_MODEL_SCHEMA,
   DOCUMENT_MODEL_VERSION,
   DEFAULT_CHAPTER_DETECTION,
+  createSceneBreakBlock,
+  createTextNormalizationWarning,
+  isSceneBreakOrnament,
   mergeHeadingRuns,
+  normalizeDocumentBlocks,
   validateChapterDetection,
   type AnalysedStyle,
   type BlockNode,
@@ -717,7 +721,12 @@ export async function analysePdf(
       ),
       options,
     );
-    reflowIssues.push(...detectColumnOrderIssues(ordered));
+    reflowIssues.push(
+      ...detectColumnOrderIssues(
+        ordered,
+        options.textNormalization?.sceneBreaks !== false,
+      ),
+    );
     lines.push(...ordered);
   }
   if (reflowIssues.length > 0)
@@ -904,6 +913,7 @@ export async function analysePdf(
     lineMerging,
     lineDehyphenation,
     normalizedIndentParagraphs,
+    sceneBreaks: lineSceneBreaks,
   } = await linesToBlocks(
     lines,
     styles,
@@ -952,6 +962,14 @@ export async function analysePdf(
         'PDF dehyphenation stopped because the document exceeded the word-evidence limit; ambiguous hyphens were preserved.',
       details: { words: MAX_PDF_WORD_EVIDENCE },
     });
+  const textNormalization = await normalizeDocumentBlocks(
+    tabledBlocks,
+    options.textNormalization,
+    options.textNormalization?.language ?? raw.metadata.language,
+    () => analysisCheckpoint(options),
+    { sceneBreaks: lineSceneBreaks },
+  );
+  warnings.push(createTextNormalizationWarning(textNormalization));
   warnings.push({
     code: 'pdf-line-reflow-summary',
     severity: 'info',
@@ -1652,7 +1670,13 @@ async function readingOrder(
   for (let index = 0; index < lines.length; index++) {
     if (index % 1_000 === 0) await analysisCheckpoint(options);
     const line = lines[index]!;
-    if (line.width >= 0.65) {
+    if (
+      options.textNormalization?.sceneBreaks !== false &&
+      isCenteredSceneBreakLine(line)
+    ) {
+      flush();
+      ordered.push(line);
+    } else if (line.width >= 0.65) {
       flush();
       ordered.push(line);
     } else {
@@ -1660,10 +1684,17 @@ async function readingOrder(
     }
   }
   flush();
-  return taggedReadingOrder(ordered, page.taggedStructure);
+  return taggedReadingOrder(
+    ordered,
+    page.taggedStructure,
+    options.textNormalization?.sceneBreaks !== false,
+  );
 }
 
-function detectColumnOrderIssues(lines: readonly PdfLine[]): PdfReflowIssue[] {
+function detectColumnOrderIssues(
+  lines: readonly PdfLine[],
+  sceneBreaks = true,
+): PdfReflowIssue[] {
   const issues: PdfReflowIssue[] = [];
   let section: PdfLine[] = [];
   const inspect = (): void => {
@@ -1750,7 +1781,7 @@ function detectColumnOrderIssues(lines: readonly PdfLine[]): PdfReflowIssue[] {
     section = [];
   };
   for (const line of lines) {
-    if (line.width >= 0.65) {
+    if (line.width >= 0.65 || (sceneBreaks && isCenteredSceneBreakLine(line))) {
       inspect();
       section = [];
     } else section.push(line);
@@ -1762,6 +1793,7 @@ function detectColumnOrderIssues(lines: readonly PdfLine[]): PdfReflowIssue[] {
 function taggedReadingOrder(
   lines: readonly PdfLine[],
   structure: RawPdfStructureNode | undefined,
+  sceneBreaks = true,
 ): PdfLine[] {
   if (!structure) return [...lines];
   const ranks = new Map<string, number>();
@@ -1771,31 +1803,45 @@ function taggedReadingOrder(
     node.children.forEach(visit);
   };
   visit(structure);
-  const ranked = lines
-    .map((line) => ({
-      line,
-      rank: Math.min(
-        ...line.spans
-          .map(({ markedContentId }) =>
-            markedContentId === undefined
-              ? Number.POSITIVE_INFINITY
-              : (ranks.get(markedContentId) ?? Number.POSITIVE_INFINITY),
-          )
-          .filter(Number.isFinite),
-      ),
-    }))
-    .filter(({ rank }) => Number.isFinite(rank));
-  if (ranked.length < 2) return [...lines];
-  const rankByLine = new Map(ranked.map(({ line, rank }) => [line, rank]));
-  return [...lines].sort((left, right) => {
-    const leftRank = rankByLine.get(left);
-    const rightRank = rankByLine.get(right);
-    if (leftRank !== undefined && rightRank !== undefined)
-      return leftRank - rightRank;
-    if (leftRank !== undefined) return -1;
-    if (rightRank !== undefined) return 1;
-    return lines.indexOf(left) - lines.indexOf(right);
-  });
+  const reorderSegment = (segment: PdfLine[]): PdfLine[] => {
+    const ranked = segment
+      .map((line) => ({
+        line,
+        rank: Math.min(
+          ...line.spans
+            .map(({ markedContentId }) =>
+              markedContentId === undefined
+                ? Number.POSITIVE_INFINITY
+                : (ranks.get(markedContentId) ?? Number.POSITIVE_INFINITY),
+            )
+            .filter(Number.isFinite),
+        ),
+      }))
+      .filter(({ rank }) => Number.isFinite(rank));
+    if (ranked.length < 2) return segment;
+    const rankByLine = new Map(ranked.map(({ line, rank }) => [line, rank]));
+    const indexByLine = new Map(segment.map((line, index) => [line, index]));
+    return [...segment].sort((left, right) => {
+      const leftRank = rankByLine.get(left);
+      const rightRank = rankByLine.get(right);
+      if (leftRank !== undefined && rightRank !== undefined)
+        return leftRank - rightRank;
+      if (leftRank !== undefined) return -1;
+      if (rightRank !== undefined) return 1;
+      return indexByLine.get(left)! - indexByLine.get(right)!;
+    });
+  };
+  if (!sceneBreaks) return reorderSegment([...lines]);
+  const output: PdfLine[] = [];
+  let segment: PdfLine[] = [];
+  for (const line of lines) {
+    if (isCenteredSceneBreakLine(line)) {
+      output.push(...reorderSegment(segment), line);
+      segment = [];
+    } else segment.push(line);
+  }
+  output.push(...reorderSegment(segment));
+  return output;
 }
 
 async function groupLines(
@@ -2825,6 +2871,7 @@ async function linesToBlocks(
   lineMerging: { joined: number; kept: number };
   lineDehyphenation: Pick<DehyphenationSummary, 'joined' | 'kept'>;
   normalizedIndentParagraphs: number;
+  sceneBreaks: number;
 }> {
   const mapping = new Map(
     styles.map(({ id, proposedMapping }) => [id, proposedMapping]),
@@ -2850,6 +2897,7 @@ async function linesToBlocks(
   let processed = 0;
   const lineMerging = { joined: 0, kept: 0 };
   const lineDehyphenation = { joined: 0, kept: 0 };
+  let sceneBreaks = 0;
   for (const page of pages) {
     await analysisCheckpoint(options);
     const rolesByMarkedContentId = taggedRoles(page.taggedStructure);
@@ -3213,6 +3261,37 @@ async function linesToBlocks(
       }
       const id = styleId(line);
       const mapped = mapping.get(id) ?? 'body';
+      const taggedRole = taggedRoleForLine(rolesByMarkedContentId, line);
+      if (
+        options.textNormalization?.sceneBreaks !== false &&
+        mapped === 'body' &&
+        taggedRole === undefined &&
+        !line.spans.some(({ linkId }) => linkId !== undefined) &&
+        isCenteredSceneBreakLine(line)
+      ) {
+        blocks.push(createSceneBreakBlock(options.textNormalization));
+        sceneBreaks++;
+        paragraphCandidates.length = 0;
+        previousLine = undefined;
+        continue;
+      }
+      const previousLineOnPage = pageLines[index - 1];
+      if (
+        options.textNormalization?.sceneBreaks !== false &&
+        mapped === 'body' &&
+        taggedRole === undefined &&
+        previousLineOnPage &&
+        mapping.get(styleId(previousLineOnPage)) === 'body' &&
+        taggedRoleForLine(rolesByMarkedContentId, previousLineOnPage) ===
+          undefined &&
+        blocks.at(-1)?.type === 'paragraph' &&
+        isSceneBreakGap(previousLineOnPage, line)
+      ) {
+        blocks.push(createSceneBreakBlock(options.textNormalization));
+        sceneBreaks++;
+        paragraphCandidates.length = 0;
+        previousLine = undefined;
+      }
       if (mapped !== 'ignore') {
         const children = lineInlines(
           line,
@@ -3223,7 +3302,6 @@ async function linesToBlocks(
         );
         for (const candidate of lineFormulaCandidates)
           placedFormulaIds.add(candidate.id);
-        const taggedRole = taggedRoleForLine(rolesByMarkedContentId, line);
         const taggedHeading = /^H([1-6])$/i.exec(taggedRole ?? '');
         const mappedHeading = /^heading([1-6])$/.exec(mapped);
         const heading =
@@ -3415,7 +3493,29 @@ async function linesToBlocks(
     lineMerging,
     lineDehyphenation,
     normalizedIndentParagraphs,
+    sceneBreaks,
   };
+}
+
+function isSceneBreakGap(previous: PdfLine, current: PdfLine): boolean {
+  const gap = current.top - (previous.top + previous.height);
+  return (
+    previous.page === current.page &&
+    previous.text.trim().split(/\s+/u).length >= 4 &&
+    current.text.trim().split(/\s+/u).length >= 4 &&
+    gap >= Math.max(0.035, Math.max(previous.height, current.height) * 2.5) &&
+    Math.abs(previous.x - current.x) <= 0.04 &&
+    Math.abs(
+      previous.x + previous.width / 2 - (current.x + current.width / 2),
+    ) <= 0.12
+  );
+}
+
+function isCenteredSceneBreakLine(line: PdfLine): boolean {
+  return (
+    Math.abs(line.x + line.width / 2 - 0.5) <= 0.08 &&
+    isSceneBreakOrnament(line.text)
+  );
 }
 
 function containsHeading(blocks: readonly BlockNode[]): boolean {
