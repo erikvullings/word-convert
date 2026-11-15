@@ -1090,3 +1090,227 @@ describe('writeEpub tagged table output', () => {
     expect(second).toContain('After');
   });
 });
+
+describe('writeEpub serialized chapter sizing', () => {
+  const options = {
+    conversionDate: '2026-07-15',
+    identifier: 'size-book',
+    title: 'Size Book',
+    language: 'en',
+  };
+
+  it('keeps under-budget output byte-identical when size splitting is disabled', async () => {
+    const input = model([
+      {
+        type: 'heading',
+        level: 2,
+        children: [{ type: 'text', text: 'Short chapter' }],
+      },
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'A short paragraph.' }],
+      },
+    ]);
+
+    const defaultOutput = await writeEpub(input, options);
+    const disabledOutput = await writeEpub(input, {
+      ...options,
+      maxChapterSizeBytes: 0,
+    });
+
+    expect(defaultOutput).toEqual(disabledOutput);
+  });
+
+  it('counts serialized UTF-8 markup, adds files deterministically, and respects the byte budget', async () => {
+    const text = 'word & <tag> café 😀 '.repeat(8);
+    const input = model(
+      Array.from({ length: 18 }, () => ({
+        type: 'paragraph' as const,
+        children: [
+          { type: 'text' as const, text, marks: [{ type: 'bold' as const }] },
+        ],
+      })),
+    );
+    const warnings: DocumentModel['warnings'] = [];
+    const sizeLimit = 900;
+    const settings = {
+      ...options,
+      maxChapterSizeBytes: sizeLimit,
+      onWarning: (warning: DocumentModel['warnings'][number]) =>
+        warnings.push(warning),
+    };
+    const output = await writeEpub(input, settings);
+    const repeatedOutput = await writeEpub(input, settings);
+    const files = unzipSync(output);
+    const chapters = Object.entries(files)
+      .filter(([path]) => /^EPUB\/chapter-\d+\.xhtml$/.test(path))
+      .map(([, bytes]) => bytes);
+    const sizeWarning = warnings.find(
+      ({ code }) => code === 'epub-chapter-size-split',
+    );
+
+    expect(output).toEqual(repeatedOutput);
+    expect(chapters.length).toBeGreaterThan(1);
+    expect(chapters.every((chapter) => chapter.byteLength <= sizeLimit)).toBe(
+      true,
+    );
+    expect(sizeWarning?.details).toMatchObject({
+      addedFiles: chapters.length - 1,
+      maxChapterSizeBytes: sizeLimit,
+    });
+  });
+
+  it('disables size splitting with a zero budget', async () => {
+    const input = model(
+      Array.from({ length: 2 }, () => ({
+        type: 'paragraph' as const,
+        children: [{ type: 'text' as const, text: 'x'.repeat(150 * 1024) }],
+      })),
+    );
+    const files = unzipSync(
+      await writeEpub(input, {
+        ...options,
+        maxChapterSizeBytes: 0,
+      }),
+    );
+    const chapters = Object.entries(files).filter(([path]) =>
+      /^EPUB\/chapter-\d+\.xhtml$/.test(path),
+    );
+
+    expect(chapters).toHaveLength(1);
+    expect(chapters[0]?.[1].byteLength).toBeGreaterThan(260 * 1024);
+  });
+
+  it('moves heading anchors and cross-chapter links with size-split content', async () => {
+    const input = model([
+      {
+        type: 'heading',
+        level: 2,
+        children: [{ type: 'text', text: 'Chapter' }],
+      },
+      {
+        type: 'paragraph',
+        children: [
+          { type: 'text', text: 'See ' },
+          {
+            type: 'link',
+            href: '#moved-section',
+            children: [{ type: 'text', text: 'the next section' }],
+          },
+        ],
+      },
+      {
+        type: 'heading',
+        level: 3,
+        id: 'moved-section',
+        children: [{ type: 'text', text: 'Moved section' }],
+      },
+      ...Array.from({ length: 2 }, () => ({
+        type: 'paragraph' as const,
+        children: [{ type: 'text' as const, text: 'Body text. '.repeat(18) }],
+      })),
+    ]);
+    const files = unzipSync(
+      await writeEpub(input, {
+        ...options,
+        maxChapterSizeBytes: 620,
+        inlineToc: true,
+      }),
+    );
+    const first = strFromU8(files['EPUB/chapter-001.xhtml']!);
+    const second = strFromU8(files['EPUB/chapter-002.xhtml']!);
+    const nav = strFromU8(files['EPUB/nav.xhtml']!);
+    const contents = strFromU8(files['EPUB/contents.xhtml']!);
+    const opf = strFromU8(files['EPUB/package.opf']!);
+
+    expect(first).toContain(
+      'href="chapter-002.xhtml#moved-section">the next section',
+    );
+    expect(second).toContain('<h3 id="moved-section">Moved section</h3>');
+    expect(nav).toContain('href="chapter-002.xhtml#moved-section"');
+    expect(contents).toContain('href="chapter-002.xhtml#moved-section"');
+    expect(opf).toContain('href="chapter-002.xhtml"');
+    expect(opf).toContain('<itemref idref="chapter-002"/>');
+  });
+
+  it('uses page-break blocks only when size splitting enables them', async () => {
+    const input = model([
+      {
+        type: 'heading',
+        level: 1,
+        children: [{ type: 'text', text: 'Book' }],
+      },
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'First. '.repeat(16) }],
+      },
+      { type: 'pageBreak' },
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Second. '.repeat(16) }],
+      },
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'Third. '.repeat(16) }],
+      },
+    ]);
+    const splitFiles = unzipSync(
+      await writeEpub(input, {
+        ...options,
+        maxChapterSizeBytes: 620,
+        splitOnPageBreaks: true,
+      }),
+    );
+    const first = strFromU8(splitFiles['EPUB/chapter-001.xhtml']!);
+    expect(first).toContain('class="page-break"');
+    expect(splitFiles['EPUB/chapter-002.xhtml']).toBeDefined();
+  });
+
+  it('keeps oversized tables whole and warns instead of truncating', async () => {
+    const rowCount = 80;
+    const input = model([
+      {
+        type: 'table',
+        rows: Array.from({ length: rowCount }, (_, index) => ({
+          cells: [
+            {
+              blocks: [
+                {
+                  type: 'paragraph' as const,
+                  children: [
+                    {
+                      type: 'text' as const,
+                      text: `row ${index} ` + 'x'.repeat(80),
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        })),
+      },
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'After the table.' }],
+      },
+    ]);
+    const warnings: DocumentModel['warnings'] = [];
+    const files = unzipSync(
+      await writeEpub(input, {
+        ...options,
+        maxChapterSizeBytes: 1200,
+        onWarning: (warning) => warnings.push(warning),
+      }),
+    );
+    const first = strFromU8(files['EPUB/chapter-001.xhtml']!);
+
+    expect(first.match(/<tr>/g)).toHaveLength(rowCount);
+    expect(first).not.toContain('After the table.');
+    expect(strFromU8(files['EPUB/chapter-002.xhtml']!)).toContain(
+      'After the table.',
+    );
+    expect(
+      warnings.find(({ code }) => code === 'epub-chapter-oversize')?.details,
+    ).toMatchObject({ oversizedFiles: 1, maxChapterSizeBytes: 1200 });
+  });
+});

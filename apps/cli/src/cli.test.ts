@@ -137,6 +137,7 @@ describe('CLI arguments and output', () => {
     ['--chapter-detection', 'unknown', '--chapter-detection must be'],
     ['--chapter-mark', 'break', '--chapter-mark must be'],
     ['--chapter-split-level', '7', '--chapter-split-level must be'],
+    ['--flow-size', 'many', '--flow-size must be'],
     ['--toc-source', 'unknown', '--toc-source must be'],
     ['--toc-filter', '(Chapter)', '--toc-filter must be'],
     ['--scene-breaks', 'sometimes', '--scene-breaks must be on or off'],
@@ -147,6 +148,39 @@ describe('CLI arguments and output', () => {
 
     expect(result.code).toBe(2);
     expect(result.errors).toContain(message);
+  });
+
+  it('accepts EPUB size and page-break options', async () => {
+    const result = await invoke([
+      fixture,
+      '--flow-size',
+      'off',
+      '--split-on-page-breaks',
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+
+    expect(result.code, result.errors).toBe(0);
+    expect(result.output[0]).toBeInstanceOf(Uint8Array);
+  });
+
+  it('rejects EPUB chapter size options for non-EPUB output', async () => {
+    const result = await invoke([
+      fixture,
+      '-f',
+      'html',
+      '--flow-size',
+      '260',
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+
+    expect(result.code).toBe(2);
+    expect(result.errors).toContain(
+      '--flow-size and --split-on-page-breaks apply only to EPUB output.',
+    );
   });
 
   it('lets explicit format override an extension, and rejects ambiguous ZIP inference', async () => {
@@ -173,6 +207,10 @@ describe('CLI arguments and output', () => {
     expect((await invoke(['--help'])).output[0]).toContain('--toc-inline');
     expect((await invoke(['--help'])).output[0]).toContain('--toc-filter');
     expect((await invoke(['--help'])).output[0]).toContain('--toc-threshold');
+    expect((await invoke(['--help'])).output[0]).toContain('--flow-size');
+    expect((await invoke(['--help'])).output[0]).toContain(
+      '--split-on-page-breaks',
+    );
     expect((await invoke(['--help'])).output[0]).toContain('--max-toc-links');
     expect((await invoke(['--help'])).output[0]).toContain(
       '--duplicate-links-in-toc',

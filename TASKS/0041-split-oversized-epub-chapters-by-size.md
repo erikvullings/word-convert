@@ -1,9 +1,9 @@
 # 0041 Split oversized EPUB chapters by content size
 
-Status: open
+Status: done
 Priority: medium
 Owner: unassigned
-Agent: pi
+Agent: Copilot App
 Subsystem: epub-writer
 Depends on: 0031
 
@@ -87,3 +87,4 @@ WordConvert splits only by heading level in `splitChapters()`
   choosing the default budget; the existing EPUB writer tests already assert ZIP layout
   and manifest content, so extend rather than replace them.
 - 2026-11-13 pi: Verified this task against the calibre v9.18.0 source tree (kovidgoyal/calibre, tag v9.18.0) rather than only the CLI help and online manual; Implementation Notes now cite the implementing file for each adopted behaviour, and the notes above record where the source contradicts calibre's own documentation.
+- 2026-11-15 Copilot App: Added a 260 KiB serialized-XHTML budget, deterministic safe-boundary splitting, moved-anchor/link/TOC handling, and warnings for added files and unbreakable oversize content. Page-break splitting is opt-in to preserve existing behavior. Updated EPUB CLI help/docs and validated writer tests, CLI corpus cases, workspace typecheck/lint/format, and diff checks.

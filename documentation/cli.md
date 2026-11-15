@@ -427,6 +427,17 @@ title before splitting, including when their block styles differ; inline
 formatting and numbering are retained, and the first heading's ID remains
 stable. Different heading levels remain separate.
 
+EPUB chapters are additionally split when their serialized XHTML exceeds
+`--flow-size <kb>`, which defaults to **260 KiB** (266,240 bytes). The limit
+counts the complete generated XHTML, including document markup, inline markup,
+and escaped UTF-8 content. At a size boundary the writer prefers any heading,
+then (only with `--split-on-page-breaks`) a page-break block, then a paragraph
+boundary. It never splits inside a list item, table, blockquote, figure, or
+equation. `--flow-size 0` or `--flow-size off` disables size-based splitting;
+page-break blocks otherwise retain their current in-chapter behavior. If an
+unbreakable block alone exceeds the limit, the EPUB is still written intact and
+a warning reports the oversized file.
+
 ### PDF tables of contents
 
 PDF output uses resolved embedded bookmarks first, then semantic headings.

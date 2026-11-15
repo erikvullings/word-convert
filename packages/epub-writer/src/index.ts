@@ -47,6 +47,10 @@ export interface EpubWriterOptions extends WriterOptions {
   imageResizer?: EpubImageResizer;
   /** Heading level that begins an EPUB chapter. Defaults to level 2. */
   chapterSplitLevel?: ChapterHeadingLevel;
+  /** Maximum serialized chapter XHTML size in bytes. Zero disables size splitting. */
+  maxChapterSizeBytes?: number;
+  /** Split after page-break blocks when size splitting is enabled. Defaults to false. */
+  splitOnPageBreaks?: boolean;
   /** Explicit visual marker at chapter file boundaries. Defaults to none. */
   chapterMark?: ChapterMark;
   /** Emit an additional visible contents document in the spine. */
@@ -60,6 +64,7 @@ export interface EpubWriterOptions extends WriterOptions {
 
 export const DEFAULT_EPUB_MAX_IMAGE_DIMENSION = 1600;
 export const DEFAULT_EPUB_IMAGE_QUALITY = 80;
+export const DEFAULT_EPUB_MAX_CHAPTER_SIZE_BYTES = 260 * 1024;
 
 /** Byte-only results retain the source type; typed results may change encoding. */
 export type EpubImageResizer = (
@@ -236,6 +241,8 @@ export async function writeEpub(
   options: EpubWriterOptions,
 ): Promise<Uint8Array> {
   const chapterSplitLevel = options.chapterSplitLevel ?? 2;
+  const maxChapterSizeBytes =
+    options.maxChapterSizeBytes ?? DEFAULT_EPUB_MAX_CHAPTER_SIZE_BYTES;
   const chapterMark = options.chapterMark ?? 'none';
   if (
     !Number.isInteger(chapterSplitLevel) ||
@@ -249,11 +256,15 @@ export async function writeEpub(
     throw new TypeError(
       'EPUB chapter mark must be pagebreak, rule, none, or both.',
     );
+  if (!Number.isSafeInteger(maxChapterSizeBytes) || maxChapterSizeBytes < 0)
+    throw new TypeError(
+      'EPUB maximum chapter size must be a non-negative safe integer.',
+    );
   model = await shrinkAssets(model, options);
   const generatedToc = createTocFromHeadings(model.blocks);
   const toc = model.toc ?? generatedToc;
   const metadata = resolveMetadata(model, options);
-  const chapters = options.sourceXhtml
+  let chapters = options.sourceXhtml
     ? [
         {
           id: 'chapter-001',
@@ -263,6 +274,43 @@ export async function writeEpub(
         },
       ]
     : splitChapters(model.blocks, chapterSplitLevel);
+  const assets = createAssetRegistry(model);
+  const assetPaths = new Map(
+    assets.map(({ asset, path }) => [asset.id, path.replace('EPUB/', '')]),
+  );
+  if (!options.sourceXhtml && maxChapterSizeBytes > 0) {
+    const result = splitOversizedChapters(
+      chapters,
+      maxChapterSizeBytes,
+      metadata,
+      model,
+      assetPaths,
+      options.formulaMode ?? 'mathml',
+      chapterMark,
+      options.splitOnPageBreaks ?? false,
+    );
+    chapters = result.chapters;
+    if (result.addedFiles > 0)
+      options.onWarning?.({
+        code: 'epub-chapter-size-split',
+        severity: 'warning',
+        message: `Added ${result.addedFiles} EPUB chapter file(s) by serialized-size splitting.`,
+        details: {
+          addedFiles: result.addedFiles,
+          maxChapterSizeBytes,
+        },
+      });
+    if (result.oversizedFiles > 0)
+      options.onWarning?.({
+        code: 'epub-chapter-oversize',
+        severity: 'warning',
+        message: `${result.oversizedFiles} EPUB chapter file(s) exceed the ${maxChapterSizeBytes}-byte limit because they contain unbreakable content.`,
+        details: {
+          oversizedFiles: result.oversizedFiles,
+          maxChapterSizeBytes,
+        },
+      });
+  }
   options.onWarning?.({
     code: 'epub-chapter-count',
     severity: 'info',
@@ -272,10 +320,6 @@ export async function writeEpub(
       splitLevel: chapterSplitLevel,
     },
   });
-  const assets = createAssetRegistry(model);
-  const assetPaths = new Map(
-    assets.map(({ asset, path }) => [asset.id, path.replace('EPUB/', '')]),
-  );
   const headings = options.sourceXhtml ? [] : collectHeadings(chapters);
   const navigation = options.sourceXhtml
     ? []
@@ -650,6 +694,154 @@ function splitChapters(
       path: `chapter-${number}.xhtml`,
       blocks: chapterBlocks,
       markBefore: startsAtHeading[index] ?? false,
+    };
+  });
+}
+
+function splitOversizedChapters(
+  input: Chapter[],
+  maxChapterSizeBytes: number,
+  metadata: PublicationMetadata,
+  model: DocumentModel,
+  assetPaths: ReadonlyMap<string, string>,
+  formulaMode: MathOutputMode,
+  chapterMark: ChapterMark,
+  splitOnPageBreaks: boolean,
+): { chapters: Chapter[]; addedFiles: number; oversizedFiles: number } {
+  let chapters = renumberChapters(input);
+  let addedFiles = 0;
+  const unsplittable = new Set<BlockNode[]>();
+  let splitInPass: boolean;
+
+  do {
+    splitInPass = false;
+    let headings = collectHeadings(chapters);
+    let index = 0;
+    while (index < chapters.length) {
+      const chapter = chapters[index]!;
+      if (
+        unsplittable.has(chapter.blocks) ||
+        measureChapter(chapter, headings) <= maxChapterSizeBytes
+      ) {
+        index++;
+        continue;
+      }
+      const boundary = findSizeSplitBoundary(
+        chapter,
+        headings,
+        maxChapterSizeBytes,
+      );
+      if (boundary === undefined) {
+        unsplittable.add(chapter.blocks);
+        index++;
+        continue;
+      }
+      const split = [
+        { ...chapter, blocks: chapter.blocks.slice(0, boundary) },
+        {
+          ...chapter,
+          blocks: chapter.blocks.slice(boundary),
+          markBefore: true,
+        },
+      ];
+      chapters.splice(index, 1, ...split);
+      chapters = renumberChapters(chapters);
+      headings = collectHeadings(chapters);
+      addedFiles++;
+      splitInPass = true;
+    }
+  } while (splitInPass);
+
+  const headings = collectHeadings(chapters);
+  const oversizedFiles = chapters.filter(
+    (chapter) =>
+      strToU8(
+        chapterXhtml(
+          chapter,
+          metadata,
+          model,
+          assetPaths,
+          headings,
+          formulaMode,
+          chapterMark,
+        ),
+      ).byteLength > maxChapterSizeBytes,
+  ).length;
+  return { chapters, addedFiles, oversizedFiles };
+
+  function measureChapter(
+    chapter: Chapter,
+    headingEntries: HeadingEntry[],
+  ): number {
+    return strToU8(
+      chapterXhtml(
+        chapter,
+        metadata,
+        model,
+        assetPaths,
+        headingEntries,
+        formulaMode,
+        chapterMark,
+      ),
+    ).byteLength;
+  }
+
+  function findSizeSplitBoundary(
+    chapter: Chapter,
+    headingEntries: HeadingEntry[],
+    limit: number,
+  ): number | undefined {
+    const blocks = chapter.blocks;
+    const candidates = [
+      blocks.flatMap((block, index) =>
+        index > 0 && block.type === 'heading' ? [index] : [],
+      ),
+      splitOnPageBreaks
+        ? blocks.flatMap((_, index) =>
+            index > 0 && blocks[index - 1]?.type === 'pageBreak' ? [index] : [],
+          )
+        : [],
+      blocks.flatMap((block, index) =>
+        index > 0 &&
+        (block.type === 'paragraph' || blocks[index - 1]?.type === 'paragraph')
+          ? [index]
+          : [],
+      ),
+    ];
+
+    for (const boundaries of candidates) {
+      let low = 0;
+      let high = boundaries.length - 1;
+      let fittingBoundary: number | undefined;
+      while (low <= high) {
+        const middle = Math.floor((low + high) / 2);
+        const boundary = boundaries[middle]!;
+        const prefix = {
+          ...chapter,
+          blocks: blocks.slice(0, boundary),
+        };
+        if (measureChapter(prefix, headingEntries) <= limit) {
+          fittingBoundary = boundary;
+          low = middle + 1;
+        } else high = middle - 1;
+      }
+      if (fittingBoundary !== undefined) return fittingBoundary;
+    }
+
+    const nextBoundary = candidates
+      .flat()
+      .sort((left, right) => left - right)[0];
+    return nextBoundary;
+  }
+}
+
+function renumberChapters(chapters: Chapter[]): Chapter[] {
+  return chapters.map((chapter, index) => {
+    const number = String(index + 1).padStart(3, '0');
+    return {
+      ...chapter,
+      id: `chapter-${number}`,
+      path: `chapter-${number}.xhtml`,
     };
   });
 }

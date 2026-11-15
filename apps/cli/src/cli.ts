@@ -33,6 +33,7 @@ import { writeHtml, writeHtmlZip } from '@wordconvert/html-writer';
 import { writeMarkdown, writeMarkdownZip } from '@wordconvert/markdown-writer';
 import {
   DEFAULT_EPUB_IMAGE_QUALITY,
+  DEFAULT_EPUB_MAX_CHAPTER_SIZE_BYTES,
   DEFAULT_EPUB_MAX_IMAGE_DIMENSION,
   writeEpub,
   type EpubWriterOptions,
@@ -92,6 +93,9 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --chapter-detection <mode> off, automatic (default), or custom (PDF input)
       --chapter-mark <mark>    pagebreak, rule, none (default), or both
       --chapter-split-level <1-6>  Heading level that starts chapters; default 2
+      --flow-size <kb>         Maximum serialized EPUB chapter size; default 260,
+                              0 or off disables size splitting
+      --split-on-page-breaks   Allow page-break blocks as size-split boundaries
       --toc-source <source>    automatic (default), embedded, generated, or off (PDF)
       --use-auto-toc           Force TOC creation from internal links (PDF)
       --no-chapters-in-toc     Disable all TOC entries (PDF)
@@ -396,6 +400,22 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         '--use-auto-toc cannot be combined with --no-chapters-in-toc or --toc-source off.',
       );
     const maxImageSize = parseMaxImageSize(values['max-image-size']);
+    const maxChapterSizeBytes = parseFlowSize(values['flow-size']);
+    const splitOnPageBreaks = values['split-on-page-breaks'] ?? false;
+    if (
+      (values['flow-size'] !== undefined || splitOnPageBreaks) &&
+      format !== 'epub'
+    )
+      throw new UsageError(
+        '--flow-size and --split-on-page-breaks apply only to EPUB output.',
+      );
+    if (
+      extension === '.epub' &&
+      (values['flow-size'] !== undefined || splitOnPageBreaks)
+    )
+      throw new UsageError(
+        '--flow-size and --split-on-page-breaks apply only to semantic EPUB conversion.',
+      );
     const imageFormat = values['image-format'] ?? 'jpeg';
     if (imageFormat !== 'jpeg' && imageFormat !== 'preserve')
       throw new UsageError('--image-format must be jpeg or preserve.');
@@ -1063,6 +1083,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       maxImageSize,
       imageFormat,
       imageQuality,
+      maxChapterSizeBytes,
+      splitOnPageBreaks,
       chapterMark,
       chapterSplitLevel,
       tocTitle,
@@ -1157,6 +1179,8 @@ function parseArguments(argv: string[]) {
         'chapter-detection': { type: 'string' },
         'chapter-mark': { type: 'string' },
         'chapter-split-level': { type: 'string' },
+        'flow-size': { type: 'string' },
+        'split-on-page-breaks': { type: 'boolean' },
         'toc-source': { type: 'string' },
         'use-auto-toc': { type: 'boolean' },
         'no-chapters-in-toc': { type: 'boolean' },
@@ -1532,6 +1556,16 @@ function parseMaxImageSize(value: string | undefined): number {
   return Number(value);
 }
 
+function parseFlowSize(value: string | undefined): number {
+  if (value === undefined) return DEFAULT_EPUB_MAX_CHAPTER_SIZE_BYTES;
+  if (value.toLowerCase() === 'off' || value === '0') return 0;
+  if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1_048_576)
+    throw new UsageError(
+      '--flow-size must be off or a whole number of KiB from 0 to 1048576.',
+    );
+  return Number(value) * 1024;
+}
+
 function parseChapterDetectionMode(
   value: string | undefined,
 ): ChapterDetectionMode {
@@ -1634,6 +1668,8 @@ async function render(
     maxImageSize: number;
     imageFormat: 'jpeg' | 'preserve';
     imageQuality: number;
+    maxChapterSizeBytes: number;
+    splitOnPageBreaks: boolean;
     chapterMark: ChapterMark;
     chapterSplitLevel: ChapterHeadingLevel;
     tocTitle: string | undefined;
@@ -1688,6 +1724,8 @@ async function render(
         maxImageDimension: images.maxImageSize,
         imageFormat: images.imageFormat,
         imageQuality: images.imageQuality,
+        maxChapterSizeBytes: images.maxChapterSizeBytes,
+        splitOnPageBreaks: images.splitOnPageBreaks,
         chapterMark: images.chapterMark,
         chapterSplitLevel: images.chapterSplitLevel,
         ...(images.tocTitle ? { tocTitle: images.tocTitle } : {}),

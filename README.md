@@ -121,7 +121,9 @@ Consecutive same-level heading blocks are merged into one title while retaining
 inline formatting, numbering, and the first block's ID. EPUB marks chapters at
 file boundaries; HTML uses page-break/rule elements and Markdown uses a page-break
 comment/rule. Chapter markers are inserted only between top-level content blocks.
-See [the CLI guide](documentation/cli.md#chapter-detection-and-marking).
+EPUB chapters default to a 260 KiB serialized-XHTML budget (`--flow-size <kb>`);
+use `--flow-size 0|off` to disable size splitting and `--split-on-page-breaks`
+to enable page-break boundaries. See [the CLI guide](documentation/cli.md#chapter-detection-and-marking).
 
 PDF TOCs prefer resolved bookmarks, then semantic headings, with printed-contents
 and internal-link fallback when fewer than six chapters are detected. Configure
