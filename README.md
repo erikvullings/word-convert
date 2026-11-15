@@ -139,6 +139,14 @@ the source with `--toc-source automatic|embedded|generated|off`; use
 Markdown, and EPUB. See [the CLI guide](documentation/cli.md#pdf-tables-of-contents)
 for precedence and compatibility flags.
 
+Semantic EPUB output also supports validated `--extra-css <path>`, selectable
+`--cover-policy source|generated|file|none`, independent
+`--epub-max-image-size <width>x<height>` caps, and a
+`--start-reading-at <heading>` bodymatter landmark. EPUB navigation includes
+cover/title/body landmarks and a page list only when printed page-number
+detection is high-confidence. See
+[the CLI guide](documentation/cli.md#epub-styling-covers-image-caps-and-landmarks).
+
 The CLI also exposes PDF extraction controls: `--crop-top <0..1>` and
 `--crop-bottom <0..1>` trim rotated-page text (their sum must stay below `0.9`);
 `--no-remove-furniture` retains automatic header/footer/page-number candidates;
@@ -282,7 +290,7 @@ Required identifier, title, language, and EPUB modification time can come from t
 
 `@wordconvert/cover-generator` creates deterministic, browser-independent SVG compositions for image-only, overlay, title-panel, separate-title-page, and generated typographic covers. It accepts bounded JPEG, PNG, WebP, and sanitized SVG inputs, uses only system-safe font families, and exposes rasterization through an injected adapter for browser-only compatibility paths.
 
-The EPUB editor can omit a cover, upload an image, choose a supported extracted document image, or generate a typographic cover. The CLI accepts a local image with `--cover`, or can use a PDF's first page with `--frontpage-cover` and omit that page's image from the body. The editor's live preview exposes crop, alignment, title and author positions and sizes, text colour, contrast panel and opacity, image opacity, safe margins, and aspect ratio. A conservative filename heuristic explains when an image may already contain title text. Generated EPUBs declare the cover image and cover page while always retaining a separate semantic XHTML title page.
+The EPUB editor can omit a cover, upload an image, choose a supported extracted document image, or generate a typographic cover. The CLI accepts a local image with `--cover`, can use a high-confidence extracted PDF cover with `--cover-policy source`, or can use a PDF's first page with `--frontpage-cover` and omit that page's image from the body. `--preserve-cover-aspect-ratio` letterboxes images rather than cropping; `--no-default-epub-cover` omits cover artwork while retaining the title page. User CSS is parsed and bounded before appending, and EPUB images can be capped by longest edge or independent width and height. EPUB 3 landmarks point to cover, title page, and the selected start of body; confidence-gated page-number candidates become page-list links and in-content `pagebreak` markers. The editor's live preview exposes crop, alignment, title and author positions and sizes, text colour, contrast panel and opacity, image opacity, safe margins, and aspect ratio. A conservative filename heuristic explains when an image may already contain title text. Generated EPUBs declare the cover image and cover page while always retaining a separate semantic XHTML title page.
 
 ## Formula output
 

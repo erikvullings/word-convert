@@ -574,6 +574,11 @@ describe('worker runtime', () => {
       coverPng: Uint8Array.from([
         137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
       ]),
+      epubOptions: {
+        coverPolicy: 'generated',
+        maxImageDimensions: { width: 800, height: 1200 },
+        extraCss: '.worker{color:navy}',
+      },
     });
 
     const output = sent.at(-1);
@@ -593,6 +598,12 @@ describe('worker runtime', () => {
     const files = unzipSync(new Uint8Array(output.data));
     expect(strFromU8(files['EPUB/package.opf'] ?? new Uint8Array())).toContain(
       'href="cover.png" media-type="image/png" properties="cover-image"',
+    );
+    expect(strFromU8(files['EPUB/styles.css'] ?? new Uint8Array())).toContain(
+      '.worker{color:navy}',
+    );
+    expect(strFromU8(files['EPUB/nav.xhtml'] ?? new Uint8Array())).toContain(
+      'epub:type="landmarks"',
     );
   });
 

@@ -1775,6 +1775,39 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
       ]),
     });
     expect(text.match(/Chapter One/g)).toHaveLength(1);
+    expect(result.model.pageMarkers).toMatchObject({
+      confidence: 'high',
+      markers: [
+        {
+          page: 1,
+          label: '1',
+          id: 'page-marker-1',
+          targetId: 'pdf-page-1',
+          confidence: 'high',
+        },
+        {
+          page: 2,
+          label: '2',
+          id: 'page-marker-2',
+          targetId: 'pdf-page-2',
+          confidence: 'high',
+        },
+        {
+          page: 3,
+          label: '3',
+          id: 'page-marker-3',
+          targetId: 'pdf-page-3',
+          confidence: 'high',
+        },
+        {
+          page: 4,
+          label: '4',
+          id: 'page-marker-4',
+          targetId: 'pdf-page-4',
+          confidence: 'high',
+        },
+      ],
+    });
   });
 
   it('reports bounded header and footer patterns as confidence-gated candidates', async () => {

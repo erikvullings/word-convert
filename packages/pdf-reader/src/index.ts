@@ -23,6 +23,7 @@ import {
   type DocumentModel,
   type InferredValue,
   type InlineNode,
+  type PageMarkerSet,
   type Person,
   type PipelineDebugSink,
   type Provenance,
@@ -287,6 +288,7 @@ export interface PdfFurnitureCandidate {
   confidence: 'low' | 'medium' | 'high';
   removed: boolean;
   ruleId?: string;
+  pageLabels?: { page: number; label: string }[];
 }
 
 /** A table the reader turned into a `TableNode`, reported for review. */
@@ -979,6 +981,11 @@ export async function analysePdf(
         item.page === undefined ? [] : [item.page],
       ),
     ),
+    new Set(
+      candidates
+        .filter(({ kind }) => kind === 'page-number')
+        .flatMap(({ pageLabels }) => pageLabels?.map(({ page }) => page) ?? []),
+    ),
     semanticCandidates,
     unwrapFactor,
     wordEvidence,
@@ -1110,6 +1117,7 @@ export async function analysePdf(
     tocOptions,
     warnings,
   );
+  const pageMarkers = pageMarkerSet(candidates);
   if (chapterResult.segmentationTooFlat)
     warnings.push({
       code: 'pdf-chapter-segmentation-too-flat',
@@ -1227,6 +1235,11 @@ export async function analysePdf(
       notes: {},
       styles,
       warnings,
+      coverCandidates: coverCandidates.map(({ assetId, confidence }) => ({
+        assetId,
+        confidence,
+      })),
+      ...(pageMarkers ? { pageMarkers } : {}),
     },
     analysis: {
       pageCount: raw.pageCount,
@@ -2965,6 +2978,7 @@ async function linesToBlocks(
   pages: readonly RawPdfPage[],
   options: PdfAnalysisOptions,
   outlinePages: ReadonlySet<number>,
+  pageMarkerPages: ReadonlySet<number>,
   formulaCandidates: readonly PdfFormulaCandidate[] = [],
   unwrapFactor = DEFAULT_PDF_UNWRAP_FACTOR,
   wordEvidence?: WordEvidence,
@@ -3199,7 +3213,7 @@ async function linesToBlocks(
     )
       unresolvedTablePages.push(page.number);
     if (pageLines.length === 0 && page.images.length === 0) {
-      if (outlinePages.has(page.number))
+      if (outlinePages.has(page.number) || pageMarkerPages.has(page.number))
         blocks.push({
           type: 'paragraph',
           children: [],
@@ -3218,6 +3232,7 @@ async function linesToBlocks(
       !placements.has(0) &&
       (mapping.get(styleId(firstLine)) ?? 'body') === 'body' &&
       taggedRoleForLine(rolesByMarkedContentId, firstLine) === undefined &&
+      !pageMarkerPages.has(page.number) &&
       (page.imageBacked
         ? compatibleOcrBodyLines(previousLine, firstLine, mapping)
         : previousBlock.styleId === styleId(firstLine)) &&
@@ -3596,17 +3611,26 @@ async function linesToBlocks(
       }
       previousLine = line;
     }
-    if (outlinePages.has(page.number)) {
+    if (outlinePages.has(page.number) || pageMarkerPages.has(page.number)) {
       const pageBlocks = blocks.slice(pageStartIndex);
-      if (!containsHeading(pageBlocks)) {
-        const paragraph = firstParagraph(pageBlocks);
-        if (paragraph) paragraph.id = `pdf-page-${page.number}`;
-        else
-          blocks.push({
+      const paragraph = firstParagraph(pageBlocks);
+      if (paragraph) paragraph.id = `pdf-page-${page.number}`;
+      else {
+        const heading = firstHeading(pageBlocks);
+        if (heading) heading.id = `pdf-page-${page.number}`;
+        else {
+          const anchor: Extract<BlockNode, { type: 'paragraph' }> = {
             type: 'paragraph',
             children: [],
             id: `pdf-page-${page.number}`,
-          });
+          };
+          if (
+            pageMarkerPages.has(page.number) &&
+            pageBlocks[0]?.type === 'imageBlock'
+          )
+            blocks.splice(pageStartIndex, 0, anchor);
+          else blocks.push(anchor);
+        }
       }
     }
   }
@@ -3648,31 +3672,6 @@ function isCenteredSceneBreakLine(line: PdfLine): boolean {
   );
 }
 
-function containsHeading(blocks: readonly BlockNode[]): boolean {
-  for (const block of blocks) {
-    if (block.type === 'heading') return true;
-    if (block.type === 'list') {
-      if (
-        block.items.some(({ blocks: itemBlocks }) =>
-          containsHeading(itemBlocks),
-        )
-      )
-        return true;
-    } else if (block.type === 'table') {
-      if (
-        block.rows.some((row) =>
-          row.cells.some(({ blocks: cellBlocks }) =>
-            containsHeading(cellBlocks),
-          ),
-        )
-      )
-        return true;
-    } else if (block.type === 'blockquote' && containsHeading(block.blocks))
-      return true;
-  }
-  return false;
-}
-
 function firstParagraph(
   blocks: readonly BlockNode[],
 ): Extract<BlockNode, { type: 'paragraph' }> | undefined {
@@ -3692,6 +3691,30 @@ function firstParagraph(
     } else if (block.type === 'blockquote') {
       const paragraph = firstParagraph(block.blocks);
       if (paragraph) return paragraph;
+    }
+  }
+  return undefined;
+}
+
+function firstHeading(
+  blocks: readonly BlockNode[],
+): Extract<BlockNode, { type: 'heading' }> | undefined {
+  for (const block of blocks) {
+    if (block.type === 'heading') return block;
+    if (block.type === 'list') {
+      for (const item of block.items) {
+        const heading = firstHeading(item.blocks);
+        if (heading) return heading;
+      }
+    } else if (block.type === 'table') {
+      for (const row of block.rows)
+        for (const cell of row.cells) {
+          const heading = firstHeading(cell.blocks);
+          if (heading) return heading;
+        }
+    } else if (block.type === 'blockquote') {
+      const heading = firstHeading(block.blocks);
+      if (heading) return heading;
     }
   }
   return undefined;
@@ -4508,7 +4531,10 @@ async function detectFurniture(
   const explicitlyRemoved = new Set(options.removedCandidateIds ?? []);
   const explicitlyRetained = new Set(options.retainedCandidateIds ?? []);
   const candidates = [...groups.entries()]
-    .filter(([, group]) => new Set(group.pages).size >= 2)
+    .filter(
+      ([, group]) =>
+        new Set(group.pages).size >= 2 || group.kind === 'page-number',
+    )
     .map(([key, group]) => {
       const parity: PdfFurnitureCandidate['pageParity'] =
         group.pages[0]! % 2 === 0 ? 'even' : 'odd';
@@ -4536,6 +4562,16 @@ async function detectFurniture(
         pageCoverage: ratio,
         confidence,
         removed,
+        ...(group.kind === 'page-number'
+          ? {
+              pageLabels: group.lines
+                .map((line) => ({
+                  page: line.page,
+                  label: pageNumberLabel(line.text),
+                }))
+                .sort((left, right) => left.page - right.page),
+            }
+          : {}),
       };
     });
   const warnings: ConversionWarning[] = [];
@@ -4798,6 +4834,52 @@ function isPageNumber(text: string): boolean {
   return /^(?:\s*[-–—]?\s*\d+\s*[-–—]?\s*|page\s+\d+(?:\s+of\s+\d+)?)$/i.test(
     text.trim(),
   );
+}
+
+function pageNumberLabel(text: string): string {
+  const match =
+    /^\s*(?:page\s+)?[-–—]?\s*(\d+)(?:\s+of\s+\d+)?\s*[-–—]?\s*$/i.exec(text);
+  return match?.[1] ?? text.trim();
+}
+
+function pageMarkerSet(
+  candidates: readonly PdfFurnitureCandidate[],
+): PageMarkerSet | undefined {
+  const detected = candidates.filter(({ kind }) => kind === 'page-number');
+  if (detected.length === 0) return undefined;
+  const markersByPage = new Map<number, PageMarkerSet['markers'][number]>();
+  for (const candidate of detected)
+    for (const { page, label } of candidate.pageLabels ?? []) {
+      if (!/^\d{1,12}$/.test(label)) continue;
+      const existing = markersByPage.get(page);
+      if (
+        !existing ||
+        (existing.confidence !== 'high' && candidate.confidence === 'high')
+      )
+        markersByPage.set(page, {
+          page,
+          label,
+          id: `page-marker-${page}`,
+          targetId: `pdf-page-${page}`,
+          confidence: candidate.confidence,
+        });
+    }
+  const confidence = detected.every(
+    ({ confidence: candidateConfidence }) => candidateConfidence === 'high',
+  )
+    ? 'high'
+    : detected.some(
+          ({ confidence: candidateConfidence }) =>
+            candidateConfidence === 'low',
+        )
+      ? 'low'
+      : 'medium';
+  return {
+    confidence,
+    markers: [...markersByPage.values()].sort(
+      (left, right) => left.page - right.page,
+    ),
+  };
 }
 
 function hash(value: string): string {

@@ -6,6 +6,7 @@ export const resizeRasterImage: EpubImageResizer = async (
   mediaType,
   maxDimension,
   encoding,
+  maxDimensions,
 ) => {
   if (
     typeof OffscreenCanvas === 'undefined' ||
@@ -18,7 +19,11 @@ export const resizeRasterImage: EpubImageResizer = async (
   try {
     const scale = Math.min(
       1,
-      maxDimension / Math.max(bitmap.width, bitmap.height),
+      maxDimension > 0
+        ? maxDimension / Math.max(bitmap.width, bitmap.height)
+        : 1,
+      maxDimensions ? maxDimensions.width / bitmap.width : 1,
+      maxDimensions ? maxDimensions.height / bitmap.height : 1,
     );
     const width = Math.max(1, Math.round(bitmap.width * scale));
     const height = Math.max(1, Math.round(bitmap.height * scale));

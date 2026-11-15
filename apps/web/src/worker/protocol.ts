@@ -9,6 +9,10 @@ import type {
   StyleMapping,
 } from '@wordconvert/document-model';
 import type { CoverComposition } from '@wordconvert/cover-generator';
+import type {
+  EpubCoverPolicy,
+  EpubImageDimensions,
+} from '@wordconvert/epub-writer';
 import type { MathOutputMode } from '@wordconvert/math-converter';
 import type { ConversionMode } from '../output.ts';
 import type {
@@ -64,6 +68,13 @@ export type WorkerRequest =
       chapterMark?: ChapterMark;
       chapterSplitLevel?: ChapterHeadingLevel;
       sourceHtml?: { html: string; xhtml: string; css: string };
+      epubOptions?: {
+        coverPolicy?: EpubCoverPolicy;
+        preserveCoverAspectRatio?: boolean;
+        maxImageDimensions?: EpubImageDimensions;
+        extraCss?: string;
+        startReadingAt?: string;
+      };
     }
   | {
       type: 'pdf-dense-page-answer';

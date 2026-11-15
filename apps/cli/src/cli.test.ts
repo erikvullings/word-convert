@@ -1241,6 +1241,54 @@ describe('CLI arguments and output', () => {
     expect(coverSvg).toContain('data:image/png;base64,');
   });
 
+  it('applies semantic EPUB cover, CSS, and image-cap options from local inputs', async () => {
+    const directoryPath = await directory();
+    const extraCss = join(directoryPath, 'extra.css');
+    await writeFile(extraCss, '.reader{line-height:1.8}', 'utf8');
+    const result = await invoke([
+      fixture,
+      '--cover-policy',
+      'generated',
+      '--extra-css',
+      extraCss,
+      '--max-image-size',
+      '0',
+      '--epub-max-image-size',
+      '800x1200',
+      '--preserve-cover-aspect-ratio',
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+
+    expect(result.code, result.errors).toBe(0);
+    const output = result.output[0];
+    if (!(output instanceof Uint8Array))
+      throw new Error('Expected EPUB bytes.');
+    const files = unzipSync(output);
+    expect(new TextDecoder().decode(files['EPUB/styles.css'])).toContain(
+      '.reader{line-height:1.8}',
+    );
+    expect(files['EPUB/cover.svg']).toBeDefined();
+    expect(new TextDecoder().decode(files['EPUB/nav.xhtml'])).toContain(
+      'epub:type="landmarks"',
+    );
+  });
+
+  it('rejects malformed EPUB image caps before opening the input', async () => {
+    const result = await invoke([
+      'missing.docx',
+      '--epub-max-image-size',
+      '800x0',
+    ]);
+
+    expect(result.code).toBe(2);
+    expect(result.errors).toContain(
+      '--epub-max-image-size must be WIDTHxHEIGHT',
+    );
+    expect(result.errors).not.toContain('ENOENT');
+  });
+
   it.each([
     '{"schema":"wordconvert.style-preset","version":2,"mappings":{}}',
     '{"schema":"wordconvert.style-preset","version":1,"mappings":{"x":"script"}}',

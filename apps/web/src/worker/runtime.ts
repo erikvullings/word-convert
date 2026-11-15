@@ -166,6 +166,7 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
           const written =
             request.format === 'epub'
               ? await writeEpub(request.model, {
+                  ...request.epubOptions,
                   conversionDate: request.conversionDate,
                   formulaMode: request.formulaMode ?? 'mathml',
                   imageResizer: resizeRasterImage,

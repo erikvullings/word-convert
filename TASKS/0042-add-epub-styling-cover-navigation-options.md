@@ -1,6 +1,6 @@
 # 0042 Add EPUB styling cover and navigation landmark output options
 
-Status: open
+Status: done
 Priority: low
 Owner: unassigned
 Agent: pi

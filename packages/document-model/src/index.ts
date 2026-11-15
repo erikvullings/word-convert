@@ -268,6 +268,24 @@ export interface DocumentAsset {
   height?: number;
 }
 
+export interface PageMarker {
+  page: number;
+  label: string;
+  id: string;
+  targetId: string;
+  confidence: Confidence;
+}
+
+export interface PageMarkerSet {
+  confidence: Confidence;
+  markers: PageMarker[];
+}
+
+export interface SourceCoverCandidate {
+  assetId: string;
+  confidence: 'medium' | 'high';
+}
+
 export interface Equation {
   id: string;
   source: { format: 'omml' | 'tex' | 'mathml'; value: string };
@@ -367,6 +385,8 @@ export interface DocumentModel {
   styles: AnalysedStyle[];
   warnings: ConversionWarning[];
   toc?: TocEntry[];
+  coverCandidates?: SourceCoverCandidate[];
+  pageMarkers?: PageMarkerSet;
 }
 
 export type ProgressPhase =
@@ -562,6 +582,80 @@ export function validateDocumentModel(value: unknown): ValidationResult {
             code: 'shape',
             message: 'Expected a bounded table-of-contents entry.',
           });
+      }
+    }
+  }
+  if (value.coverCandidates !== undefined) {
+    if (
+      !Array.isArray(value.coverCandidates) ||
+      value.coverCandidates.length > 100
+    ) {
+      issues.push({
+        path: 'coverCandidates',
+        code: 'limit',
+        message: 'Expected at most 100 cover candidates.',
+      });
+    } else {
+      for (const [index, candidate] of value.coverCandidates.entries())
+        if (
+          !isRecord(candidate) ||
+          typeof candidate.assetId !== 'string' ||
+          !/^[A-Za-z0-9_.:-]{1,128}$/.test(candidate.assetId) ||
+          !['medium', 'high'].includes(String(candidate.confidence)) ||
+          (isRecord(value.assets) && !(candidate.assetId in value.assets))
+        )
+          issues.push({
+            path: `coverCandidates.${index}`,
+            code: 'shape',
+            message: 'Expected a bounded source cover candidate.',
+          });
+    }
+  }
+  if (value.pageMarkers !== undefined) {
+    const pageMarkers = value.pageMarkers;
+    if (
+      !isRecord(pageMarkers) ||
+      !['low', 'medium', 'high', 'certain'].includes(
+        String(pageMarkers.confidence),
+      ) ||
+      !Array.isArray(pageMarkers.markers) ||
+      pageMarkers.markers.length > 2000
+    ) {
+      issues.push({
+        path: 'pageMarkers',
+        code: 'shape',
+        message: 'Expected a bounded page marker set.',
+      });
+    } else {
+      const markerIds = new Set<string>();
+      const targetIds = new Set<string>();
+      for (const [index, marker] of pageMarkers.markers.entries()) {
+        if (
+          !isRecord(marker) ||
+          typeof marker.page !== 'number' ||
+          !Number.isSafeInteger(marker.page) ||
+          marker.page < 1 ||
+          typeof marker.label !== 'string' ||
+          marker.label.length > 32 ||
+          typeof marker.id !== 'string' ||
+          !/^[A-Za-z0-9_.:-]{1,128}$/.test(marker.id) ||
+          typeof marker.targetId !== 'string' ||
+          !/^[A-Za-z0-9_.:-]{1,128}$/.test(marker.targetId) ||
+          !['low', 'medium', 'high', 'certain'].includes(
+            String(marker.confidence),
+          ) ||
+          markerIds.has(marker.id) ||
+          targetIds.has(marker.targetId)
+        ) {
+          issues.push({
+            path: `pageMarkers.markers.${index}`,
+            code: 'shape',
+            message: 'Expected a bounded page marker.',
+          });
+          continue;
+        }
+        markerIds.add(marker.id);
+        targetIds.add(marker.targetId);
       }
     }
   }

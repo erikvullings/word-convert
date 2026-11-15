@@ -35,7 +35,10 @@ import {
   DEFAULT_EPUB_IMAGE_QUALITY,
   DEFAULT_EPUB_MAX_CHAPTER_SIZE_BYTES,
   DEFAULT_EPUB_MAX_IMAGE_DIMENSION,
+  MAX_EPUB_EXTRA_CSS_BYTES,
   writeEpub,
+  type EpubCoverPolicy,
+  type EpubImageDimensions,
   type EpubWriterOptions,
 } from '@wordconvert/epub-writer';
 import type { MathOutputMode } from '@wordconvert/math-converter';
@@ -129,6 +132,12 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --metadata <path>        Bounded v1 JSON sidecar; CLI > sidecar > reader > defaults
       --cover <path>           Bounded JPEG/PNG/WebP or sanitized SVG cover;
                                keeps cover-image declaration and semantic title page
+      --cover-policy <policy>  source, generated, file, or none; default file with --cover
+      --no-default-epub-cover  Omit cover image and spine entry, keep title page
+      --preserve-cover-aspect-ratio  Letterbox cover images instead of cropping
+      --extra-css <path>       Append validated local CSS (maximum 64 KiB)
+      --epub-max-image-size <WxH>  Independently cap EPUB image width and height
+      --start-reading-at <heading>  Heading label for the EPUB bodymatter landmark
       --frontpage-cover        Use the first PDF page as the EPUB cover and omit
                                its images from the body
       --remove-first-image     Omit a high-confidence source cover image from PDF body content
@@ -382,6 +391,13 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       throw new UsageError('--toc-title must be at most 200 characters.');
     if (values['toc-at-end'] && !values['toc-inline'])
       throw new UsageError('--toc-at-end requires --toc-inline.');
+    const startReadingAt = values['start-reading-at'];
+    if (startReadingAt !== undefined && startReadingAt.length > 200)
+      throw new UsageError(
+        '--start-reading-at must be at most 200 characters.',
+      );
+    if (startReadingAt !== undefined && !startReadingAt.trim())
+      throw new UsageError('--start-reading-at must not be empty.');
     if (
       extension !== '.pdf' &&
       (values['toc-source'] !== undefined ||
@@ -401,6 +417,27 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         '--use-auto-toc cannot be combined with --no-chapters-in-toc or --toc-source off.',
       );
     const maxImageSize = parseMaxImageSize(values['max-image-size']);
+    const epubMaxImageDimensions = parseEpubImageDimensions(
+      values['epub-max-image-size'],
+    );
+    const requestedCoverPolicy = parseCoverPolicy(values['cover-policy']);
+    if (
+      values['no-default-epub-cover'] &&
+      requestedCoverPolicy !== undefined &&
+      requestedCoverPolicy !== 'none'
+    )
+      throw new UsageError(
+        '--no-default-epub-cover cannot be combined with a non-none --cover-policy.',
+      );
+    const coverPolicy: EpubCoverPolicy =
+      values['no-default-epub-cover'] === true
+        ? 'none'
+        : (requestedCoverPolicy ??
+          (values.cover
+            ? 'file'
+            : values['frontpage-cover']
+              ? 'generated'
+              : 'none'));
     const maxChapterSizeBytes = parseFlowSize(values['flow-size']);
     const splitOnPageBreaks = values['split-on-page-breaks'] ?? false;
     if (
@@ -432,17 +469,56 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       throw new UsageError('--image-quality must be an integer from 1 to 100.');
     if (
       (values['max-image-size'] !== undefined ||
+        values['epub-max-image-size'] !== undefined ||
         values['image-format'] !== undefined ||
         values['image-quality'] !== undefined) &&
       format !== 'epub'
     )
       throw new UsageError('Image encoding options apply only to EPUB output.');
-    if (values.cover !== undefined && format !== 'epub')
-      throw new UsageError('--cover applies only to EPUB output.');
+    if (
+      (values.cover !== undefined ||
+        values['cover-policy'] !== undefined ||
+        values['no-default-epub-cover'] ||
+        values['preserve-cover-aspect-ratio'] ||
+        values['extra-css'] !== undefined ||
+        startReadingAt !== undefined) &&
+      format !== 'epub'
+    )
+      throw new UsageError(
+        'EPUB cover and navigation options apply only to EPUB output.',
+      );
+    if (values.cover && coverPolicy !== 'file')
+      throw new UsageError('--cover requires --cover-policy file.');
+    if (coverPolicy === 'file' && !values.cover)
+      throw new UsageError('--cover-policy file requires --cover <path>.');
+    if (coverPolicy === 'source' && extension !== '.pdf')
+      throw new UsageError('--cover-policy source requires PDF input.');
+    if (
+      extension === '.epub' &&
+      (values.cover !== undefined ||
+        values['epub-max-image-size'] !== undefined ||
+        values['cover-policy'] !== undefined ||
+        values['no-default-epub-cover'] ||
+        values['preserve-cover-aspect-ratio'] ||
+        values['extra-css'] !== undefined ||
+        startReadingAt !== undefined)
+    )
+      throw new UsageError(
+        'EPUB styling, cover, image-cap, and navigation options apply only to semantic EPUB conversion.',
+      );
     if (values['frontpage-cover'] && format !== 'epub')
       throw new UsageError('--frontpage-cover applies only to EPUB output.');
     if (values.cover && values['frontpage-cover'])
       throw new UsageError('--cover and --frontpage-cover cannot be combined.');
+    if (
+      values['frontpage-cover'] &&
+      ((requestedCoverPolicy !== undefined &&
+        requestedCoverPolicy !== 'generated') ||
+        values['no-default-epub-cover'])
+    )
+      throw new UsageError(
+        '--frontpage-cover cannot be combined with a non-generated cover policy.',
+      );
     const conversionDate =
       values['conversion-date'] ?? new Date().toISOString();
     if (!isIsoDate(conversionDate))
@@ -681,6 +757,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         conversionDate: extension === '.epub' ? null : conversionDate,
         formulaMode: extension === '.epub' ? null : formulaMode,
         maxImageSize,
+        epubMaxImageDimensions: epubMaxImageDimensions ?? null,
         imageFormat,
         imageQuality,
         splitChapters: values['split-chapters'] ?? false,
@@ -756,6 +833,13 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         tocTitle: tocTitle ?? null,
         inlineToc: values['toc-inline'] ?? false,
         tocAtEnd: values['toc-at-end'] ?? false,
+        coverPolicy,
+        preserveCoverAspectRatio:
+          values['preserve-cover-aspect-ratio'] ?? false,
+        extraCss: values['extra-css']
+          ? sanitizeBasename(values['extra-css'])
+          : null,
+        startReadingAt: sanitizeRequestText(startReadingAt),
         stylePreset: presetPath ? sanitizeBasename(presetPath) : null,
         cover: values.cover ? sanitizeBasename(values.cover) : null,
         title: sanitizeRequestText(values.title),
@@ -1084,9 +1168,39 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     const cover = values.cover
       ? await readCover(values.cover, model)
       : undefined;
+    let extraCss: string | undefined;
+    if (values['extra-css']) {
+      if (output !== '-') await protectSource(values['extra-css'], output);
+      let extraCssBytes: Uint8Array;
+      try {
+        extraCssBytes = await readBounded(
+          values['extra-css'],
+          MAX_EPUB_EXTRA_CSS_BYTES,
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.startsWith('File exceeds the ')
+        )
+          throw new UsageError(
+            `Extra CSS file exceeds ${MAX_EPUB_EXTRA_CSS_BYTES} bytes.`,
+          );
+        throw error;
+      }
+      try {
+        extraCss = new TextDecoder('utf-8', { fatal: true }).decode(
+          extraCssBytes,
+        );
+      } catch {
+        throw new UsageError('--extra-css must be a valid UTF-8 file.');
+      }
+    }
     if (pipelineDump || verbose) onStage({ stage: 'model', data: model });
     const data = await render(model, format, conversionDate, formulaMode, {
       maxImageSize,
+      ...(epubMaxImageDimensions
+        ? { maxImageDimensions: epubMaxImageDimensions }
+        : {}),
       imageFormat,
       imageQuality,
       maxChapterSizeBytes,
@@ -1096,6 +1210,10 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       tocTitle,
       inlineToc: values['toc-inline'] ?? false,
       tocAtEnd: values['toc-at-end'] ?? false,
+      coverPolicy,
+      preserveCoverAspectRatio: values['preserve-cover-aspect-ratio'] ?? false,
+      ...(extraCss !== undefined ? { extraCss } : {}),
+      ...(startReadingAt ? { startReadingAt } : {}),
       runtimeDir: values['runtime-dir'],
       warn: io.stderr,
       ...(cover ? { cover } : {}),
@@ -1163,6 +1281,12 @@ function parseArguments(argv: string[]) {
         'strict-isbn': { type: 'boolean' },
         metadata: { type: 'string' },
         cover: { type: 'string' },
+        'cover-policy': { type: 'string' },
+        'no-default-epub-cover': { type: 'boolean' },
+        'preserve-cover-aspect-ratio': { type: 'boolean' },
+        'extra-css': { type: 'string' },
+        'epub-max-image-size': { type: 'string' },
+        'start-reading-at': { type: 'string' },
         'frontpage-cover': { type: 'boolean' },
         'remove-first-image': { type: 'boolean' },
         'crop-top': { type: 'string' },
@@ -1563,6 +1687,44 @@ function parseMaxImageSize(value: string | undefined): number {
   return Number(value);
 }
 
+function parseEpubImageDimensions(
+  value: string | undefined,
+): EpubImageDimensions | undefined {
+  if (value === undefined) return undefined;
+  const match = /^(\d+)x(\d+)$/i.exec(value);
+  const width = Number(match?.[1]);
+  const height = Number(match?.[2]);
+  if (
+    !match ||
+    !Number.isInteger(width) ||
+    !Number.isInteger(height) ||
+    width < 1 ||
+    height < 1 ||
+    width > 32768 ||
+    height > 32768
+  )
+    throw new UsageError(
+      '--epub-max-image-size must be WIDTHxHEIGHT with whole-number dimensions from 1 to 32768.',
+    );
+  return { width, height };
+}
+
+function parseCoverPolicy(
+  value: string | undefined,
+): EpubCoverPolicy | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value === 'source' ||
+    value === 'generated' ||
+    value === 'file' ||
+    value === 'none'
+  )
+    return value;
+  throw new UsageError(
+    '--cover-policy must be source, generated, file, or none.',
+  );
+}
+
 function parseFlowSize(value: string | undefined): number {
   if (value === undefined) return DEFAULT_EPUB_MAX_CHAPTER_SIZE_BYTES;
   if (value.toLowerCase() === 'off' || value === '0') return 0;
@@ -1673,6 +1835,7 @@ async function render(
   formulaMode: MathOutputMode,
   images: {
     maxImageSize: number;
+    maxImageDimensions?: EpubImageDimensions;
     imageFormat: 'jpeg' | 'preserve';
     imageQuality: number;
     maxChapterSizeBytes: number;
@@ -1682,6 +1845,10 @@ async function render(
     tocTitle: string | undefined;
     inlineToc: boolean;
     tocAtEnd: boolean;
+    coverPolicy: EpubCoverPolicy;
+    preserveCoverAspectRatio: boolean;
+    extraCss?: string;
+    startReadingAt?: string;
     runtimeDir: string | undefined;
     warn: (message: string) => void;
     cover?: EpubWriterOptions['cover'];
@@ -1717,18 +1884,24 @@ async function render(
       return writeMarkdownZip(model, markdownOptions);
     case 'epub': {
       const imageResizer =
-        images.maxImageSize > 0
+        images.maxImageSize > 0 || images.maxImageDimensions
           ? (await import('./image-resizer.ts')).createImageResizer(
               images.runtimeDir,
             )
           : undefined;
-      if (images.maxImageSize > 0 && !imageResizer)
+      if (
+        (images.maxImageSize > 0 || images.maxImageDimensions) &&
+        !imageResizer
+      )
         images.warn(
           'warning: Native image runtime unavailable; images are embedded at original size.\n',
         );
       return writeEpub(model, {
         ...options,
         maxImageDimension: images.maxImageSize,
+        ...(images.maxImageDimensions
+          ? { maxImageDimensions: images.maxImageDimensions }
+          : {}),
         imageFormat: images.imageFormat,
         imageQuality: images.imageQuality,
         maxChapterSizeBytes: images.maxChapterSizeBytes,
@@ -1738,6 +1911,12 @@ async function render(
         ...(images.tocTitle ? { tocTitle: images.tocTitle } : {}),
         inlineToc: images.inlineToc,
         tocAtEnd: images.tocAtEnd,
+        coverPolicy: images.coverPolicy,
+        preserveCoverAspectRatio: images.preserveCoverAspectRatio,
+        ...(images.extraCss !== undefined ? { extraCss: images.extraCss } : {}),
+        ...(images.startReadingAt
+          ? { startReadingAt: images.startReadingAt }
+          : {}),
         onWarning,
         ...(images.cover ? { cover: images.cover } : {}),
         ...(images.coverPng ? { coverPng: images.coverPng } : {}),

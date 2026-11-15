@@ -471,6 +471,39 @@ These writer options also work for non-PDF input. Existing EPUB input remains on
 its archive-preserving shrink path and does not use these PDF or semantic-writer
 TOC options.
 
+### EPUB styling, covers, image caps, and landmarks
+
+Semantic EPUB output appends `--extra-css <path>` after the generated stylesheet.
+The UTF-8 file is limited to 64 KiB. CSS is parsed without reserializing the
+accepted text; `@import`, remote or scheme-based `url()`, and `expression()`
+constructs are removed at the offending rule/declaration and reported as
+deterministic conversion warnings, including remote string candidates in
+`image-set()`. Local relative and fragment URLs remain unchanged. The file is
+read locally and its path is never written to the EPUB.
+
+Choose a cover with `--cover-policy source|generated|file|none`. `source` uses
+only a high-confidence extracted PDF cover candidate; if none is available, the
+cover is omitted with a warning. `generated` creates the deterministic
+typographic cover. `file` requires `--cover <path>` and applies the existing
+bounded local-image and signature checks. Supplying `--cover` without a policy
+continues to select `file`. `--no-default-epub-cover` is equivalent to policy
+`none`; it removes the cover image and cover-page spine entry but never the
+semantic title page. The older `--frontpage-cover` path remains available.
+
+`--preserve-cover-aspect-ratio` letterboxes an image within the cover instead of
+cropping it; without the flag, the selected composition's crop behavior is
+preserved. `--epub-max-image-size <width>x<height>` adds independent width and
+height limits to the existing longest-edge `--max-image-size <px>` limit.
+Both limits preserve image aspect ratio, and the existing `--image-format` and
+`--image-quality` controls still determine encoding. `--start-reading-at
+<heading>` sets the `bodymatter` landmarks link to the exact case-insensitive
+heading label without removing any preceding content. Every semantic EPUB gets
+cover (when present), title-page, and bodymatter landmarks. A confidence-gated
+page list is emitted only from explicit high-confidence PDF page-number
+candidates; uncertain candidates produce a warning and no fabricated page list.
+These options apply only to semantic EPUB conversion, not the
+archive-preserving existing-EPUB shrink path.
+
 ## Run from source
 
 Install Node 24+, the repository's pinned pnpm, and Bun 1.3.11:

@@ -41,12 +41,14 @@ export function createImageResizer(
   } catch {
     return undefined;
   }
-  return async (data, mediaType, maxDimension, encoding) => {
+  return async (data, mediaType, maxDimension, encoding, maxDimensions) => {
     if (inspectRasterImage(data, mediaType).animated) return undefined;
     const image = await canvasModule.loadImage(Buffer.from(data));
     const scale = Math.min(
       1,
-      maxDimension / Math.max(image.width, image.height),
+      maxDimension > 0 ? maxDimension / Math.max(image.width, image.height) : 1,
+      maxDimensions ? maxDimensions.width / image.width : 1,
+      maxDimensions ? maxDimensions.height / image.height : 1,
     );
     const width = Math.max(1, Math.round(image.width * scale));
     const height = Math.max(1, Math.round(image.height * scale));

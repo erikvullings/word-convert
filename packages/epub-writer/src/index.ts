@@ -18,6 +18,7 @@ import type {
 import { strToU8, zipSync, type Zippable } from 'fflate';
 import {
   createCoverSvg,
+  type CoverImage,
   type CoverComposition,
 } from '@wordconvert/cover-generator';
 import {
@@ -25,6 +26,19 @@ import {
   renderEquation as renderMathEquation,
   type MathOutputMode,
 } from '@wordconvert/math-converter';
+import {
+  ident as cssIdent,
+  parse as parseCss,
+  walk as walkCss,
+} from 'css-tree';
+import type { CssLocation, CssNode } from 'css-tree';
+
+export type EpubCoverPolicy = 'source' | 'generated' | 'file' | 'none';
+
+export interface EpubImageDimensions {
+  width: number;
+  height: number;
+}
 
 export interface EpubWriterOptions extends WriterOptions {
   identifier?: string;
@@ -34,11 +48,19 @@ export interface EpubWriterOptions extends WriterOptions {
   modified?: string;
   cover?: CoverComposition;
   coverPng?: Uint8Array;
+  coverPolicy?: EpubCoverPolicy;
+  preserveCoverAspectRatio?: boolean;
+  /** Bounded user CSS appended after the generated stylesheet. */
+  extraCss?: string;
+  /** Match a heading label exactly to choose the bodymatter landmark. */
+  startReadingAt?: string;
   formulaMode?: MathOutputMode;
   sourceXhtml?: string;
   sourceCss?: string;
   /** Longest image edge in pixels; larger raster images are downscaled. Default 1600. */
   maxImageDimension?: number;
+  /** Independent width and height caps applied in addition to maxImageDimension. */
+  maxImageDimensions?: EpubImageDimensions;
   /** Opaque raster encoding. Default jpeg; preserve keeps the source format. */
   imageFormat?: 'jpeg' | 'preserve';
   /** JPEG/WebP quality from 1 to 100. Default 80. */
@@ -65,6 +87,7 @@ export interface EpubWriterOptions extends WriterOptions {
 export const DEFAULT_EPUB_MAX_IMAGE_DIMENSION = 1600;
 export const DEFAULT_EPUB_IMAGE_QUALITY = 80;
 export const DEFAULT_EPUB_MAX_CHAPTER_SIZE_BYTES = 260 * 1024;
+export const MAX_EPUB_EXTRA_CSS_BYTES = 64 * 1024;
 
 /** Byte-only results retain the source type; typed results may change encoding. */
 export type EpubImageResizer = (
@@ -72,6 +95,7 @@ export type EpubImageResizer = (
   mediaType: string,
   maxDimension: number,
   encoding: { format: 'jpeg' | 'preserve'; quality: number },
+  maxDimensions?: EpubImageDimensions,
 ) => Promise<Uint8Array | { data: Uint8Array; mediaType: string } | undefined>;
 
 const RESIZABLE_MEDIA_TYPES = new Set([
@@ -86,6 +110,7 @@ async function shrinkAssets(
 ): Promise<DocumentModel> {
   const resize = options.imageResizer;
   const max = options.maxImageDimension ?? DEFAULT_EPUB_MAX_IMAGE_DIMENSION;
+  const maxDimensions = options.maxImageDimensions;
   const quality = options.imageQuality ?? DEFAULT_EPUB_IMAGE_QUALITY;
   if (!Number.isInteger(max) || max < 0 || max > 32768)
     throw new TypeError(
@@ -94,29 +119,57 @@ async function shrinkAssets(
   if (!Number.isInteger(quality) || quality < 1 || quality > 100)
     throw new TypeError('EPUB image quality must be an integer from 1 to 100.');
   if (
+    maxDimensions !== undefined &&
+    (!Number.isInteger(maxDimensions.width) ||
+      maxDimensions.width < 1 ||
+      maxDimensions.width > 32768 ||
+      !Number.isInteger(maxDimensions.height) ||
+      maxDimensions.height < 1 ||
+      maxDimensions.height > 32768)
+  )
+    throw new TypeError(
+      'EPUB image width and height caps must be integers from 1 to 32768.',
+    );
+  if (
     options.imageFormat !== undefined &&
     options.imageFormat !== 'jpeg' &&
     options.imageFormat !== 'preserve'
   )
     throw new TypeError('EPUB image format must be jpeg or preserve.');
-  if (!resize || !(max > 0)) return model;
+  if (!resize || (!(max > 0) && !maxDimensions)) return model;
   const assets: DocumentModel['assets'] = {};
   for (const [key, asset] of Object.entries(model.assets)) {
     const mediaType = asset.mediaType.toLowerCase();
     let next = asset;
     if (RESIZABLE_MEDIA_TYPES.has(mediaType)) {
-      const result = await resize(asset.data, mediaType, max, {
-        format: options.imageFormat ?? 'jpeg',
-        quality,
-      });
+      const result = await resize(
+        asset.data,
+        mediaType,
+        max,
+        {
+          format: options.imageFormat ?? 'jpeg',
+          quality,
+        },
+        maxDimensions,
+      );
       const data = result instanceof Uint8Array ? result : result?.data;
       const outputType =
         result instanceof Uint8Array ? mediaType : result?.mediaType;
+      const needsDimensionCap =
+        (max > 0 &&
+          asset.width !== undefined &&
+          asset.height !== undefined &&
+          Math.max(asset.width, asset.height) > max) ||
+        (maxDimensions !== undefined &&
+          asset.width !== undefined &&
+          asset.height !== undefined &&
+          (asset.width > maxDimensions.width ||
+            asset.height > maxDimensions.height));
       if (
         data &&
         outputType &&
         RESIZABLE_MEDIA_TYPES.has(outputType) &&
-        data.byteLength < asset.data.byteLength
+        (needsDimensionCap || data.byteLength < asset.data.byteLength)
       )
         next = { ...asset, data, mediaType: outputType };
     }
@@ -158,6 +211,7 @@ interface RenderContext {
   chapterPath: string;
   referencedNotes: string[];
   formulaMode: MathOutputMode;
+  pageMarkers: ReadonlyMap<string, string>;
 }
 
 const ZIP_TIME = new Date('1980-01-01T00:00:00.000Z');
@@ -327,11 +381,51 @@ export async function writeEpub(
         ...headings,
         ...collectPageAnchors(chapters),
       ]);
-  const coverPath = options.coverPng
-    ? 'cover.png'
-    : options.cover
-      ? 'cover.svg'
+  const coverPolicy =
+    options.coverPolicy ??
+    (options.cover || options.coverPng ? 'generated' : 'none');
+  if (
+    coverPolicy !== 'source' &&
+    coverPolicy !== 'generated' &&
+    coverPolicy !== 'file' &&
+    coverPolicy !== 'none'
+  )
+    throw new TypeError(
+      'EPUB cover policy must be source, generated, file, or none.',
+    );
+  let cover = resolveCoverComposition(model, metadata, coverPolicy, options);
+  let coverPng =
+    coverPolicy === 'generated' || coverPolicy === 'file'
+      ? options.coverPng
       : undefined;
+  if (options.preserveCoverAspectRatio && coverPng) {
+    if (!options.cover)
+      cover = {
+        ...defaultCoverComposition(metadata, {
+          mediaType: 'image/png',
+          data: coverPng,
+        }),
+        crop: 'contain',
+      };
+    coverPng = undefined;
+  }
+  const coverPath = coverPng ? 'cover.png' : cover ? 'cover.svg' : undefined;
+  const startHeading = resolveStartReadingHeading(
+    headings,
+    options.startReadingAt,
+  );
+  const startTarget: { path: string; id?: string } = startHeading
+    ? startHeading
+    : { path: chapters[0]?.path ?? 'chapter-001.xhtml' };
+  const pageTargets = [...headings, ...collectPageAnchors(chapters)];
+  const pageList = resolvePageList(model, pageTargets, options.onWarning);
+  const pageMarkerMarkup = new Map(
+    pageList.map(({ targetId, id, label }) => [
+      targetId,
+      `<span epub:type="pagebreak" id="${escapeAttribute(id)}" title="${escapeAttribute(label)}" aria-label="${escapeAttribute(label)}"/>`,
+    ]),
+  );
+  const extraCss = sanitizeExtraCss(options.extraCss, options.onWarning);
   const files: Zippable = {};
   files.mimetype = [strToU8('application/epub+zip'), { level: 0 }];
   files['META-INF/container.xml'] = strToU8(containerXml());
@@ -347,15 +441,21 @@ export async function writeEpub(
     ),
   );
   files['EPUB/nav.xhtml'] = strToU8(
-    navXhtml(metadata, navigation, options.tocTitle ?? 'Contents'),
+    navXhtml(
+      metadata,
+      navigation,
+      options.tocTitle ?? 'Contents',
+      coverPath !== undefined,
+      startTarget,
+      pageList,
+    ),
   );
   files['EPUB/styles.css'] = strToU8(
-    `${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${options.sourceXhtml ? SOURCE_HTML_STYLES + SOURCE_HTML_EQUATION_LAYOUT_STYLES + SOURCE_HTML_PARAGRAPH_TITLE_STYLES : ''}${options.sourceCss ?? ''}`,
+    `${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${options.sourceXhtml ? SOURCE_HTML_STYLES + SOURCE_HTML_EQUATION_LAYOUT_STYLES + SOURCE_HTML_PARAGRAPH_TITLE_STYLES : ''}${options.sourceCss ?? ''}${extraCss}`,
   );
   if (coverPath) {
-    if (options.coverPng) files['EPUB/cover.png'] = options.coverPng;
-    else if (options.cover)
-      files['EPUB/cover.svg'] = strToU8(createCoverSvg(options.cover));
+    if (coverPng) files['EPUB/cover.png'] = coverPng;
+    else if (cover) files['EPUB/cover.svg'] = strToU8(createCoverSvg(cover));
     files['EPUB/cover.xhtml'] = strToU8(coverXhtml(metadata, coverPath));
   }
   files['EPUB/title.xhtml'] = strToU8(titleXhtml(metadata, model));
@@ -380,6 +480,7 @@ export async function writeEpub(
             headings,
             options.formulaMode ?? 'mathml',
             chapterMark,
+            pageMarkerMarkup,
           ),
     );
   }
@@ -391,6 +492,277 @@ export async function writeEpub(
     options.onStage({ stage: 'output', data: artifacts });
   }
   return zipSync(files, { level: 9, mtime: ZIP_TIME });
+}
+
+function resolveCoverComposition(
+  model: DocumentModel,
+  metadata: PublicationMetadata,
+  policy: EpubCoverPolicy,
+  options: EpubWriterOptions,
+): CoverComposition | undefined {
+  let cover: CoverComposition | undefined;
+  if (policy === 'none') return undefined;
+  if (policy === 'file') {
+    if (!options.cover?.image)
+      throw new TypeError(
+        'EPUB cover policy file requires a validated cover image.',
+      );
+    cover = options.cover;
+  } else if (policy === 'source') {
+    const candidate = model.coverCandidates?.find(
+      ({ confidence }) => confidence === 'high',
+    );
+    const asset = candidate ? model.assets[candidate.assetId] : undefined;
+    const mediaType = asset?.mediaType.toLowerCase();
+    if (!candidate || !asset || !mediaType || !isCoverMediaType(mediaType)) {
+      options.onWarning?.({
+        code: 'epub-source-cover-unavailable',
+        severity: 'warning',
+        message:
+          'No supported high-confidence source cover candidate was available; the EPUB cover was omitted.',
+      });
+      return undefined;
+    }
+    cover = defaultCoverComposition(metadata, {
+      mediaType,
+      data: asset.data,
+      ...(asset.width ? { width: asset.width } : {}),
+      ...(asset.height ? { height: asset.height } : {}),
+    });
+  } else {
+    cover = options.cover ?? defaultCoverComposition(metadata);
+  }
+  if (options.preserveCoverAspectRatio && cover.image)
+    return { ...cover, crop: 'contain' };
+  return cover;
+}
+
+function defaultCoverComposition(
+  metadata: PublicationMetadata,
+  image?: CoverImage,
+): CoverComposition {
+  return {
+    width: 1600,
+    height: 2560,
+    layout: image ? 'image-only' : 'typographic',
+    title: metadata.title,
+    ...(metadata.subtitle ? { subtitle: metadata.subtitle } : {}),
+    authors: metadata.creators.map(({ name }) => name),
+    alignment: 'center',
+    titlePosition: 20,
+    authorPosition: 85,
+    titleSize: 112,
+    authorSize: 54,
+    textColor: 'light',
+    contrastPanel: image ? 'none' : 'dark',
+    panelOpacity: 0.5,
+    imageOpacity: 1,
+    margin: 8,
+    crop: 'cover',
+    ...(image ? { image } : {}),
+  };
+}
+
+function isCoverMediaType(value: string): value is CoverImage['mediaType'] {
+  return (
+    value === 'image/jpeg' ||
+    value === 'image/png' ||
+    value === 'image/webp' ||
+    value === 'image/svg+xml'
+  );
+}
+
+function resolveStartReadingHeading(
+  headings: readonly HeadingEntry[],
+  startReadingAt: string | undefined,
+): { path: string; id: string } | undefined {
+  if (startReadingAt === undefined) return undefined;
+  if (startReadingAt.length > 200)
+    throw new TypeError(
+      'EPUB start-reading-at heading must be at most 200 characters.',
+    );
+  const label = startReadingAt.trim().toLocaleLowerCase();
+  if (!label)
+    throw new TypeError('EPUB start-reading-at heading must not be empty.');
+  const heading = headings.find(
+    ({ label: headingLabel }) =>
+      headingLabel.trim().toLocaleLowerCase() === label,
+  );
+  if (!heading)
+    throw new TypeError(
+      `EPUB start-reading-at heading was not found: ${startReadingAt}.`,
+    );
+  return { path: heading.path, id: heading.id };
+}
+
+interface PageListEntry {
+  page: number;
+  label: string;
+  id: string;
+  targetId: string;
+  path: string;
+}
+
+function resolvePageList(
+  model: DocumentModel,
+  targets: readonly HeadingEntry[],
+  onWarning: EpubWriterOptions['onWarning'],
+): PageListEntry[] {
+  const pageMarkers = model.pageMarkers;
+  if (!pageMarkers) return [];
+  const targetById = new Map(targets.map((target) => [target.id, target]));
+  const valid =
+    pageMarkers.confidence === 'high' &&
+    pageMarkers.markers.length >= 2 &&
+    pageMarkers.markers.every(
+      ({ confidence, targetId }) =>
+        confidence === 'high' && targetById.has(targetId),
+    );
+  if (!valid) {
+    onWarning?.({
+      code: 'epub-page-list-confidence',
+      severity: 'warning',
+      message:
+        'Printed page-number evidence did not meet the high-confidence threshold; no EPUB page list was emitted.',
+    });
+    return [];
+  }
+  return [...pageMarkers.markers]
+    .sort((left, right) => left.page - right.page)
+    .map(({ page, label, id, targetId }) => ({
+      page,
+      label,
+      id,
+      targetId,
+      path: targetById.get(targetId)!.path,
+    }));
+}
+
+function sanitizeExtraCss(
+  css: string | undefined,
+  onWarning: EpubWriterOptions['onWarning'],
+): string {
+  if (css === undefined || css === '') return '';
+  if (utf8ByteLength(css) > MAX_EPUB_EXTRA_CSS_BYTES)
+    throw new TypeError(
+      `EPUB extra CSS must be no larger than ${MAX_EPUB_EXTRA_CSS_BYTES} bytes.`,
+    );
+  let ast;
+  try {
+    ast = parseCss(css, {
+      positions: true,
+      onParseError: (error: unknown) => {
+        throw error;
+      },
+    });
+  } catch {
+    onWarning?.({
+      code: 'epub-extra-css-invalid',
+      severity: 'warning',
+      message: 'Invalid EPUB extra CSS was omitted. Rule: syntax.',
+      details: { rule: 'syntax' },
+    });
+    return '';
+  }
+  const rejected: Array<{ start: number; end: number; rule: string }> = [];
+  walkCss(ast, {
+    enter(node: CssNode) {
+      if (
+        node.type === 'Atrule' &&
+        cssIdent.decode(node.name).toLowerCase() === 'import'
+      ) {
+        addCssRange(node, '@import', rejected);
+        return;
+      }
+      if (node.type !== 'Declaration') return;
+      let rule: string | undefined;
+      walkCss(node, {
+        enter(child: CssNode) {
+          if (
+            child.type === 'Function' &&
+            child.name.toLowerCase() === 'expression'
+          )
+            rule = 'expression()';
+          else if (child.type === 'Url' && isExternalCssUrl(child.value))
+            rule = 'remote url()';
+          else if (
+            child.type === 'Function' &&
+            ['image-set', '-webkit-image-set'].includes(
+              child.name.toLowerCase(),
+            )
+          ) {
+            walkCss(child, {
+              enter(candidate: CssNode) {
+                if (
+                  candidate.type === 'String' &&
+                  isExternalCssUrl(candidate.value)
+                )
+                  rule = 'remote image-set()';
+              },
+            });
+          }
+        },
+      });
+      if (rule) addCssRange(node, `${rule} in ${node.property}`, rejected);
+    },
+  });
+  if (rejected.length === 0) return css;
+  const ranges = rejected.sort(
+    (left, right) => left.start - right.start || right.end - left.end,
+  );
+  const accepted: typeof ranges = [];
+  for (const range of ranges) {
+    const previous = accepted.at(-1);
+    if (previous && range.start < previous.end) continue;
+    accepted.push(range);
+  }
+  for (const { rule } of accepted)
+    onWarning?.({
+      code: 'epub-extra-css-rule-rejected',
+      severity: 'warning',
+      message: `Removed unsafe EPUB CSS declaration or rule. Rule: ${rule}.`,
+      details: { rule },
+    });
+  let result = '';
+  let offset = 0;
+  for (const { start, end } of accepted) {
+    result += css.slice(offset, start);
+    offset = end;
+  }
+  return result + css.slice(offset);
+}
+
+function addCssRange(
+  node: { loc?: CssLocation | undefined },
+  rule: string,
+  ranges: Array<{ start: number; end: number; rule: string }>,
+): void {
+  if (!node.loc) return;
+  ranges.push({
+    start: node.loc.start.offset,
+    end: node.loc.end.offset,
+    rule,
+  });
+}
+
+function isExternalCssUrl(value: string): boolean {
+  return /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(value.trim());
+}
+
+function utf8ByteLength(value: string): number {
+  let length = 0;
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    length +=
+      codePoint <= 0x7f
+        ? 1
+        : codePoint <= 0x7ff
+          ? 2
+          : codePoint <= 0xffff
+            ? 3
+            : 4;
+  }
+  return length;
 }
 
 function artifactBytes(value: Zippable[string]): Uint8Array {
@@ -1098,14 +1470,27 @@ function navXhtml(
   metadata: PublicationMetadata,
   headings: TocRenderEntry[],
   title: string,
+  hasCover: boolean,
+  startTarget: { path: string; id?: string },
+  pageList: readonly PageListEntry[],
 ): string {
   const items = headings.length
     ? renderTocEntries(headings)
     : '<li><a href="chapter-001.xhtml">Document</a></li>';
+  const startHref = `${startTarget.path}${startTarget.id ? `#${escapeAttribute(startTarget.id)}` : ''}`;
+  const landmarks = `<nav epub:type="landmarks" hidden="hidden"><h2>Guide</h2><ol>${hasCover ? '<li><a epub:type="cover" href="cover.xhtml">Cover</a></li>' : ''}<li><a epub:type="titlepage" href="title.xhtml">Title page</a></li><li><a epub:type="bodymatter" href="${escapeAttribute(startHref)}">Start of content</a></li></ol></nav>`;
+  const pageNavigation = pageList.length
+    ? `<nav epub:type="page-list" id="page-list"><h2>Pages</h2><ol>${pageList
+        .map(
+          ({ path, id, label }) =>
+            `<li><a href="${escapeAttribute(path)}#${escapeAttribute(id)}">${escapeXml(label)}</a></li>`,
+        )
+        .join('')}</ol></nav>`
+    : '';
   return xhtmlDocument(
     metadata,
     title,
-    `<nav epub:type="toc" id="toc"><h1>${escapeXml(title)}</h1><ol>${items}</ol></nav>`,
+    `<nav epub:type="toc" id="toc"><h1>${escapeXml(title)}</h1><ol>${items}</ol></nav>${landmarks}${pageNavigation}`,
     ' xmlns:epub="http://www.idpf.org/2007/ops"',
   );
 }
@@ -1158,6 +1543,7 @@ function chapterXhtml(
   headings: HeadingEntry[],
   formulaMode: MathOutputMode,
   chapterMark: ChapterMark,
+  pageMarkers: ReadonlyMap<string, string> = new Map(),
 ): string {
   const firstHeading = headings.find(({ path }) => path === chapter.path);
   const context: RenderContext = {
@@ -1168,6 +1554,7 @@ function chapterXhtml(
     chapterPath: chapter.path,
     referencedNotes: [],
     formulaMode,
+    pageMarkers,
   };
   if (context.headingIndex < 0) context.headingIndex = headings.length;
   const marker =
@@ -1204,12 +1591,12 @@ function renderBlock(block: BlockNode, context: RenderContext): string {
     case 'paragraph': {
       const classes = paragraphIndentClasses(block.indent);
       const id = block.id ? ` id="${escapeAttribute(block.id)}"` : '';
-      return `<p${id}${classes ? ` class="${classes}"` : ''}>${renderInlines(block.children, context)}</p>`;
+      return `${context.pageMarkers.get(block.id ?? '') ?? ''}<p${id}${classes ? ` class="${classes}"` : ''}>${renderInlines(block.children, context)}</p>`;
     }
     case 'heading': {
       const heading = context.headings[context.headingIndex++];
       const numbering = block.numbering ? `${escapeXml(block.numbering)} ` : '';
-      return `<h${block.level} id="${escapeAttribute(heading?.id ?? 'section')}">${numbering}${renderInlines(block.children, context)}</h${block.level}>`;
+      return `${context.pageMarkers.get(heading?.id ?? '') ?? ''}<h${block.level} id="${escapeAttribute(heading?.id ?? 'section')}">${numbering}${renderInlines(block.children, context)}</h${block.level}>`;
     }
 
     case 'list': {

@@ -12,6 +12,7 @@ This document is the release checklist for security, privacy, performance, and b
 | Path traversal and malformed/encrypted ZIPs | Reject before extraction | Hostile fixtures and encrypted-entry assertions in `docx-reader/src/index.test.ts` |
 | Malformed XML and entity expansion | Reject unsafe XML | Malformed and `xml-entity-expansion.docx` fixtures in `docx-reader/src/index.test.ts` |
 | Unsafe hyperlinks and remote resources | Allow local/passive resources and safe schemes only | Reader hostile fixture; HTML, Markdown, EPUB writer tests; preview DOMPurify policy test |
+| User-supplied EPUB CSS | UTF-8 input is capped at 64 KiB; css-tree parses it for `@import`, remote/scheme URLs, and `expression()`; only offending declarations/rules are removed from the original text, with deterministic warnings | `epub-writer/src/index.test.ts` asserts accepted CSS stays intact while imports, remote URLs, and expressions are removed |
 | Active SVG and unsafe HTML | Quarantine scripts, handlers, remote references, CSS imports, and processing instructions | Parameterized SVG tests, writer tests, cover-generator sanitization test, and preview policy test |
 | Unexpectedly large images | `maxImageBytes: 25 MiB` per image | Configurable oversized-image assertion in `docx-reader/src/index.test.ts` |
 | Memory exhaustion | Bound package, expanded content, entry count, compression ratio, and each image; transfer output buffers and release them after download | Reader limit tests, worker runtime cleanup tests, and download lifecycle tests |

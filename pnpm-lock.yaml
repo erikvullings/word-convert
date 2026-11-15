@@ -328,9 +328,16 @@ importers:
       '@wordconvert/math-converter':
         specifier: workspace:*
         version: link:../math-converter
+      css-tree:
+        specifier: ^3.2.1
+        version: 3.2.1
       fflate:
         specifier: ^0.8.3
         version: 0.8.3
+    devDependencies:
+      '@types/css-tree':
+        specifier: ^3.2.0
+        version: 3.2.0
 
   packages/html-writer:
     dependencies:

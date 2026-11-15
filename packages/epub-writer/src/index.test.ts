@@ -10,7 +10,7 @@ import {
 } from '@wordconvert/document-model';
 import { strFromU8, unzipSync } from 'fflate';
 import type { CoverComposition } from '@wordconvert/cover-generator';
-import { writeEpub } from './index.ts';
+import { MAX_EPUB_EXTRA_CSS_BYTES, writeEpub } from './index.ts';
 
 const epubcheckAvailable = spawnSync('epubcheck', ['--version']).status === 0;
 
@@ -36,6 +36,35 @@ function model(blocks: DocumentModel['blocks'] = []): DocumentModel {
     notes: {},
     styles: [],
     warnings: [],
+  };
+}
+
+function coverComposition(
+  crop: CoverComposition['crop'] = 'cover',
+): CoverComposition {
+  return {
+    width: 1600,
+    height: 2560,
+    layout: 'image-only',
+    title: 'Book',
+    authors: [],
+    alignment: 'center',
+    titlePosition: 20,
+    authorPosition: 85,
+    titleSize: 112,
+    authorSize: 54,
+    textColor: 'light',
+    contrastPanel: 'none',
+    panelOpacity: 0.5,
+    imageOpacity: 1,
+    margin: 8,
+    crop,
+    image: {
+      mediaType: 'image/png',
+      data: new Uint8Array([1, 2, 3]),
+      width: 2,
+      height: 3,
+    },
   };
 }
 
@@ -121,6 +150,40 @@ describe('writeEpub image shrinking', () => {
     expect(calls).toEqual([1600]);
     expect(zip['EPUB/images/image-001.png']?.byteLength).toBe(10);
   });
+
+  it('passes independent width and height caps through and keeps the new encoding in the manifest', async () => {
+    const input = model();
+    input.assets.scan = {
+      id: 'scan',
+      mediaType: 'image/png',
+      data: new Uint8Array(100),
+      width: 3000,
+      height: 2000,
+    };
+    const files = unzipSync(
+      await writeEpub(input, {
+        conversionDate: '2026-07-15',
+        identifier: 'image-cap',
+        title: 'Image cap',
+        language: 'en',
+        maxImageDimension: 0,
+        maxImageDimensions: { width: 800, height: 1200 },
+        imageResizer: async (_data, _type, max, _encoding, caps) => {
+          expect(max).toBe(0);
+          expect(caps).toEqual({ width: 800, height: 1200 });
+          return {
+            data: new Uint8Array(150),
+            mediaType: 'image/jpeg',
+          };
+        },
+      }),
+    );
+    const opf = strFromU8(files['EPUB/package.opf'] ?? new Uint8Array());
+    expect(files['EPUB/images/image-001.jpg']?.byteLength).toBe(150);
+    expect(opf).toContain(
+      'href="images/image-001.jpg" media-type="image/jpeg"',
+    );
+  });
 });
 
 describe('writeEpub', () => {
@@ -198,6 +261,322 @@ describe('writeEpub', () => {
     );
     expect(opf.indexOf('<itemref idref="chapter-001"/>')).toBeLessThan(
       opf.indexOf('<itemref idref="inline-toc"/>'),
+    );
+  });
+
+  it('appends safe extra CSS and removes only declarations or rules that can load or execute unsafe content', async () => {
+    const warnings: DocumentModel['warnings'] = [];
+    const files = unzipSync(
+      await writeEpub(model(), {
+        conversionDate: '2026-07-15',
+        identifier: 'extra-css',
+        title: 'Extra CSS',
+        language: 'en',
+        extraCss:
+          '.custom{color:rebeccapurple;background-image:url(https://example.com/a.png);width:expression(alert(1));list-style-image:image-set("https://example.com/a.png" 1x)}@import url(https://example.com/theme.css);@\\69mport url(https://example.com/escaped.css);',
+        onWarning: (warning) => warnings.push(warning),
+      }),
+    );
+    const styles = strFromU8(files['EPUB/styles.css'] ?? new Uint8Array());
+
+    expect(styles).toContain('.custom{color:rebeccapurple;');
+    expect(styles).not.toContain('background-image');
+    expect(styles).not.toContain('expression(');
+    expect(styles).not.toContain('@import');
+    expect(styles).not.toContain('image-set');
+    expect(
+      warnings
+        .filter(({ code }) => code === 'epub-extra-css-rule-rejected')
+        .map(({ details }) => details?.rule),
+    ).toEqual([
+      'remote url() in background-image',
+      'expression() in width',
+      'remote image-set() in list-style-image',
+      '@import',
+      '@import',
+    ]);
+  });
+
+  it('rejects extra CSS beyond the configured byte budget', async () => {
+    await expect(
+      writeEpub(model(), {
+        conversionDate: '2026-07-15',
+        identifier: 'extra-css-limit',
+        title: 'Extra CSS limit',
+        language: 'en',
+        extraCss: 'a'.repeat(MAX_EPUB_EXTRA_CSS_BYTES + 1),
+      }),
+    ).rejects.toThrow(
+      `EPUB extra CSS must be no larger than ${MAX_EPUB_EXTRA_CSS_BYTES} bytes.`,
+    );
+  });
+
+  it('emits landmarks for cover, title page, and selected reading start without removing front matter', async () => {
+    const input = model([
+      {
+        type: 'heading',
+        level: 1,
+        children: [{ type: 'text', text: 'Preface' }],
+      },
+      {
+        type: 'heading',
+        level: 1,
+        children: [{ type: 'text', text: 'Chapter One' }],
+      },
+    ]);
+    const files = unzipSync(
+      await writeEpub(input, {
+        conversionDate: '2026-07-15',
+        identifier: 'landmarks',
+        title: 'Landmarks',
+        language: 'en',
+        coverPolicy: 'generated',
+        startReadingAt: 'Chapter One',
+      }),
+    );
+    const nav = strFromU8(files['EPUB/nav.xhtml'] ?? new Uint8Array());
+    const opf = strFromU8(files['EPUB/package.opf'] ?? new Uint8Array());
+    const chapter = strFromU8(
+      files['EPUB/chapter-001.xhtml'] ?? new Uint8Array(),
+    );
+
+    expect(nav).toContain('epub:type="cover" href="cover.xhtml"');
+    expect(nav).toContain('epub:type="titlepage" href="title.xhtml"');
+    expect(nav).toContain(
+      'epub:type="bodymatter" href="chapter-001.xhtml#chapter-one"',
+    );
+    expect(opf).toContain('<itemref idref="title-page"/>');
+    expect(chapter).toContain('<h1 id="preface">Preface</h1>');
+    expect(chapter).toContain('<h1 id="chapter-one">Chapter One</h1>');
+  });
+
+  it('validates the start-reading heading before emitting landmarks', async () => {
+    const options = {
+      conversionDate: '2026-07-15',
+      identifier: 'invalid-start',
+      title: 'Invalid start',
+      language: 'en',
+    };
+    await expect(
+      writeEpub(model(), {
+        ...options,
+        startReadingAt: 'x'.repeat(201),
+      }),
+    ).rejects.toThrow('at most 200 characters');
+    await expect(
+      writeEpub(model(), { ...options, startReadingAt: 'Missing heading' }),
+    ).rejects.toThrow('heading was not found');
+  });
+
+  it('supports none, generated, source, and validated file cover policies while retaining the title page', async () => {
+    const source = model();
+    source.assets.sourceCover = {
+      id: 'sourceCover',
+      mediaType: 'image/png',
+      data: new Uint8Array([1, 2, 3]),
+      width: 2,
+      height: 3,
+    };
+    source.coverCandidates = [{ assetId: 'sourceCover', confidence: 'high' }];
+
+    const [none, generated, sourceFiles, fileCover] = await Promise.all([
+      writeEpub(model(), {
+        conversionDate: '2026-07-15',
+        identifier: 'none',
+        title: 'No cover',
+        language: 'en',
+        coverPolicy: 'none',
+      }),
+      writeEpub(model(), {
+        conversionDate: '2026-07-15',
+        identifier: 'generated',
+        title: 'Generated',
+        language: 'en',
+        coverPolicy: 'generated',
+      }),
+      writeEpub(source, {
+        conversionDate: '2026-07-15',
+        identifier: 'source',
+        title: 'Source',
+        language: 'en',
+        coverPolicy: 'source',
+      }),
+      writeEpub(model(), {
+        conversionDate: '2026-07-15',
+        identifier: 'file',
+        title: 'File',
+        language: 'en',
+        coverPolicy: 'file',
+        cover: coverComposition(),
+      }),
+    ]);
+    const noneFiles = unzipSync(none);
+    const generatedFiles = unzipSync(generated);
+    const sourceZip = unzipSync(sourceFiles);
+    const fileFiles = unzipSync(fileCover);
+
+    expect(noneFiles['EPUB/cover.xhtml']).toBeUndefined();
+    expect(strFromU8(noneFiles['EPUB/package.opf']!)).toContain(
+      '<itemref idref="title-page"/>',
+    );
+    expect(strFromU8(generatedFiles['EPUB/package.opf']!)).toContain(
+      '<itemref idref="cover-page"/>',
+    );
+    expect(sourceZip['EPUB/cover.svg']).toBeDefined();
+    expect(strFromU8(sourceZip['EPUB/cover.svg']!)).toContain(
+      'data:image/png;base64,',
+    );
+    expect(fileFiles['EPUB/cover.svg']).toBeDefined();
+  });
+
+  it('omits a source cover below the confidence threshold and reports why', async () => {
+    const input = model();
+    input.assets.sourceCover = {
+      id: 'sourceCover',
+      mediaType: 'image/png',
+      data: new Uint8Array([1, 2, 3]),
+    };
+    input.coverCandidates = [{ assetId: 'sourceCover', confidence: 'medium' }];
+    const warnings: DocumentModel['warnings'] = [];
+    const files = unzipSync(
+      await writeEpub(input, {
+        conversionDate: '2026-07-15',
+        identifier: 'source-cover-low',
+        title: 'Source cover',
+        language: 'en',
+        coverPolicy: 'source',
+        onWarning: (warning) => warnings.push(warning),
+      }),
+    );
+
+    expect(files['EPUB/cover.svg']).toBeUndefined();
+    expect(strFromU8(files['EPUB/package.opf']!)).toContain(
+      '<itemref idref="title-page"/>',
+    );
+    expect(warnings).toContainEqual(
+      expect.objectContaining({ code: 'epub-source-cover-unavailable' }),
+    );
+  });
+
+  it('letterboxes a cover when aspect preservation is enabled and crops otherwise', async () => {
+    const output = async (preserveCoverAspectRatio: boolean) =>
+      unzipSync(
+        await writeEpub(model(), {
+          conversionDate: '2026-07-15',
+          identifier: `cover-${preserveCoverAspectRatio}`,
+          title: 'Cover',
+          language: 'en',
+          coverPolicy: 'file',
+          cover: coverComposition(),
+          preserveCoverAspectRatio,
+        }),
+      );
+    const [letterboxed, cropped] = await Promise.all([
+      output(true),
+      output(false),
+    ]);
+    const preRasterized = unzipSync(
+      await writeEpub(model(), {
+        conversionDate: '2026-07-15',
+        identifier: 'cover-pre-rasterized',
+        title: 'Cover',
+        language: 'en',
+        coverPolicy: 'generated',
+        coverPng: new Uint8Array([1, 2, 3]),
+        preserveCoverAspectRatio: true,
+      }),
+    );
+
+    expect(strFromU8(letterboxed['EPUB/cover.svg']!)).toContain(
+      'preserveAspectRatio="xMidYMid meet"',
+    );
+    expect(strFromU8(cropped['EPUB/cover.svg']!)).toContain(
+      'preserveAspectRatio="xMidYMid slice"',
+    );
+    expect(preRasterized['EPUB/cover.png']).toBeUndefined();
+    expect(strFromU8(preRasterized['EPUB/cover.svg']!)).toContain(
+      'preserveAspectRatio="xMidYMid meet"',
+    );
+  });
+
+  it('emits a confidence-gated page list and pagebreak markers, otherwise warns without fabricating navigation', async () => {
+    const input = model([
+      {
+        type: 'paragraph',
+        id: 'pdf-page-1',
+        children: [{ type: 'text', text: 'Page one.' }],
+      },
+      {
+        type: 'paragraph',
+        id: 'pdf-page-2',
+        children: [{ type: 'text', text: 'Page two.' }],
+      },
+    ]);
+    input.pageMarkers = {
+      confidence: 'high',
+      markers: [
+        {
+          page: 1,
+          label: 'i',
+          id: 'page-marker-1',
+          targetId: 'pdf-page-1',
+          confidence: 'high',
+        },
+        {
+          page: 2,
+          label: '1',
+          id: 'page-marker-2',
+          targetId: 'pdf-page-2',
+          confidence: 'high',
+        },
+      ],
+    };
+    const warnings: DocumentModel['warnings'] = [];
+    const high = unzipSync(
+      await writeEpub(input, {
+        conversionDate: '2026-07-15',
+        identifier: 'page-list-high',
+        title: 'Pages',
+        language: 'en',
+      }),
+    );
+    const highNav = strFromU8(high['EPUB/nav.xhtml']!);
+    const highChapter = strFromU8(high['EPUB/chapter-001.xhtml']!);
+    const low = unzipSync(
+      await writeEpub(
+        {
+          ...input,
+          pageMarkers: {
+            confidence: 'medium',
+            markers: input.pageMarkers.markers.map((marker) => ({
+              ...marker,
+              confidence: 'medium',
+            })),
+          },
+        },
+        {
+          conversionDate: '2026-07-15',
+          identifier: 'page-list-low',
+          title: 'Pages',
+          language: 'en',
+          onWarning: (warning) => warnings.push(warning),
+        },
+      ),
+    );
+
+    expect(highNav).toContain('epub:type="page-list"');
+    expect(highNav).toContain('href="chapter-001.xhtml#page-marker-1">i</a>');
+    expect(highChapter).toContain(
+      '<span epub:type="pagebreak" id="page-marker-1" title="i" aria-label="i"/>',
+    );
+    expect(strFromU8(low['EPUB/nav.xhtml']!)).not.toContain(
+      'epub:type="page-list"',
+    );
+    expect(strFromU8(low['EPUB/chapter-001.xhtml']!)).not.toContain(
+      'epub:type="pagebreak"',
+    );
+    expect(warnings).toContainEqual(
+      expect.objectContaining({ code: 'epub-page-list-confidence' }),
     );
   });
 
