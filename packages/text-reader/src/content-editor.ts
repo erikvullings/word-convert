@@ -1388,6 +1388,7 @@ function restoreBlock(original: BlockNode, parsed: BlockNode): BlockNode {
         ? {
             ...parsed,
             ...(original.styleId ? { styleId: original.styleId } : {}),
+            ...(original.indent ? { indent: original.indent } : {}),
             children: restoreInlineSemantics(
               original.children,
               parsed.children,

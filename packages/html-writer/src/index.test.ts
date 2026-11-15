@@ -41,6 +41,47 @@ function model(blocks: DocumentModel['blocks']): DocumentModel {
 }
 
 describe('writeHtml', () => {
+  it('renders normalized paragraph indentation with generated CSS classes', () => {
+    const html = writeHtml(
+      model([
+        {
+          type: 'paragraph',
+          children: [{ type: 'text', text: 'Indented prose' }],
+          indent: {
+            firstLine: 0.03,
+            provenance: {
+              source: 'pdf-layout-analysis',
+              method: 'inferred',
+              confidence: 'high',
+            },
+          },
+        },
+        {
+          type: 'paragraph',
+          children: [{ type: 'text', text: 'Glossary definition' }],
+          indent: {
+            hanging: 0.04,
+            provenance: {
+              source: 'pdf-layout-analysis',
+              method: 'inferred',
+              confidence: 'medium',
+            },
+          },
+        },
+      ]),
+      { conversionDate: '2026-07-15' },
+    );
+
+    expect(html).toContain('<p class="indent-first-line-3">Indented prose</p>');
+    expect(html).toContain(
+      '<p class="indent-hanging-4">Glossary definition</p>',
+    );
+    expect(html).toContain(
+      '.indent-first-line-3{text-indent:3%}.indent-hanging-3',
+    );
+    expect(html).toContain('.indent-hanging-4{margin-left:4%;text-indent:-4%}');
+  });
+
   it('preserves a supplied source HTML fragment without Markdown reconstruction', () => {
     const sourceHtml =
       '<article class="ltx_document"><p>Scale <math display="inline"><msub><mi>d</mi><mi>k</mi></msub></math>.</p><table class="ltx_equation"><tbody><tr><td class="ltx_eqn_cell"><math display="block"><mi>A</mi></math></td><td class="ltx_eqn_eqno">(1)</td></tr></tbody></table></article>';

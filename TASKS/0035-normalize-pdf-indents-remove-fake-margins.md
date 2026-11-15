@@ -1,6 +1,6 @@
 # 0035 Normalize PDF indents and remove fake page margins
 
-Status: open
+Status: done
 Priority: medium
 Owner: unassigned
 Agent: pi

@@ -10,6 +10,29 @@
       "covers": ["two-column reading order", "footer"]
     },
     {
+      "file": "reflow-indented-paragraphs.pdf",
+      "covers": [
+        "indent-only paragraph boundaries",
+        "ragged left edges",
+        "normalized first-line indentation"
+      ]
+    },
+    {
+      "file": "reflow-blockquote.pdf",
+      "covers": [
+        "uniform repeated quotation indent",
+        "short trailing quote line",
+        "blockquote confidence gate"
+      ]
+    },
+    {
+      "file": "reflow-nbsp-indent.pdf",
+      "covers": [
+        "leading nonbreaking-space indent",
+        "normalized paragraph indentation"
+      ]
+    },
+    {
       "file": "reflow-verse.pdf",
       "covers": ["short stacked verse lines", "hard line breaks"]
     },
@@ -19,7 +42,11 @@
     },
     {
       "file": "reflow-glossary.pdf",
-      "covers": ["short glossary entries", "paragraph boundaries"]
+      "covers": [
+        "short glossary entries",
+        "hanging continuation indentation",
+        "paragraph boundaries"
+      ]
     },
     {
       "file": "tagged-article.pdf",

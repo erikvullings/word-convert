@@ -23,6 +23,16 @@ PDF analysis uses these additive hints for tightly cropped equation snapshots;
 HTML and EPUB writers render them on the text baseline at their source-relative
 width. Other inline images retain their existing rendering.
 
+Paragraphs may carry a `ParagraphIndent` with exactly one `firstLine` or
+`hanging` magnitude, a fraction of the column width from 0.01 to 0.1, and
+provenance. PDF analysis measures these values relative to each column's
+detected content edge, so page and column margins are never encoded as
+paragraph indentation. HTML and EPUB render generated `indent-first-line-N`
+or `indent-hanging-N` classes, where `N` is the rounded percentage. Markdown
+omits indentation because GFM has no portable paragraph-indent syntax and
+reports that deterministic fallback as an informational warning. The optional
+field is additive and does not change model version 1.
+
 ## Binary and JSON conventions
 
 In memory and across structured-clone boundaries, binary fields are `Uint8Array`. Do not rely on a view's offset into a larger buffer: construct a `Uint8Array` containing exactly the asset or output bytes. A worker may transfer its underlying `ArrayBuffer` only when it gives up ownership.

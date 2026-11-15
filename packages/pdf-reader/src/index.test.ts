@@ -6577,7 +6577,160 @@ describe('PDF table signals', () => {
       glossary.model.blocks.filter((block) => block.type === 'paragraph'),
     ).toHaveLength(4);
     expect(
+      glossary.model.blocks.some(
+        (block) =>
+          block.type === 'paragraph' && block.indent?.hanging !== undefined,
+      ),
+    ).toBe(true);
+    expect(
       looseLeading.model.blocks.filter((block) => block.type === 'paragraph'),
     ).toHaveLength(1);
+    expect(
+      looseLeading.model.blocks.some(
+        (block) => block.type === 'paragraph' && block.indent,
+      ),
+    ).toBe(false);
+    expect(
+      looseLeading.model.warnings.some(
+        ({ code }) => code === 'pdf-paragraph-indents-normalized',
+      ),
+    ).toBe(false);
+  });
+
+  it('uses first-line indentation as a text-native paragraph boundary', async () => {
+    const result = await pdfJsReader.read(
+      await fixture('reflow-indented-paragraphs.pdf'),
+      { conversionDate: '2026-08-29' },
+    );
+    const paragraphs = result.model.blocks.filter(
+      (block) => block.type === 'paragraph',
+    );
+
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[0]).not.toHaveProperty('indent');
+    expect(
+      result.model.blocks.some((block) => block.type === 'blockquote'),
+    ).toBe(false);
+    expect(paragraphs[1]).toMatchObject({
+      type: 'paragraph',
+      indent: {
+        firstLine: expect.any(Number),
+        provenance: {
+          source: 'pdf-layout-analysis',
+          method: 'inferred',
+        },
+      },
+    });
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'pdf-paragraph-indents-normalized',
+        severity: 'info',
+        details: { paragraphs: 1 },
+      }),
+    );
+  });
+
+  it('keeps justified lines together while recognizing an indented next paragraph', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('The justified paragraph begins', 0.1, 0.2, { width: 0.32 }),
+            span('with a shorter left edge', 0.12, 0.23, { width: 0.3 }),
+            span('and ends at the content edge.', 0.1, 0.26, { width: 0.22 }),
+            span('The next paragraph starts indented.', 0.13, 0.29, {
+              width: 0.25,
+            }),
+            span('Its continuation returns to the edge.', 0.1, 0.32, {
+              width: 0.3,
+            }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+    const paragraphs = result.model.blocks.filter(
+      (block) => block.type === 'paragraph',
+    );
+
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[0]).toMatchObject({ type: 'paragraph' });
+    expect(paragraphs[1]).toMatchObject({
+      type: 'paragraph',
+      indent: { firstLine: expect.any(Number) },
+    });
+  });
+
+  it('proposes a blockquote only for repeated, uniform, quote-like indentation', async () => {
+    const result = await pdfJsReader.read(
+      await fixture('reflow-blockquote.pdf'),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(
+      result.model.blocks.some((block) => block.type === 'blockquote'),
+    ).toBe(true);
+    expect(
+      result.model.blocks.some(
+        (block) => block.type === 'paragraph' && block.indent?.firstLine,
+      ),
+    ).toBe(false);
+  });
+
+  it('normalizes leading NBSP and ideographic-space runs without emitting them', async () => {
+    const generated = await pdfJsReader.read(
+      await fixture('reflow-nbsp-indent.pdf'),
+      { conversionDate: '2026-08-29' },
+    );
+    const generatedParagraphs = generated.model.blocks.filter(
+      (block) => block.type === 'paragraph',
+    );
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Baseline paragraph ends.', 0.1, 0.2, { width: 0.3 }),
+            span('\u00a0\u00a0First NBSP indent.', 0.1, 0.23, { width: 0.3 }),
+            span('\u3000Second ideographic indent.', 0.1, 0.26, {
+              width: 0.3,
+            }),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+    const paragraphs = result.model.blocks.filter(
+      (block) => block.type === 'paragraph',
+    );
+    const text = JSON.stringify(paragraphs);
+
+    expect(generatedParagraphs).toHaveLength(2);
+    expect(generatedParagraphs[1]).toMatchObject({
+      type: 'paragraph',
+      indent: { firstLine: 0.03 },
+    });
+    expect(paragraphs).toHaveLength(3);
+    expect(text).not.toContain('\u00a0');
+    expect(text).not.toContain('\u3000');
+    expect(paragraphs[1]).toMatchObject({
+      type: 'paragraph',
+      indent: { firstLine: 0.03 },
+    });
+    expect(paragraphs[2]).toMatchObject({
+      type: 'paragraph',
+      indent: { firstLine: 0.02 },
+    });
   });
 });

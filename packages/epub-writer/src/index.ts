@@ -166,6 +166,10 @@ const STYLES = [
   'pre code{background:none;padding:0;font-size:1em}',
   /* Blockquotes */
   'blockquote{margin:1em 0 1em 1em;padding:.5em 0 .5em 1em;border-left:4px solid #ccc;color:#555}',
+  ...Array.from({ length: 10 }, (_, index) => {
+    const magnitude = index + 1;
+    return `.indent-first-line-${magnitude}{text-indent:${magnitude}%}.indent-hanging-${magnitude}{margin-left:${magnitude}%;text-indent:-${magnitude}%}`;
+  }),
   /* Lists */
   'ul,ol{margin:.75em 0;padding-left:2em}li{margin:.25em 0}',
   /* HR */
@@ -573,13 +577,16 @@ function renderBlocks(blocks: BlockNode[], context: RenderContext): string {
 
 function renderBlock(block: BlockNode, context: RenderContext): string {
   switch (block.type) {
-    case 'paragraph':
-      return `<p>${renderInlines(block.children, context)}</p>`;
+    case 'paragraph': {
+      const classes = paragraphIndentClasses(block.indent);
+      return `<p${classes ? ` class="${classes}"` : ''}>${renderInlines(block.children, context)}</p>`;
+    }
     case 'heading': {
       const heading = context.headings[context.headingIndex++];
       const numbering = block.numbering ? `${escapeXml(block.numbering)} ` : '';
       return `<h${block.level} id="${escapeAttribute(heading?.id ?? 'section')}">${numbering}${renderInlines(block.children, context)}</h${block.level}>`;
     }
+
     case 'list': {
       const tag = block.ordered ? 'ol' : 'ul';
       const start =
@@ -640,6 +647,22 @@ function imageBlockAttributes(
     return '';
   const percentage = Math.max(5, Math.round(block.width * 20) * 5);
   return ` class="image-block image-${alignment} image-width-${percentage}"`;
+}
+
+function paragraphIndentClasses(
+  indent: Extract<BlockNode, { type: 'paragraph' }>['indent'],
+): string {
+  if (!indent) return '';
+  return [
+    indent.firstLine === undefined
+      ? ''
+      : `indent-first-line-${Math.round(indent.firstLine * 100)}`,
+    indent.hanging === undefined
+      ? ''
+      : `indent-hanging-${Math.round(indent.hanging * 100)}`,
+  ]
+    .filter(Boolean)
+    .join(' ');
 }
 
 function renderInlines(nodes: InlineNode[], context: RenderContext): string {

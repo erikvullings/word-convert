@@ -76,7 +76,7 @@ and reverses one of 0031's rejections; it shares no sequence with the other subt
 - [x] 0032 Expose PDF crop furniture and image options in the CLI
 - [x] 0033 Add median-length driven PDF line unwrapping with a tunable factor
 - [x] 0034 Add document-wide PDF de-hyphenation *(needs 0033)*
-- [ ] 0035 Normalize PDF indents and remove fake page margins
+- [x] 0035 Normalize PDF indents and remove fake page margins
 - [ ] 0036 Add configurable chapter detection marking and heading-run merging *(needs 0033)*
 - [ ] 0037 Build hierarchical filtered tables of contents for PDF books *(needs 0036)*
 - [ ] 0038 Add scene break blank paragraph and punctuation normalization

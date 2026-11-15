@@ -108,6 +108,15 @@ export interface ParagraphNode {
   type: 'paragraph';
   children: InlineNode[];
   styleId?: string;
+  indent?: ParagraphIndent;
+}
+
+export interface ParagraphIndent {
+  /** First-line indentation as a fraction of the column width, from 0.01 to 0.1. */
+  firstLine?: number;
+  /** Hanging indentation as a fraction of the column width, from 0.01 to 0.1. */
+  hanging?: number;
+  provenance: Provenance;
 }
 
 export interface HeadingNode {
@@ -425,6 +434,8 @@ export function validateDocumentModel(value: unknown): ValidationResult {
     if (!Array.isArray(value[key]))
       issues.push({ path: key, code: 'type', message: 'Expected an array.' });
   }
+  if (Array.isArray(value.blocks))
+    validateParagraphIndents(value.blocks, 'blocks', issues);
   if (isRecord(value.assets)) {
     for (const [id, asset] of Object.entries(value.assets)) {
       if (!isRecord(asset) || !(asset.data instanceof Uint8Array)) {
@@ -437,6 +448,87 @@ export function validateDocumentModel(value: unknown): ValidationResult {
     }
   }
   return { valid: issues.length === 0, issues };
+}
+
+function validateParagraphIndents(
+  blocks: readonly unknown[],
+  path: string,
+  issues: ValidationIssue[],
+): void {
+  for (const [index, value] of blocks.entries()) {
+    if (!isRecord(value)) continue;
+    const blockPath = `${path}.${index}`;
+    if (value.type === 'paragraph' && value.indent !== undefined) {
+      const indent = value.indent;
+      if (!isRecord(indent)) {
+        issues.push({
+          path: `${blockPath}.indent`,
+          code: 'type',
+          message: 'Expected a paragraph indent object.',
+        });
+      } else {
+        const values = ['firstLine', 'hanging'] as const;
+        const present = values.filter((key) => key in indent);
+        if (present.length !== 1)
+          issues.push({
+            path: `${blockPath}.indent`,
+            code: 'shape',
+            message: 'Expected exactly one firstLine or hanging value.',
+          });
+        for (const key of present) {
+          const magnitude = indent[key];
+          if (
+            typeof magnitude !== 'number' ||
+            !Number.isFinite(magnitude) ||
+            magnitude <= 0 ||
+            magnitude > 0.1
+          )
+            issues.push({
+              path: `${blockPath}.indent.${key}`,
+              code: 'range',
+              message:
+                'Expected a normalized magnitude greater than 0 and at most 0.1.',
+            });
+        }
+        const provenance = indent.provenance;
+        if (
+          !isRecord(provenance) ||
+          typeof provenance.source !== 'string' ||
+          !['extracted', 'inferred', 'default', 'user'].includes(
+            String(provenance.method),
+          ) ||
+          !['low', 'medium', 'high', 'certain'].includes(
+            String(provenance.confidence),
+          )
+        )
+          issues.push({
+            path: `${blockPath}.indent.provenance`,
+            code: 'type',
+            message: 'Expected valid indent provenance.',
+          });
+      }
+    }
+    if (Array.isArray(value.blocks))
+      validateParagraphIndents(value.blocks, `${blockPath}.blocks`, issues);
+    if (Array.isArray(value.items))
+      for (const [itemIndex, item] of value.items.entries())
+        if (isRecord(item) && Array.isArray(item.blocks))
+          validateParagraphIndents(
+            item.blocks,
+            `${blockPath}.items.${itemIndex}.blocks`,
+            issues,
+          );
+    if (Array.isArray(value.rows))
+      for (const [rowIndex, row] of value.rows.entries())
+        if (isRecord(row) && Array.isArray(row.cells))
+          for (const [cellIndex, cell] of row.cells.entries())
+            if (isRecord(cell) && Array.isArray(cell.blocks))
+              validateParagraphIndents(
+                cell.blocks,
+                `${blockPath}.rows.${rowIndex}.cells.${cellIndex}.blocks`,
+                issues,
+              );
+  }
 }
 
 export interface JsonBinary {

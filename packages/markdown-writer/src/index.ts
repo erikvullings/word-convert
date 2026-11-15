@@ -28,6 +28,7 @@ interface RenderContext {
   formulaMode: MathOutputMode;
   includeInternalLinks: boolean;
   includePageBreaks: boolean;
+  indentedParagraphs: number;
 }
 
 export function writeMarkdown(
@@ -102,10 +103,19 @@ function writeWithAssets(
     formulaMode: options.formulaMode ?? 'source',
     includeInternalLinks: options.includeInternalLinks ?? true,
     includePageBreaks: options.includePageBreaks ?? false,
+    indentedParagraphs: 0,
   };
   const body = renderBlocks(model.blocks, context);
   const title = renderDocumentTitle(model);
   const notes = renderNotes(context);
+  if (context.indentedParagraphs > 0)
+    context.warn({
+      code: 'markdown-paragraph-indent-omitted',
+      severity: 'info',
+      message:
+        'Markdown has no portable paragraph indentation syntax; indentation was omitted.',
+      details: { paragraphs: context.indentedParagraphs },
+    });
   return `${title}${title && body ? '\n\n' : ''}${body}${notes ? `\n\n${notes}` : ''}\n`;
 }
 
@@ -163,6 +173,7 @@ function renderBlock(block: BlockNode, context: RenderContext): string {
       return `${anchor}${'#'.repeat(block.level)} ${numbering}${content}`;
     }
     case 'paragraph':
+      if (block.indent) context.indentedParagraphs++;
       return renderInlines(block.children, context);
     case 'blockquote':
       return renderBlocks(block.blocks, context)

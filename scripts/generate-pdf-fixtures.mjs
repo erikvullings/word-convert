@@ -22,6 +22,9 @@ await mkdir(outputDirectory, { recursive: true });
 
 await save('one-column-book.pdf', await oneColumnBook());
 await save('two-column-article.pdf', await twoColumnArticle());
+await save('reflow-indented-paragraphs.pdf', await reflowIndentedParagraphs());
+await save('reflow-blockquote.pdf', await reflowBlockquote());
+await save('reflow-nbsp-indent.pdf', await reflowNbspIndent());
 await save('reflow-verse.pdf', await reflowVerse());
 await save('reflow-loose-leading.pdf', await reflowLooseLeading());
 await save('reflow-glossary.pdf', await reflowGlossary());
@@ -67,6 +70,29 @@ await writeFile(
           covers: ['two-column reading order', 'footer'],
         },
         {
+          file: 'reflow-indented-paragraphs.pdf',
+          covers: [
+            'indent-only paragraph boundaries',
+            'ragged left edges',
+            'normalized first-line indentation',
+          ],
+        },
+        {
+          file: 'reflow-blockquote.pdf',
+          covers: [
+            'uniform repeated quotation indent',
+            'short trailing quote line',
+            'blockquote confidence gate',
+          ],
+        },
+        {
+          file: 'reflow-nbsp-indent.pdf',
+          covers: [
+            'leading nonbreaking-space indent',
+            'normalized paragraph indentation',
+          ],
+        },
+        {
           file: 'reflow-verse.pdf',
           covers: ['short stacked verse lines', 'hard line breaks'],
         },
@@ -76,7 +102,11 @@ await writeFile(
         },
         {
           file: 'reflow-glossary.pdf',
-          covers: ['short glossary entries', 'paragraph boundaries'],
+          covers: [
+            'short glossary entries',
+            'hanging continuation indentation',
+            'paragraph boundaries',
+          ],
         },
         {
           file: 'tagged-article.pdf',
@@ -286,6 +316,70 @@ async function twoColumnArticle() {
   return document;
 }
 
+async function reflowIndentedParagraphs() {
+  const document = await baseDocument('Indented Paragraphs');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const page = document.addPage([600, 800]);
+  const lines = [
+    { text: 'The first paragraph begins at the content edge', x: 60 },
+    { text: 'and continues with a ragged line ending.', x: 64 },
+    { text: 'A new paragraph starts with an indent.', x: 78 },
+    { text: 'Its wrapped line returns to the content edge.', x: 60 },
+  ];
+  lines.forEach(({ text, x }, index) =>
+    page.drawText(text, {
+      x,
+      y: 700 - index * 18,
+      size: 12,
+      font: body,
+    }),
+  );
+  return document;
+}
+
+async function reflowBlockquote() {
+  const document = await baseDocument('Indented Block Quote');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const page = document.addPage([600, 800]);
+  const lines = [
+    { text: 'The surrounding prose establishes the body edge.', x: 60 },
+    { text: 'It continues through another baseline line here.', x: 60 },
+    { text: 'The body remains flush with its content edge.', x: 60 },
+    { text: 'It ends before the passage that follows.', x: 60 },
+    { text: 'A quotation begins at a repeated inset', x: 80 },
+    { text: 'and continues on the same inset line.', x: 80 },
+    { text: 'The original author [1]', x: 80 },
+  ];
+  lines.forEach(({ text, x }, index) =>
+    page.drawText(text, {
+      x,
+      y: 700 - index * 18,
+      size: 12,
+      font: body,
+    }),
+  );
+  return document;
+}
+
+async function reflowNbspIndent() {
+  const document = await baseDocument('NBSP Indent');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const page = document.addPage([600, 800]);
+  page.drawText('The baseline paragraph ends.', {
+    x: 60,
+    y: 700,
+    size: 12,
+    font: body,
+  });
+  page.drawText('\u00a0\u00a0The next paragraph begins with NBSP.', {
+    x: 60,
+    y: 682,
+    size: 12,
+    font: body,
+  });
+  return document;
+}
+
 async function reflowVerse() {
   const document = await baseDocument('Verse Reflow');
   const body = await document.embedFont(StandardFonts.TimesRoman);
@@ -328,15 +422,25 @@ async function reflowGlossary() {
   const document = await baseDocument('Glossary Reflow');
   const body = await document.embedFont(StandardFonts.TimesRoman);
   const page = document.addPage([600, 800]);
-  for (const [index, text] of [
-    'Alpha: first entry',
-    'Bravo: second item',
-    'Charlie: third term',
-    'Delta: fourth word',
-  ].entries())
+  for (const { text, x, y } of [
+    { text: 'Alpha: first entry with its continuation', x: 60, y: 680 },
+    {
+      text: 'wrapped under the full definition for this glossary entry.',
+      x: 78,
+      y: 662,
+    },
+    { text: 'Bravo: second item with its continuation', x: 60, y: 626 },
+    {
+      text: 'wrapped under the full definition for this glossary entry.',
+      x: 78,
+      y: 608,
+    },
+    { text: 'Charlie: third term', x: 60, y: 572 },
+    { text: 'Delta: fourth word', x: 60, y: 536 },
+  ])
     page.drawText(text, {
-      x: 60,
-      y: 680 - index * 24,
+      x,
+      y,
       size: 12,
       font: body,
     });

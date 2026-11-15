@@ -38,7 +38,20 @@ const model: DocumentModel = {
       },
     },
   },
-  blocks: [{ type: 'paragraph', children: [{ type: 'text', text: 'Hello' }] }],
+  blocks: [
+    {
+      type: 'paragraph',
+      children: [{ type: 'text', text: 'Hello' }],
+      indent: {
+        firstLine: 0.03,
+        provenance: {
+          source: 'pdf-layout-analysis',
+          method: 'inferred',
+          confidence: 'high',
+        },
+      },
+    },
+  ],
   assets: {
     image1: {
       id: 'image1',
@@ -106,6 +119,33 @@ describe('DocumentModel contracts', () => {
       'version',
       'blocks',
       'assets.bad.data',
+    ]);
+  });
+
+  it('rejects invalid paragraph indentation values and provenance', () => {
+    const result = validateDocumentModel({
+      ...model,
+      blocks: [
+        {
+          type: 'paragraph',
+          children: [],
+          indent: {
+            firstLine: 0.2,
+            hanging: 0.03,
+            provenance: {
+              source: 'pdf',
+              method: 'unknown',
+              confidence: 'high',
+            },
+          },
+        },
+      ],
+    });
+    expect(result.valid).toBe(false);
+    expect(result.issues.map(({ path }) => path)).toEqual([
+      'blocks.0.indent',
+      'blocks.0.indent.firstLine',
+      'blocks.0.indent.provenance',
     ]);
   });
 

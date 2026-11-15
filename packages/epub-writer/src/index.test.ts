@@ -124,6 +124,60 @@ describe('writeEpub image shrinking', () => {
 });
 
 describe('writeEpub', () => {
+  it('renders normalized paragraph indentation with generated stylesheet classes', async () => {
+    const files = unzipSync(
+      await writeEpub(
+        model([
+          {
+            type: 'paragraph',
+            children: [{ type: 'text', text: 'Indented prose' }],
+            indent: {
+              firstLine: 0.03,
+              provenance: {
+                source: 'pdf-layout-analysis',
+                method: 'inferred',
+                confidence: 'high',
+              },
+            },
+          },
+          {
+            type: 'paragraph',
+            children: [{ type: 'text', text: 'Glossary definition' }],
+            indent: {
+              hanging: 0.04,
+              provenance: {
+                source: 'pdf-layout-analysis',
+                method: 'inferred',
+                confidence: 'medium',
+              },
+            },
+          },
+        ]),
+        {
+          conversionDate: '2026-07-15',
+          identifier: 'paragraph-indents',
+          title: 'Paragraph indents',
+          language: 'en',
+        },
+      ),
+    );
+    const chapter = strFromU8(
+      files['EPUB/chapter-001.xhtml'] ?? new Uint8Array(),
+    );
+    const styles = strFromU8(files['EPUB/styles.css'] ?? new Uint8Array());
+
+    expect(chapter).toContain(
+      '<p class="indent-first-line-3">Indented prose</p>',
+    );
+    expect(chapter).toContain(
+      '<p class="indent-hanging-4">Glossary definition</p>',
+    );
+    expect(styles).toContain('.indent-first-line-3{text-indent:3%}');
+    expect(styles).toContain(
+      '.indent-hanging-4{margin-left:4%;text-indent:-4%}',
+    );
+  });
+
   it('packages supplied source XHTML without Markdown reconstruction', async () => {
     const sourceXhtml =
       '<article xmlns="http://www.w3.org/1999/xhtml" class="ltx_document"><img src="wordconvert-asset:figure" alt="Figure"/><p>Scale <math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><msub><mi>d</mi><mi>k</mi></msub></math>.</p><table class="ltx_equation"><tbody><tr><td class="ltx_eqn_cell"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mi>A</mi></math></td><td class="ltx_eqn_eqno">(1)</td></tr></tbody></table></article>';

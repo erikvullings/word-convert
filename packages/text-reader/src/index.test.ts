@@ -1,8 +1,67 @@
 import { describe, expect, it } from 'vitest';
 import { readTextDocument } from './index.ts';
+import { saveContentPart } from './content-editor.ts';
+import {
+  DOCUMENT_MODEL_SCHEMA,
+  DOCUMENT_MODEL_VERSION,
+  type DocumentModel,
+} from '@wordconvert/document-model';
 
 const options = { filename: 'document.html', conversionDate: '2026-01-02' };
 describe('semantic text reader', () => {
+  it('preserves paragraph indentation while saving edited content', () => {
+    const model: DocumentModel = {
+      schema: DOCUMENT_MODEL_SCHEMA,
+      version: DOCUMENT_MODEL_VERSION,
+      metadata: {
+        authors: [],
+        subjects: [],
+        conversionDate: {
+          value: options.conversionDate,
+          provenance: {
+            source: 'test',
+            method: 'default',
+            confidence: 'certain',
+          },
+        },
+      },
+      blocks: [
+        {
+          type: 'paragraph',
+          children: [{ type: 'text', text: 'Before' }],
+          indent: {
+            hanging: 0.03,
+            provenance: {
+              source: 'pdf-layout-analysis',
+              method: 'inferred',
+              confidence: 'medium',
+            },
+          },
+        },
+      ],
+      assets: {},
+      equations: {},
+      notes: {},
+      styles: [],
+      warnings: [],
+    };
+
+    const saved = saveContentPart(
+      model,
+      { starts: [0], activeIndex: 0 },
+      'After',
+    );
+
+    expect(saved.model.blocks[0]).toMatchObject({
+      type: 'paragraph',
+      indent:
+        model.blocks[0]?.type === 'paragraph'
+          ? model.blocks[0].indent
+          : undefined,
+      children: [{ type: 'text', text: 'After' }],
+    });
+  });
+
   it.each([
     ['html', '<p><strong>Abstract: </strong>In this paper...</p>'],
     ['html', '<p><b>Abstract:</b>In this paper...</p>'],

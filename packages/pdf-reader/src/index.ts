@@ -447,6 +447,7 @@ interface PdfLine {
   page: number;
   spans: RawPdfTextSpan[];
   text: string;
+  indentWhitespaceCount: number;
   x: number;
   top: number;
   width: number;
@@ -461,6 +462,9 @@ interface PdfLine {
 interface LineMergeProfile {
   hardBreaks: boolean;
   shortLineThreshold: number;
+  contentEdge: number;
+  columnWidth: number;
+  indentThreshold: number;
   maxGap?: number;
 }
 
@@ -771,6 +775,7 @@ export async function analysePdf(
     tables,
     lineMerging,
     lineDehyphenation,
+    normalizedIndentParagraphs,
   } = await linesToBlocks(
     lines,
     styles,
@@ -820,6 +825,15 @@ export async function analysePdf(
     message: `PDF line reflow joined ${lineMerging.joined} lines and kept ${lineMerging.kept} paragraph boundaries.`,
     details: lineMerging,
   });
+  if (normalizedIndentParagraphs > 0)
+    warnings.push({
+      code: 'pdf-paragraph-indents-normalized',
+      severity: 'info',
+      message:
+        `Normalized indentation for ${normalizedIndentParagraphs} paragraph(s) relative to their column content edge; ` +
+        'uniform page and column margins were removed.',
+      details: { paragraphs: normalizedIndentParagraphs },
+    });
   const blocks = normalizePdfLists(normalizePdfToc(tabledBlocks));
   if (truncatedGeometryPages.length > 0)
     warnings.push({
@@ -1322,6 +1336,7 @@ function createPdfLine(
     page,
     spans,
     text,
+    indentWhitespaceCount: leadingIndentWhitespaceCount(spans),
     x,
     top,
     width: right - x,
@@ -1348,6 +1363,20 @@ function joinSpans(spans: RawPdfTextSpan[]): string {
     previous = span;
   }
   return output.trim();
+}
+
+function leadingIndentWhitespaceCount(
+  spans: readonly RawPdfTextSpan[],
+): number {
+  let count = 0;
+  for (const span of spans) {
+    if (!span.text) continue;
+    const match = /^[\u00a0\u3000]+/u.exec(span.text);
+    if (!match) break;
+    count += match[0].length;
+    if (match[0].length < span.text.length) break;
+  }
+  return count;
 }
 
 function byTop(left: PdfLine, right: PdfLine): number {
@@ -1758,6 +1787,7 @@ function buildLineMergeProfiles(
       measuredMedianWidth ??
       0;
     const medianRightEdge = median(rightEdges) ?? leftEdge;
+    const contentEdge = weightedModeLineX(columnLines);
     const alignedEnds = rightEdges.filter(
       (right) => Math.abs(right - medianRightEdge) <= 0.035,
     ).length;
@@ -1792,10 +1822,38 @@ function buildLineMergeProfiles(
       hardBreaks,
       shortLineThreshold:
         Math.max(columnWidth, medianWidth * 1.4) * unwrapFactor,
+      contentEdge,
+      columnWidth,
+      indentThreshold: 0.02,
       ...(maxGap !== undefined ? { maxGap } : {}),
     });
   }
+  const documentIndent = median(
+    [...grouped.entries()].flatMap(([key, columnLines]) => {
+      const profile = profiles.get(key);
+      if (!profile) return [];
+      return columnLines
+        .map(({ x }) => (x - profile.contentEdge) / profile.columnWidth)
+        .filter((indent) => indent >= 0.02 && indent <= 0.12);
+    }),
+  );
+  if (documentIndent !== undefined)
+    for (const profile of profiles.values())
+      profile.indentThreshold = Math.max(0.02, documentIndent * 0.5);
   return profiles;
+}
+
+function weightedModeLineX(lines: readonly PdfLine[]): number {
+  const bins = new Map<number, number>();
+  for (const line of lines) {
+    const bin = Math.round(line.x / 0.01);
+    bins.set(bin, (bins.get(bin) ?? 0) + Math.max(1, line.spans.length));
+  }
+  const mode = [...bins.entries()].sort(
+    ([leftBin, leftWeight], [rightBin, rightWeight]) =>
+      rightWeight - leftWeight || leftBin - rightBin,
+  )[0]?.[0];
+  return mode === undefined ? 0 : mode * 0.01;
 }
 
 function lineMergeProfile(
@@ -1821,7 +1879,7 @@ function shouldKeepShortLineBoundary(
     return false;
   const sentenceEnded = /[.!?][”’"')\]]?$/u.test(previous.text.trimEnd());
   const startsNewThought = /^\p{Lu}/u.test(current.text.trimStart());
-  const indented = current.x - previous.x >= 0.035;
+  const indented = startsIndentedParagraph(previous, current, profile);
   const adjacentQuotes =
     /[“”‘’"']$/u.test(previous.text.trimEnd()) &&
     /^[“”‘’"']/u.test(current.text.trimStart());
@@ -1845,6 +1903,7 @@ async function linesToBlocks(
   tables: PdfDetectedTable[];
   lineMerging: { joined: number; kept: number };
   lineDehyphenation: Pick<DehyphenationSummary, 'joined' | 'kept'>;
+  normalizedIndentParagraphs: number;
 }> {
   const mapping = new Map(
     styles.map(({ id, proposedMapping }) => [id, proposedMapping]),
@@ -1859,6 +1918,10 @@ async function linesToBlocks(
   const unresolvedTablePages: number[] = [];
   const truncatedGeometryPages: number[] = [];
   const tables: PdfDetectedTable[] = [];
+  const paragraphLines = new Map<
+    Extract<BlockNode, { type: 'paragraph' }>,
+    PdfLine[]
+  >();
   const placedFormulaIds = new Set<string>();
   const bodySize = bodyFontSize(lines);
   let previousLine: PdfLine | undefined;
@@ -2267,6 +2330,7 @@ async function linesToBlocks(
           };
           blocks[blocks.length - 1] = byline;
           paragraphCandidates.push({ block: byline, lastLine: line });
+          paragraphLines.set(byline, [line]);
         } else if (
           headingLevel !== undefined &&
           !isContactLine(line.text) &&
@@ -2364,6 +2428,7 @@ async function linesToBlocks(
                   ...children,
                 );
             }
+            paragraphLines.get(candidate.block)?.push(line);
             candidate.lastLine = line;
           } else {
             const paragraph: Extract<BlockNode, { type: 'paragraph' }> = {
@@ -2373,6 +2438,7 @@ async function linesToBlocks(
             };
             blocks.push(paragraph);
             paragraphCandidates.push({ block: paragraph, lastLine: line });
+            paragraphLines.set(paragraph, [line]);
           }
         } else {
           blocks.push({
@@ -2386,6 +2452,11 @@ async function linesToBlocks(
       previousLine = line;
     }
   }
+  const normalizedIndentParagraphs = normalizeParagraphIndentation(
+    blocks,
+    paragraphLines,
+    mergeProfiles,
+  );
   return {
     blocks,
     unresolvedTablePages,
@@ -2393,7 +2464,118 @@ async function linesToBlocks(
     tables,
     lineMerging,
     lineDehyphenation,
+    normalizedIndentParagraphs,
   };
+}
+
+function normalizeParagraphIndentation(
+  blocks: BlockNode[],
+  paragraphLines: ReadonlyMap<
+    Extract<BlockNode, { type: 'paragraph' }>,
+    readonly PdfLine[]
+  >,
+  profiles: ReadonlyMap<string, LineMergeProfile>,
+): number {
+  let normalizedParagraphs = 0;
+  for (let index = 0; index < blocks.length; index++) {
+    const block = blocks[index];
+    if (block?.type !== 'paragraph') continue;
+    const lines = paragraphLines.get(block);
+    const firstLine = lines?.[0];
+    if (!lines || lines.length === 0 || !firstLine) continue;
+    if (isBlockQuoteCandidate(lines, block, profiles)) {
+      const paragraph = { ...block };
+      delete paragraph.indent;
+      blocks[index] = { type: 'blockquote', blocks: [paragraph] };
+      normalizedParagraphs++;
+      continue;
+    }
+
+    const profile = lineMergeProfile(profiles, firstLine);
+    const firstLineGeometry =
+      profile && profile.columnWidth > 0
+        ? (firstLine.x - profile.contentEdge) / profile.columnWidth
+        : 0;
+    const firstLineMagnitude = Math.max(
+      firstLineGeometry >= (profile?.indentThreshold ?? 1)
+        ? firstLineGeometry
+        : 0,
+      firstLine.indentWhitespaceCount * 0.015,
+    );
+    const continuationLeft =
+      lines.length > 1 ? median(lines.slice(1).map(({ x }) => x)) : undefined;
+    const continuationIndent =
+      continuationLeft !== undefined && profile && profile.columnWidth > 0
+        ? (continuationLeft - firstLine.x) / profile.columnWidth
+        : 0;
+    const hangingMagnitude =
+      continuationIndent >= (profile?.indentThreshold ?? 1)
+        ? continuationIndent
+        : 0;
+    if (firstLineMagnitude > 0) {
+      block.indent = {
+        firstLine: normalizeIndentMagnitude(firstLineMagnitude),
+        provenance: {
+          source: 'pdf-layout-analysis',
+          method:
+            firstLine.indentWhitespaceCount > 0 ? 'extracted' : 'inferred',
+          confidence: 'high',
+          reason: 'Measured relative to the column content edge.',
+        },
+      };
+      normalizedParagraphs++;
+    } else if (hangingMagnitude > 0) {
+      block.indent = {
+        hanging: normalizeIndentMagnitude(hangingMagnitude),
+        provenance: {
+          source: 'pdf-layout-analysis',
+          method: 'inferred',
+          confidence: 'medium',
+          reason:
+            'Measured from wrapped lines relative to the column content edge.',
+        },
+      };
+      normalizedParagraphs++;
+    }
+  }
+  return normalizedParagraphs;
+}
+
+function normalizeIndentMagnitude(value: number): number {
+  return Math.min(0.1, Math.max(0.01, Math.round(value * 100) / 100));
+}
+
+function isBlockQuoteCandidate(
+  lines: readonly PdfLine[],
+  paragraph: Extract<BlockNode, { type: 'paragraph' }>,
+  profiles: ReadonlyMap<string, LineMergeProfile>,
+): boolean {
+  if (lines.length < 3) return false;
+  const offsets = lines.map((line) => {
+    const profile = lineMergeProfile(profiles, line);
+    return profile && profile.columnWidth > 0
+      ? (line.x - profile.contentEdge) / profile.columnWidth
+      : Number.NaN;
+  });
+  const offset = median(offsets);
+  if (
+    offset === undefined ||
+    offset < 0.04 ||
+    offset > 0.1 ||
+    offsets.some(
+      (value) => !Number.isFinite(value) || Math.abs(value - offset) > 0.01,
+    )
+  )
+    return false;
+  const medianWidth = median(lines.map(({ width }) => width)) ?? 0;
+  const shortTrailingLine =
+    (lines.at(-1)?.width ?? Number.POSITIVE_INFINITY) <= medianWidth * 0.6;
+  const text = inlineText(paragraph.children).trim();
+  const citationLike =
+    /(?:\[\d+\]|\([A-Z][\p{L}'’-]+(?:\s+[^)]{1,40})?,\s*(?:18|19|20)\d{2}\)|—\s*\p{Lu}[\p{L}'’-]+)$/u.test(
+      text,
+    );
+  return shortTrailingLine || citationLike;
 }
 
 function coversRenderedEquation(
@@ -2497,6 +2679,7 @@ function lineInlines(
       ('bounds' in left ? left.bounds.x : left.x) -
       ('bounds' in right ? right.bounds.x : right.x),
   );
+  let indentWhitespaceRemaining = line.indentWhitespaceCount;
   for (const item of items) {
     if ('features' in item) {
       output.push({ type: 'equation', equationId: item.id });
@@ -2514,6 +2697,17 @@ function lineInlines(
       continue;
     }
     const span = item;
+    let spanText = span.text;
+    if (indentWhitespaceRemaining > 0) {
+      const leadingWhitespace = /^[\u00a0\u3000]+/u.exec(spanText)?.[0] ?? '';
+      const removed = Math.min(
+        leadingWhitespace.length,
+        indentWhitespaceRemaining,
+      );
+      spanText = spanText.slice(removed);
+      indentWhitespaceRemaining -= removed;
+      if (!spanText) continue;
+    }
     if (
       previous &&
       span.x - (previous.x + previous.width) >
@@ -2528,7 +2722,7 @@ function lineInlines(
     ];
     const text: InlineNode = {
       type: 'text',
-      text: span.text,
+      text: spanText,
       ...(marks.length > 0 ? { marks: [...marks] } : {}),
     };
     const link = span.linkId
@@ -2607,12 +2801,33 @@ function canMergeBodyLines(
   profile: LineMergeProfile | undefined,
 ): boolean {
   if (imageBacked) return canMergeOcrLines(previous, current, profile?.maxGap);
-  if (previous.page !== current.page || Math.abs(previous.x - current.x) > 0.04)
+  if (
+    previous.page !== current.page ||
+    Math.abs(previous.x - current.x) > 0.12 ||
+    (profile && startsIndentedParagraph(previous, current, profile))
+  )
     return false;
   const gap = current.top - (previous.top + previous.height);
   return (
     gap >= -0.002 &&
     gap <= (profile?.maxGap ?? Math.max(previous.height, current.height) * 0.8)
+  );
+}
+
+function startsIndentedParagraph(
+  previous: PdfLine,
+  current: PdfLine,
+  profile: LineMergeProfile,
+): boolean {
+  if (current.indentWhitespaceCount > 0) return true;
+  const previousIndent =
+    (previous.x - profile.contentEdge) / profile.columnWidth;
+  const currentIndent = (current.x - profile.contentEdge) / profile.columnWidth;
+  return (
+    previousIndent < profile.indentThreshold &&
+    currentIndent >= profile.indentThreshold &&
+    currentIndent <= 0.12 &&
+    /[.!?][”’"')\]]?$/u.test(previous.text.trimEnd())
   );
 }
 

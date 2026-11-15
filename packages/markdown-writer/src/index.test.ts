@@ -34,6 +34,39 @@ function model(blocks: DocumentModel['blocks']): DocumentModel {
 }
 
 describe('writeMarkdown', () => {
+  it('omits paragraph indentation and reports the documented plain-Markdown fallback', () => {
+    const warnings: ConversionWarning[] = [];
+    const markdown = writeMarkdown(
+      model([
+        {
+          type: 'paragraph',
+          children: [{ type: 'text', text: 'Indented prose' }],
+          indent: {
+            firstLine: 0.03,
+            provenance: {
+              source: 'pdf-layout-analysis',
+              method: 'inferred',
+              confidence: 'high',
+            },
+          },
+        },
+      ]),
+      {
+        conversionDate: '2026-07-15',
+        onWarning: (warning) => warnings.push(warning),
+      },
+    );
+
+    expect(markdown).toBe('Indented prose\n');
+    expect(warnings).toEqual([
+      expect.objectContaining({
+        code: 'markdown-paragraph-indent-omitted',
+        severity: 'info',
+        details: { paragraphs: 1 },
+      }),
+    ]);
+  });
+
   it('keeps plain-text citation brackets readable', () => {
     const input = model([
       {

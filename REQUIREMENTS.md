@@ -60,6 +60,8 @@ Define a central semantic `DocumentModel` containing:
 - analyzed Word styles;
 - conversion warnings;
 - source provenance for inferred values.
+- PDF paragraph first-line and hanging indentation, measured relative to the
+  column content edge rather than page or column margins.
 
 Do not make HTML the central internal representation. Generate Markdown, HTML and EPUB independently from the semantic model.
 
