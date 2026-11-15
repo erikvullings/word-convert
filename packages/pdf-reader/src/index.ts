@@ -17,10 +17,12 @@ import {
 import { PdfReadError } from './error.ts';
 import {
   buildTaggedTable,
+  detectBorderlessTables,
   detectRuledTables,
   detectTaggedTables,
   layoutTaggedTables,
   TAGGED_TABLE_CAPTION_KEY,
+  type GridTable,
 } from './tables.ts';
 import {
   createFormulaCandidates,
@@ -198,6 +200,8 @@ export interface PdfCropOptions {
 
 export interface PdfAnalysisOptions extends ConversionOptions {
   filename?: string;
+  /** Which table signals the reader may act on. */
+  pdfTables?: PdfTableOptions;
   crop?: Partial<PdfCropOptions>;
   removeDetectedFurniture?: boolean;
   removedCandidateIds?: readonly string[];
@@ -225,7 +229,7 @@ export interface PdfDetectedTable {
   page: number;
   rows: number;
   columns: number;
-  source: 'tagged' | 'ruled';
+  source: 'tagged' | 'ruled' | 'borderless';
   confidence: 'high' | 'medium' | 'low';
 }
 
@@ -247,6 +251,26 @@ export interface PdfAnalysisResult {
   model: DocumentModel;
   analysis: PdfAnalysisSummary;
 }
+
+/**
+ * Which table signals the reader may use. Tagged and ruled signals are on by
+ * default because both state a complete grid; borderless tables state only
+ * alignment, so they stay opt-in until a corpus proves otherwise.
+ */
+export interface PdfTableOptions {
+  /** Read `Table` elements from the tagged structure tree. Default true. */
+  readonly tagged?: boolean;
+  /** Infer tables from closed grids of stroked cell borders. Default true. */
+  readonly ruled?: boolean;
+  /** Infer tables from aligned columns without rules. Default false. */
+  readonly borderless?: boolean;
+}
+
+const resolveTableSignals = (options: PdfAnalysisOptions) => ({
+  tagged: options.pdfTables?.tagged ?? true,
+  ruled: options.pdfTables?.ruled ?? true,
+  borderless: options.pdfTables?.borderless ?? false,
+});
 
 export interface PdfReaderOptions extends PdfAnalysisOptions {
   limits?: Partial<PdfReaderLimits>;
@@ -661,6 +685,7 @@ export async function analysePdf(
   const {
     blocks: tabledBlocks,
     unresolvedTablePages,
+    truncatedGeometryPages,
     tables,
   } = await linesToBlocks(
     lines,
@@ -670,6 +695,15 @@ export async function analysePdf(
     semanticCandidates,
   );
   const blocks = normalizePdfLists(normalizePdfToc(tabledBlocks));
+  if (truncatedGeometryPages.length > 0)
+    warnings.push({
+      code: 'pdf-table-geometry-truncated',
+      severity: 'info',
+      message:
+        `Skipped table geometry on ${truncatedGeometryPages.length} page(s) that exceeded ` +
+        'the stroke or span budget.',
+      details: { pages: truncatedGeometryPages.length },
+    });
   if (unresolvedTablePages.length > 0)
     warnings.push({
       code: 'pdf-table-structure-unresolved',
@@ -1454,6 +1488,7 @@ async function linesToBlocks(
 ): Promise<{
   blocks: BlockNode[];
   unresolvedTablePages: number[];
+  truncatedGeometryPages: number[];
   tables: PdfDetectedTable[];
 }> {
   const mapping = new Map(
@@ -1466,6 +1501,7 @@ async function linesToBlocks(
   );
   const blocks: BlockNode[] = [];
   const unresolvedTablePages: number[] = [];
+  const truncatedGeometryPages: number[] = [];
   const tables: PdfDetectedTable[] = [];
   const placedFormulaIds = new Set<string>();
   const bodySize = bodyFontSize(lines);
@@ -1498,7 +1534,10 @@ async function linesToBlocks(
       pageLines,
       page.images.filter(({ source }) => source !== 'rendered-equation'),
     );
-    const taggedDiscovery = detectTaggedTables(page.taggedStructure);
+    const signals = resolveTableSignals(options);
+    const taggedDiscovery = signals.tagged
+      ? detectTaggedTables(page.taggedStructure)
+      : { tables: [], unresolved: 0 };
     const taggedLayout = layoutTaggedTables(
       taggedDiscovery.tables,
       new Set(
@@ -1578,40 +1617,59 @@ async function linesToBlocks(
     ): InlineNode[] | undefined => cellInlines(taggedCellLines(tableId, key));
     const taggedCellBlocks = (tableId: string, key: string): BlockNode[] =>
       cellBlocks(taggedCellLines(tableId, key));
-    // A ruled table states its grid geometrically instead of in the structure
-    // tree, so detection runs on the straight strokes the reader kept. A page
-    // that was rasterized, or whose strokes were truncated, has no trustworthy
-    // geometry and keeps its paragraphs.
+    // A grid table states its grid geometrically instead of in the structure
+    // tree: ruled tables from the straight strokes the reader kept, borderless
+    // tables from recurring column alignment. A page that was rasterized, fell
+    // back, or whose strokes were truncated has no trustworthy geometry and
+    // keeps its paragraphs.
     const retainedSpanIds = new Set(
       pageLines.flatMap((line) => line.spans.map(({ id }) => id)),
     );
-    const ruledDiscovery =
+    const gridSpans = page.spans.filter((candidate) =>
+      retainedSpanIds.has(candidate.id),
+    );
+    const gridTables: GridTable[] = [];
+    let gridUnresolvedReason: string | undefined;
+    if (
+      signals.ruled &&
+      !page.fallback &&
+      !page.imageBacked &&
+      !page.dense &&
       page.strokes !== undefined &&
       page.strokes.length > 0 &&
-      !page.strokesTruncated &&
-      page.dense !== true &&
-      page.fallback === undefined
-        ? detectRuledTables(
-            page.spans.filter((candidate) => retainedSpanIds.has(candidate.id)),
-            page.strokes,
-          )
-        : { tables: [], unresolved: 0, truncated: false };
-    const ruledTablesById = new Map(
-      ruledDiscovery.tables.map((table) => [table.id, table] as const),
+      !page.strokesTruncated
+    ) {
+      const discovery = detectRuledTables(gridSpans, page.strokes);
+      gridTables.push(...discovery.tables);
+      if (discovery.unresolved > 0)
+        gridUnresolvedReason = 'ruled rules do not close a complete grid';
+      if (discovery.truncated) truncatedGeometryPages.push(page.number);
+    }
+    if (
+      signals.borderless &&
+      !page.fallback &&
+      !page.imageBacked &&
+      !page.dense
+    ) {
+      const discovery = detectBorderlessTables(gridSpans);
+      gridTables.push(...discovery.tables);
+      if (discovery.unresolved > 0)
+        gridUnresolvedReason ??= 'aligned columns do not hold a complete grid';
+      if (discovery.truncated) truncatedGeometryPages.push(page.number);
+    }
+    const gridTablesById = new Map(
+      gridTables.map((table) => [table.id, table] as const),
     );
     const spansById = new Map(
       page.spans.map((candidate) => [candidate.id, candidate] as const),
     );
-    const ruledOwnerOfSpan = new Map<
-      string,
-      { tableId: string; key: string }
-    >();
-    for (const table of ruledDiscovery.tables)
+    const gridOwnerOfSpan = new Map<string, { tableId: string; key: string }>();
+    for (const table of gridTables)
       for (const cell of table.cells)
         for (const id of cell.spanIds)
-          ruledOwnerOfSpan.set(id, { tableId: table.id, key: cell.key });
-    const ruledCellLines = (tableId: string, key: string): PdfLine[] => {
-      const cell = ruledTablesById
+          gridOwnerOfSpan.set(id, { tableId: table.id, key: cell.key });
+    const gridCellLines = (tableId: string, key: string): PdfLine[] => {
+      const cell = gridTablesById
         .get(tableId)
         ?.cells.find((candidate) => candidate.key === key);
       if (!cell) return [];
@@ -1627,10 +1685,8 @@ async function linesToBlocks(
     const emittedTables = new Set<string>();
     const failedTables = new Set<string>();
     if (
-      taggedDiscovery.unresolved +
-        taggedLayout.unresolved +
-        ruledDiscovery.unresolved >
-      0
+      taggedDiscovery.unresolved + taggedLayout.unresolved > 0 ||
+      gridUnresolvedReason !== undefined
     )
       unresolvedTablePages.push(page.number);
     if (pageLines.length === 0 && page.images.length === 0) continue;
@@ -1733,40 +1789,39 @@ async function linesToBlocks(
       // table, so a line that also carries text from outside the grid stays on
       // the paragraph path rather than being pulled into the table. Whitespace
       // between two cells is glue, not content, so it does not veto ownership.
-      const ruledOwners = new Set<string>();
-      let ruledOwner: { tableId: string; key: string } | undefined;
+      const gridOwners = new Set<string>();
+      let gridOwner: { tableId: string; key: string } | undefined;
       if (
         line.spans.length > 0 &&
         line.spans.every(
-          ({ id, text }) =>
-            ruledOwnerOfSpan.has(id) || text.trim().length === 0,
+          ({ id, text }) => gridOwnerOfSpan.has(id) || text.trim().length === 0,
         )
       )
         for (const { id } of line.spans) {
-          const owner = ruledOwnerOfSpan.get(id);
+          const owner = gridOwnerOfSpan.get(id);
           if (!owner) continue;
-          ruledOwners.add(owner.tableId);
-          ruledOwner ??= owner;
+          gridOwners.add(owner.tableId);
+          gridOwner ??= owner;
         }
       // One line straddling two grids is pathological: keep it as prose rather
       // than feeding its words to whichever table happened to be seen first.
-      const ruledTable =
-        ruledOwners.size === 1 && ruledOwner
-          ? ruledTablesById.get(ruledOwner.tableId)
+      const gridTable =
+        gridOwners.size === 1 && gridOwner
+          ? gridTablesById.get(gridOwner.tableId)
           : undefined;
-      if (ruledTable !== undefined) {
-        if (!emittedTables.has(ruledTable.id)) {
+      if (gridTable !== undefined) {
+        if (!emittedTables.has(gridTable.id)) {
           const rows: TableNode['rows'] = [];
-          for (let rowIndex = 0; rowIndex < ruledTable.rowCount; rowIndex++) {
+          for (let rowIndex = 0; rowIndex < gridTable.rowCount; rowIndex++) {
             const cells: TableNode['rows'][number]['cells'] = [];
             for (
               let columnIndex = 0;
-              columnIndex < ruledTable.columnCount;
+              columnIndex < gridTable.columnCount;
               columnIndex++
             )
               cells.push({
                 blocks: cellBlocks(
-                  ruledCellLines(ruledTable.id, `${rowIndex}:${columnIndex}`),
+                  gridCellLines(gridTable.id, `${rowIndex}:${columnIndex}`),
                 ),
               });
             rows.push({ cells });
@@ -1774,12 +1829,12 @@ async function linesToBlocks(
           blocks.push({ type: 'table', rows });
           tables.push({
             page: page.number,
-            rows: ruledTable.rowCount,
-            columns: ruledTable.columnCount,
-            source: 'ruled',
-            confidence: 'medium',
+            rows: gridTable.rowCount,
+            columns: gridTable.columnCount,
+            source: gridTable.source,
+            confidence: gridTable.source === 'borderless' ? 'low' : 'medium',
           });
-          emittedTables.add(ruledTable.id);
+          emittedTables.add(gridTable.id);
         }
         // Consumed either way: the later lines of an already emitted table must
         // not reappear as prose.
@@ -1924,7 +1979,7 @@ async function linesToBlocks(
       previousLine = line;
     }
   }
-  return { blocks, unresolvedTablePages, tables };
+  return { blocks, unresolvedTablePages, truncatedGeometryPages, tables };
 }
 
 function coversRenderedEquation(

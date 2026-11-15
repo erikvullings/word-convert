@@ -122,7 +122,15 @@ Infer a table from ruled lines only where the geometry closes. A set of straight
 
 A ruled table is reported with the ruled signal and medium confidence. Curved and filled paths are never rules, and pages that were rasterized, were classified as dense illustrations, or exceeded the stroke budget are excluded from ruled inference.
 
-Do not infer tables from aligned columns alone. That signal still has to show no regression on the existing PDF corpus before becoming default behaviour.
+Infer a table from aligned columns only on request. Column alignment is the weakest of the three signals, so it stays off until the caller asks for it, and even then a block of rows becomes a table only when:
+
+- at least three consecutive rows share one column pattern, with every span of those rows starting on one of the recurring column positions;
+- the pattern has at least two columns separated by a visible gutter, so words flowing across a line count as one column rather than two;
+- most cells leave space in their column, because cells that run to the column edge are multi-column body text rather than cells;
+- the first column is not made up solely of bullets or enumerators, which is a list;
+- nothing ragged interrupts the block, so a wrapped line, a heading, or a label above or below the grid ends it and stays on the paragraph path.
+
+A borderless table is reported with the borderless signal and low confidence. A block refused by these precision gates is silent, because prose and lists were never tables; a block too large to emit is reported in the warnings panel. Pages that fell back, were rasterized, were classified as dense illustrations, or exceeded the span budget are excluded from borderless inference. Aligned columns must not become default behaviour until they show no regression on a broader corpus.
 
 ## Style analysis and heading inference
 

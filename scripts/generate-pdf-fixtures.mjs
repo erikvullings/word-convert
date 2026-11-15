@@ -26,6 +26,7 @@ await save('tagged-article.pdf', await taggedArticle());
 await save('tagged-table.pdf', await taggedTable());
 await save('tagged-table-spans.pdf', await taggedTableSpans());
 await save('ruled-table.pdf', await ruledTable());
+await save('borderless-table.pdf', await borderlessTable());
 await save('ruled-non-tables.pdf', await ruledNonTables());
 await save('scanned-page.pdf', await scannedPage());
 await save('formula-layouts.pdf', await formulaLayouts());
@@ -89,6 +90,14 @@ await writeFile(
         {
           file: 'ruled-table.pdf',
           covers: ['ruled table', 'stroked cell borders', 'table caption'],
+        },
+        {
+          file: 'borderless-table.pdf',
+          covers: [
+            'aligned columns without rules',
+            'heading outside the grid',
+            'bulleted list',
+          ],
         },
         {
           file: 'ruled-non-tables.pdf',
@@ -565,6 +574,52 @@ async function ruledTable() {
  * axes, and a grid whose middle rule stops short. Detection has to refuse all
  * four and keep every word as prose.
  */
+async function borderlessTable() {
+  // Three aligned columns down four rows with no rules at all, alongside a
+  // heading and a bulleted list that must not be mistaken for tables.
+  const document = await baseDocument('Distribution by Region');
+  const body = await document.embedFont(StandardFonts.Helvetica);
+  const bold = await document.embedFont(StandardFonts.HelveticaBold);
+  const page = document.addPage([600, 800]);
+  const columns = [40, 190, 330];
+  const rows = [680, 656, 632, 608];
+  const values = [
+    ['Region', 'Units', 'Share'],
+    ['North', '120', '31%'],
+    ['South', '98', '25%'],
+    ['East', '141', '44%'],
+  ];
+  page.drawText('Distribution by region', {
+    x: 24,
+    y: 740,
+    size: 13,
+    font: bold,
+  });
+  rows.forEach((y, rowIndex) =>
+    columns.forEach((x, columnIndex) =>
+      page.drawText(values[rowIndex][columnIndex], {
+        x,
+        y,
+        size: 11,
+        font: body,
+      }),
+    ),
+  );
+  page.drawText('Notes', { x: 24, y: 550, size: 11, font: bold });
+  const notes = [
+    'figures are unaudited',
+    'share is rounded',
+    'east includes islands',
+    'source is internal',
+  ];
+  notes.forEach((note, index) => {
+    const y = 520 - index * 24;
+    page.drawText('\u2022', { x: 24, y, size: 11, font: body });
+    page.drawText(note, { x: 48, y, size: 11, font: body });
+  });
+  return document;
+}
+
 async function ruledNonTables() {
   const document = await baseDocument('Rules That Are Not Tables');
   const body = await document.embedFont(StandardFonts.TimesRoman);

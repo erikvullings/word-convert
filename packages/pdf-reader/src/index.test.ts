@@ -26,7 +26,12 @@ import {
   type PdfExtractionOptions,
   type PdfFigureRasterizer,
 } from './pdfjs.ts';
-import { detectRuledTables, DEFAULT_RULED_TABLE_LIMITS } from './tables.ts';
+import {
+  detectBorderlessTables,
+  detectRuledTables,
+  DEFAULT_BORDERLESS_TABLE_LIMITS,
+  DEFAULT_RULED_TABLE_LIMITS,
+} from './tables.ts';
 
 async function fixture(name: string): Promise<Uint8Array> {
   return new Uint8Array(
@@ -5920,4 +5925,364 @@ describe('PDF corpus table guard', () => {
       'tagged-table-spans.pdf': 'tagged:3x2',
     });
   }, 120_000);
+
+  // Borderless inference is the risky signal, so the whole corpus is read with
+  // it switched on: only the fixture that aligns columns may become a table.
+  it('finds borderless tables only where columns are aligned on purpose', async () => {
+    const directory = new URL('../../../tests/fixtures/pdf/', import.meta.url);
+    const names = (await readdir(directory))
+      .filter((name) => name.endsWith('.pdf'))
+      .sort();
+    const found: Record<string, string> = {};
+    for (const name of names) {
+      try {
+        const result = await pdfJsReader.read(
+          new Uint8Array(await readFile(new URL(name, directory))),
+          {
+            conversionDate: '2026-08-29',
+            password: 'fixture-password',
+            pdfTables: { borderless: true },
+          },
+        );
+        const tables = result.analysis.tables ?? [];
+        if (tables.length > 0)
+          found[name] = tables
+            .map(({ source, rows, columns }) => `${source}:${rows}x${columns}`)
+            .join(',');
+      } catch {
+        // Encrypted and malformed fixtures have their own tests.
+      }
+    }
+    expect(found).toEqual({
+      'borderless-table.pdf': 'borderless:4x3',
+      'formula-false-positives.pdf': 'borderless:3x4',
+      'ruled-table.pdf': 'ruled:3x2',
+      'tagged-table.pdf': 'tagged:3x2',
+      'tagged-table-spans.pdf': 'tagged:3x2',
+    });
+  }, 120_000);
+});
+
+describe('PDF borderless table detection', () => {
+  const columns = [0.1, 0.45, 0.7];
+  const rows = [0.2, 0.25, 0.3, 0.35];
+  const cell = (text: string, row: number, column: number, width = 0.08) => ({
+    id: text,
+    text,
+    x: columns[column]!,
+    top: rows[row]!,
+    width,
+    height: 0.02,
+  });
+  const grid = (rowsTaken: number, columnsTaken = 3) =>
+    Array.from({ length: rowsTaken }, (_, row) =>
+      Array.from({ length: columnsTaken }, (_, column) =>
+        cell(`${row}-${column}`, row, column),
+      ),
+    ).flat();
+
+  it('finds a table in aligned columns without any rules', () => {
+    const discovery = detectBorderlessTables(grid(4));
+    expect(discovery.unresolved).toBe(0);
+    expect(discovery.tables).toHaveLength(1);
+    const [table] = discovery.tables;
+    expect(table?.source).toBe('borderless');
+    expect(table?.rowCount).toBe(4);
+    expect(table?.columnCount).toBe(3);
+    expect(table?.cells.map(({ spanIds }) => spanIds)).toEqual([
+      ['0-0'],
+      ['0-1'],
+      ['0-2'],
+      ['1-0'],
+      ['1-1'],
+      ['1-2'],
+      ['2-0'],
+      ['2-1'],
+      ['2-2'],
+      ['3-0'],
+      ['3-1'],
+      ['3-2'],
+    ]);
+  });
+
+  it('refuses a block with too few rows without calling it unresolved', () => {
+    const discovery = detectBorderlessTables(grid(2));
+    expect(discovery.tables).toEqual([]);
+    expect(discovery.unresolved).toBe(0);
+  });
+
+  it('refuses a block containing a wrapped line', () => {
+    const spans = grid(4);
+    spans.push({
+      id: 'wrapped',
+      text: 'and the sentence carries on',
+      x: 0.28,
+      top: rows[2]!,
+      width: 0.2,
+      height: 0.02,
+    });
+    const discovery = detectBorderlessTables(spans);
+    expect(discovery.tables).toEqual([]);
+  });
+
+  it('refuses two-column prose whose lines fill their columns', () => {
+    const prose = Array.from({ length: 5 }, (_, row) => [
+      {
+        id: `left-${row}`,
+        text: 'the line runs nearly to the column edge',
+        x: 0.1,
+        top: 0.2 + row * 0.05,
+        width: 0.42,
+        height: 0.02,
+      },
+      {
+        id: `right-${row}`,
+        text: 'and the second column does the same',
+        x: 0.55,
+        top: 0.2 + row * 0.05,
+        width: 0.42,
+        height: 0.02,
+      },
+    ]).flat();
+    // Correctly refused, so nothing is reported: prose was never a table.
+    const discovery = detectBorderlessTables(prose);
+    expect(discovery.tables).toEqual([]);
+    expect(discovery.unresolved).toBe(0);
+  });
+
+  it('refuses a bulleted list', () => {
+    const list = Array.from({ length: 4 }, (_, row) => [
+      {
+        id: `bullet-${row}`,
+        text: '•',
+        x: 0.1,
+        top: 0.2 + row * 0.05,
+        width: 0.01,
+        height: 0.02,
+      },
+      {
+        id: `item-${row}`,
+        text: `item number ${row}`,
+        x: 0.16,
+        top: 0.2 + row * 0.05,
+        width: 0.3,
+        height: 0.02,
+      },
+    ]).flat();
+    expect(detectBorderlessTables(list).tables).toEqual([]);
+  });
+
+  it('refuses a numbered list', () => {
+    const list = Array.from({ length: 4 }, (_, row) => [
+      {
+        id: `number-${row}`,
+        text: `${row + 1}.`,
+        x: 0.1,
+        top: 0.2 + row * 0.05,
+        width: 0.02,
+        height: 0.02,
+      },
+      {
+        id: `item-${row}`,
+        text: `item number ${row}`,
+        x: 0.16,
+        top: 0.2 + row * 0.05,
+        width: 0.3,
+        height: 0.02,
+      },
+    ]).flat();
+    expect(detectBorderlessTables(list).tables).toEqual([]);
+  });
+
+  it('keeps a heading above the block out of the table', () => {
+    const discovery = detectBorderlessTables([
+      {
+        id: 'heading',
+        text: 'Quarterly figures',
+        x: 0.1,
+        top: 0.12,
+        width: 0.2,
+        height: 0.03,
+      },
+      ...grid(4),
+    ]);
+    expect(discovery.tables).toHaveLength(1);
+    expect(
+      discovery.tables[0]?.cells.flatMap(({ spanIds }) => spanIds),
+    ).not.toContain('heading');
+  });
+
+  it('reports two separated blocks as two tables', () => {
+    const lower = Array.from({ length: 4 }, (_, row) =>
+      Array.from({ length: 3 }, (_, column) => ({
+        id: `lower-${row}-${column}`,
+        text: `${row}-${column}`,
+        x: columns[column]!,
+        top: 0.6 + row * 0.05,
+        width: 0.08,
+        height: 0.02,
+      })),
+    ).flat();
+    const discovery = detectBorderlessTables([...grid(4), ...lower]);
+    expect(discovery.tables).toHaveLength(2);
+    expect(discovery.tables.map(({ rowCount }) => rowCount)).toEqual([4, 4]);
+  });
+
+  it('reports a grid wider than the column budget as unresolved', () => {
+    const discovery = detectBorderlessTables(grid(4), {
+      ...DEFAULT_BORDERLESS_TABLE_LIMITS,
+      maxColumnsPerTable: 2,
+    });
+    expect(discovery.tables).toEqual([]);
+    expect(discovery.unresolved).toBe(1);
+  });
+
+  it('reports truncation rather than guessing past the span budget', () => {
+    const discovery = detectBorderlessTables(grid(4), {
+      ...DEFAULT_BORDERLESS_TABLE_LIMITS,
+      maxSpans: 3,
+    });
+    expect(discovery.tables).toEqual([]);
+    expect(discovery.truncated).toBe(true);
+  });
+});
+
+describe('PDF table signals', () => {
+  const columns = [0.07, 0.32, 0.55];
+  const rowTops = [0.15, 0.18, 0.21, 0.24];
+  const cellText = [
+    ['Region', 'Units', 'Share'],
+    ['North', '120', '31%'],
+    ['South', '98', '25%'],
+    ['East', '141', '44%'],
+  ];
+  const alignedSpans = () =>
+    rowTops.flatMap((top, row) =>
+      columns.map((x, column) =>
+        span(cellText[row]![column]!, x, top, { width: 0.06, height: 0.012 }),
+      ),
+    );
+  const pageWith = (spans: RawPdfTextSpan[]) =>
+    rawDocument([
+      {
+        number: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        spans,
+        links: [],
+        images: [],
+      },
+    ]);
+
+  it('keeps aligned columns as prose unless borderless tables are enabled', async () => {
+    const result = await analysePdf(pageWith(alignedSpans()), {
+      filename: 'aligned.pdf',
+    });
+    expect(
+      result.model.blocks.filter((block) => block.type === 'table'),
+    ).toEqual([]);
+    expect(result.analysis.tables).toBeUndefined();
+  });
+
+  it('emits a table from aligned columns when borderless tables are enabled', async () => {
+    const result = await analysePdf(pageWith(alignedSpans()), {
+      filename: 'aligned.pdf',
+      pdfTables: { borderless: true },
+    });
+    const tables = result.model.blocks.filter(
+      (block) => block.type === 'table',
+    );
+    expect(tables).toHaveLength(1);
+    const table = tables[0];
+    if (table?.type !== 'table') throw new Error('expected a table');
+    expect(table.rows.map((row) => row.cells.length)).toEqual([3, 3, 3, 3]);
+    expect(
+      table.rows.map((row) =>
+        row.cells.map((cell) =>
+          cell.blocks
+            .map((block) =>
+              block.type === 'paragraph'
+                ? block.children
+                    .map((child) => (child.type === 'text' ? child.text : ''))
+                    .join('')
+                : '',
+            )
+            .join(''),
+        ),
+      ),
+    ).toEqual(cellText);
+    expect(result.analysis.tables).toEqual([
+      { page: 1, rows: 4, columns: 3, source: 'borderless', confidence: 'low' },
+    ]);
+  });
+
+  it('refuses a bulleted list even with borderless tables enabled', async () => {
+    const list = Array.from({ length: 4 }, (_, row) => [
+      span('•', 0.04, 0.35 + row * 0.03, { width: 0.006, height: 0.012 }),
+      span(`item ${row}`, 0.085, 0.35 + row * 0.03, {
+        width: 0.2,
+        height: 0.012,
+      }),
+    ]).flat();
+    const result = await analysePdf(pageWith([...alignedSpans(), ...list]), {
+      filename: 'aligned.pdf',
+      pdfTables: { borderless: true },
+    });
+    const tables = result.model.blocks.filter(
+      (block) => block.type === 'table',
+    );
+    expect(tables).toHaveLength(1);
+    const text = JSON.stringify(result.model.blocks);
+    expect(text).toContain('item 0');
+    expect(text).toContain('item 3');
+  });
+
+  it('skips tagged tables when the tagged signal is turned off', async () => {
+    const result = await pdfJsReader.read(await fixture('tagged-table.pdf'), {
+      filename: 'tagged-table.pdf',
+      pdfTables: { tagged: false },
+    });
+    expect(
+      result.model.blocks.filter((block) => block.type === 'table'),
+    ).toEqual([]);
+    expect(JSON.stringify(result.model.blocks)).toContain('Period');
+    expect(JSON.stringify(result.model.blocks)).toContain('120');
+  });
+
+  it('skips ruled tables when the ruled signal is turned off', async () => {
+    const result = await pdfJsReader.read(await fixture('ruled-table.pdf'), {
+      filename: 'ruled-table.pdf',
+      pdfTables: { ruled: false },
+    });
+    expect(
+      result.model.blocks.filter((block) => block.type === 'table'),
+    ).toEqual([]);
+    expect(JSON.stringify(result.model.blocks)).toContain('Revenue');
+  });
+
+  it('reads a borderless table from a real page only when enabled', async () => {
+    const without = await pdfJsReader.read(
+      await fixture('borderless-table.pdf'),
+      { filename: 'borderless-table.pdf' },
+    );
+    expect(
+      without.model.blocks.filter((block) => block.type === 'table'),
+    ).toEqual([]);
+    const withBorders = await pdfJsReader.read(
+      await fixture('borderless-table.pdf'),
+      { filename: 'borderless-table.pdf', pdfTables: { borderless: true } },
+    );
+    const tables = withBorders.model.blocks.filter(
+      (block) => block.type === 'table',
+    );
+    expect(tables).toHaveLength(1);
+    expect(withBorders.analysis.tables).toEqual([
+      { page: 1, rows: 4, columns: 3, source: 'borderless', confidence: 'low' },
+    ]);
+    const text = JSON.stringify(withBorders.model.blocks);
+    expect(text).toContain('Distribution');
+    expect(text).toContain('figures are unaudited');
+    expect(text).toContain('44%');
+  });
 });

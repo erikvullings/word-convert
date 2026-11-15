@@ -464,7 +464,7 @@ export interface RuledStroke {
 }
 
 /** The box of a retained text span, in the same page-relative space. */
-export interface RuledSpanBox {
+export interface GridSpanBox {
   readonly id: string;
   readonly x: number;
   readonly top: number;
@@ -474,7 +474,7 @@ export interface RuledSpanBox {
   readonly text?: string;
 }
 
-export interface RuledTableCell {
+export interface GridTableCell {
   /** Grid position as `row:column`. */
   readonly key: string;
   readonly rowIndex: number;
@@ -482,19 +482,21 @@ export interface RuledTableCell {
   readonly spanIds: readonly string[];
 }
 
-export interface RuledTable {
+export interface GridTable {
   readonly id: string;
+  /** Which signal found the grid; borderless grids are opt-in. */
+  readonly source: 'ruled' | 'borderless';
   readonly rowCount: number;
   readonly columnCount: number;
   readonly x: number;
   readonly top: number;
   readonly width: number;
   readonly height: number;
-  readonly cells: readonly RuledTableCell[];
+  readonly cells: readonly GridTableCell[];
 }
 
-export interface RuledTableDiscovery {
-  readonly tables: readonly RuledTable[];
+export interface GridTableDiscovery {
+  readonly tables: readonly GridTable[];
   /** Grid-shaped rule sets that could not be read as a table. */
   readonly unresolved: number;
   /** The stroke budget stopped detection early, so rules may be missing. */
@@ -822,7 +824,7 @@ function isClosedGrid(lattice: Lattice, limits: RuledTableLimits): boolean {
  * the whole grid is refused instead of silently dropping half the text.
  */
 function assignSpans(
-  spans: readonly RuledSpanBox[],
+  spans: readonly GridSpanBox[],
   lattice: Lattice,
   limits: RuledTableLimits,
 ): Map<string, string[]> | undefined {
@@ -863,11 +865,11 @@ function assignSpans(
  * keeps all of its text as paragraphs.
  */
 export function detectRuledTables(
-  spans: readonly RuledSpanBox[],
+  spans: readonly GridSpanBox[],
   strokes: readonly RuledStroke[],
   limits: RuledTableLimits = DEFAULT_RULED_TABLE_LIMITS,
-): RuledTableDiscovery {
-  const tables: RuledTable[] = [];
+): GridTableDiscovery {
+  const tables: GridTable[] = [];
   let unresolved = 0;
   if (strokes.length === 0 || limits.maxTablesPerPage <= 0)
     return { tables, unresolved, truncated: false };
@@ -915,7 +917,7 @@ export function detectRuledTables(
       return;
     }
     const { lattice } = candidate;
-    const cells: RuledTableCell[] = [];
+    const cells: GridTableCell[] = [];
     for (let row = 0; row < lattice.ys.length - 1; row++)
       for (let column = 0; column < lattice.xs.length - 1; column++) {
         const key = `${row}:${column}`;
@@ -930,6 +932,7 @@ export function detectRuledTables(
     const left = lattice.xs[0]!;
     tables.push({
       id: `ruled-table-${tables.length}`,
+      source: 'ruled',
       rowCount: lattice.ys.length - 1,
       columnCount: lattice.xs.length - 1,
       x: left,
@@ -940,4 +943,353 @@ export function detectRuledTables(
     });
   });
   return { tables, unresolved, truncated };
+}
+/**
+ * Borderless table detection.
+ *
+ * A borderless table states its grid only by alignment: the same column starts
+ * recur down several rows with a gutter between them. This is the weakest of
+ * the three signals, so it is opt-in and its gates are deliberately strict.
+ * Two-column body text, bulleted lists, numbered lists, and a single wrapped
+ * line inside the block all have to be refused rather than guessed at.
+ */
+
+export interface BorderlessTableLimits {
+  readonly maxTablesPerPage: number;
+  readonly maxRowsPerTable: number;
+  readonly maxColumnsPerTable: number;
+  readonly maxSpans: number;
+  /** Left edges this close count as the same column. */
+  readonly tolerance: number;
+  /** Smallest empty gutter that can separate two columns. */
+  readonly minColumnGap: number;
+  /** Rows a block needs before it counts as a table. */
+  readonly minRows: number;
+  /** Distinct aligned columns a block needs. */
+  readonly minColumns: number;
+  /** Two rows further apart than this end the block. */
+  readonly maxRowGap: number;
+  /** A table narrower than this is an indent or a list, not a table. */
+  readonly minTableWidth: number;
+  /** A cell using more than this fraction of its column reads as prose. */
+  readonly maxCellFill: number;
+  /** How many cells may read as prose before the block is refused. */
+  readonly maxFilledCells: number;
+}
+
+export const DEFAULT_BORDERLESS_TABLE_LIMITS: BorderlessTableLimits = {
+  maxTablesPerPage: 16,
+  maxRowsPerTable: 500,
+  maxColumnsPerTable: 64,
+  maxSpans: 8_000,
+  tolerance: 0.004,
+  minColumnGap: 0.03,
+  minRows: 3,
+  minColumns: 2,
+  // Comfortably above the leading between two lines of a table, but far below
+  // the gap between two separate blocks on a page.
+  maxRowGap: 0.05,
+  minTableWidth: 0.2,
+  maxCellFill: 0.8,
+  maxFilledCells: 0.15,
+};
+
+interface TextRow {
+  readonly top: number;
+  readonly bottom: number;
+  readonly spans: readonly GridSpanBox[];
+}
+
+/** A row whose spans were all mapped onto column clusters, or `undefined`. */
+type AnalysedRow = TextRow & {
+  readonly columns: readonly number[] | undefined;
+};
+type RegularRow = TextRow & { readonly columns: readonly number[] };
+
+const BULLET = /^[•·‣∙*o◦⁃–—-]$/u;
+const ENUMERATOR = /^\(?(\d{1,4}[.)]|[ivxlcdm]{1,7}[.)]|[a-z][.)])$/iu;
+
+/** Bullets and enumerators mark lists; a first column of only those is not a table. */
+function isListMarker(text: string | undefined): boolean {
+  const trimmed = (text ?? '').trim();
+  return (
+    trimmed.length === 0 || BULLET.test(trimmed) || ENUMERATOR.test(trimmed)
+  );
+}
+
+/** Group spans into visual rows by vertical overlap. */
+function buildRows(spans: readonly GridSpanBox[]): TextRow[] {
+  const ordered = [...spans].sort(
+    (left, right) => left.top - right.top || left.x - right.x,
+  );
+  const rows: Array<{ top: number; bottom: number; spans: GridSpanBox[] }> = [];
+  for (const box of ordered) {
+    const bottom = box.top + box.height;
+    const last = rows.at(-1);
+    const height = last ? Math.min(box.height, last.bottom - last.top) : 0;
+    const overlap = last
+      ? Math.min(bottom, last.bottom) - Math.max(box.top, last.top)
+      : Number.NEGATIVE_INFINITY;
+    if (last && height > 0 && overlap > height / 2) {
+      last.spans.push(box);
+      last.top = Math.min(last.top, box.top);
+      last.bottom = Math.max(last.bottom, bottom);
+      continue;
+    }
+    rows.push({ top: box.top, bottom, spans: [box] });
+  }
+  return rows.map((row) => ({
+    top: row.top,
+    bottom: row.bottom,
+    spans: [...row.spans].sort((left, right) => left.x - right.x),
+  }));
+}
+
+/** Cluster the left edges of a page into candidate column positions. */
+function columnPositions(
+  rows: readonly TextRow[],
+  limits: BorderlessTableLimits,
+): number[] {
+  const edges: number[] = [];
+  for (const row of rows) for (const box of row.spans) edges.push(box.x);
+  const clusters: number[] = [];
+  for (const edge of edges.sort((left, right) => left - right)) {
+    const last = clusters.at(-1);
+    if (last !== undefined && edge - last <= limits.tolerance) {
+      clusters[clusters.length - 1] = (last + edge) / 2;
+      continue;
+    }
+    clusters.push(edge);
+  }
+  return clusters;
+}
+
+/**
+ * Map a row's spans onto column positions. A span that starts nowhere near a
+ * column start means the row is not part of the grid: a wrapped line, a
+ * heading, or a stray label. Two spans in one column are side-by-side items
+ * rather than a cell, which is not a grid either.
+ */
+function assignColumns(
+  row: TextRow,
+  positions: readonly number[],
+  limits: BorderlessTableLimits,
+): number[] | undefined {
+  if (positions.length < limits.minColumns) return undefined;
+  const columns: number[] = [];
+  for (const box of row.spans) {
+    let best = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    positions.forEach((position, index) => {
+      const distance = Math.abs(position - box.x);
+      if (distance <= limits.tolerance && distance < bestDistance) {
+        best = index;
+        bestDistance = distance;
+      }
+    });
+    if (best < 0) return undefined;
+    columns.push(best);
+  }
+  return new Set(columns).size === columns.length ? columns : undefined;
+}
+
+/** Rightmost edge reached in each column of a row. */
+function rowColumnRights(row: RegularRow): Map<number, number> {
+  const rights = new Map<number, number>();
+  row.spans.forEach((box, index) => {
+    const column = row.columns[index]!;
+    rights.set(column, Math.max(rights.get(column) ?? 0, box.x + box.width));
+  });
+  return rights;
+}
+
+/**
+ * Find borderless tables among a page's retained text spans. Only consecutive
+ * rows that share the same column pattern form a table, so one ragged line
+ * ends the block, and a block whose cells fill their columns is multi-column
+ * prose rather than a table.
+ */
+export function detectBorderlessTables(
+  spans: readonly GridSpanBox[],
+  limits: BorderlessTableLimits = DEFAULT_BORDERLESS_TABLE_LIMITS,
+): GridTableDiscovery {
+  const tables: GridTable[] = [];
+  let unresolved = 0;
+  let truncated = false;
+  if (limits.maxTablesPerPage <= 0 || limits.maxSpans <= 0)
+    return { tables, unresolved, truncated };
+  const usable: GridSpanBox[] = [];
+  for (const box of spans) {
+    if (usable.length >= limits.maxSpans) {
+      truncated = true;
+      break;
+    }
+    if (
+      (box.text ?? '').trim().length === 0 ||
+      !Number.isFinite(box.x + box.top + box.width + box.height) ||
+      box.width <= 0 ||
+      box.height <= 0
+    )
+      continue;
+    usable.push(box);
+  }
+  const rows = buildRows(usable);
+  const positions = columnPositions(rows, limits);
+  const analysed: AnalysedRow[] = rows.map((row) => ({
+    ...row,
+    columns: assignColumns(row, positions, limits),
+  }));
+
+  let index = 0;
+  while (index < analysed.length && tables.length < limits.maxTablesPerPage) {
+    const signature = analysed[index]?.columns?.join(',');
+    if (!signature) {
+      index += 1;
+      continue;
+    }
+    let end = index;
+    while (end < analysed.length) {
+      const row = analysed[end];
+      const previous = analysed[end - 1];
+      if (
+        !row?.columns ||
+        row.columns.join(',') !== signature ||
+        (end > index &&
+          previous !== undefined &&
+          row.top - previous.bottom > limits.maxRowGap)
+      )
+        break;
+      end += 1;
+    }
+    const block = analysed
+      .slice(index, end)
+      .filter((row): row is RegularRow => row.columns !== undefined);
+    if (block.length >= limits.minRows) {
+      const outcome = acceptBlock(
+        block,
+        positions,
+        signature,
+        `borderless-table-${tables.length}`,
+        limits,
+      );
+      // Only a block that was too big to emit counts as unresolved: it is a
+      // table the reader had to give up on. Blocks refused for reading as
+      // prose or as a list are correct rejections, and warning about them on
+      // every page that holds a list would be noise.
+      if (outcome.kind === 'table')
+        tables.push({ ...outcome.table, source: 'borderless' });
+      else if (outcome.kind === 'unresolved') unresolved += 1;
+    }
+    index = Math.max(end, index + 1);
+  }
+  if (tables.length >= limits.maxTablesPerPage && index < analysed.length)
+    truncated = true;
+  return { tables, unresolved, truncated };
+}
+
+type BorderlessOutcome =
+  | { readonly kind: 'table'; readonly table: Omit<GridTable, 'source'> }
+  | { readonly kind: 'unresolved' }
+  | { readonly kind: 'refused' };
+
+const refused: BorderlessOutcome = { kind: 'refused' };
+
+function acceptBlock(
+  block: readonly RegularRow[],
+  positions: readonly number[],
+  signature: string,
+  id: string,
+  limits: BorderlessTableLimits,
+): BorderlessOutcome {
+  const columns = signature.split(',').map(Number);
+  if (columns.length < limits.minColumns) return refused;
+  if (
+    columns.length > limits.maxColumnsPerTable ||
+    block.length > limits.maxRowsPerTable
+  )
+    return { kind: 'unresolved' };
+  // Cells are addressed by their position within the table, not by the column
+  // cluster they came from: the clusters are page-wide, so a table that starts
+  // in the middle of the page would otherwise hand the reader keys it never
+  // asks for.
+  const positionOf = new Map(
+    columns.map((cluster, index) => [cluster, index] as const),
+  );
+  const cells = new Map<string, string[]>();
+  let right = Number.NEGATIVE_INFINITY;
+  let left = Number.POSITIVE_INFINITY;
+  for (const [rowIndex, row] of block.entries()) {
+    const rights = rowColumnRights(row);
+    for (let position = 0; position < columns.length - 1; position++) {
+      const reached = rights.get(columns[position]!);
+      const next = positions[columns[position + 1]!];
+      if (reached === undefined || next === undefined) return refused;
+      // Adjacent columns with no gutter between them are one column of running
+      // text, which is the shape of prose rather than of a table.
+      if (next - reached < limits.minColumnGap) return refused;
+    }
+    row.spans.forEach((box, spanIndex) => {
+      const columnIndex = positionOf.get(row.columns[spanIndex]!);
+      if (columnIndex === undefined) return;
+      const key = `${rowIndex}:${columnIndex}`;
+      const bucket = cells.get(key) ?? [];
+      bucket.push(box.id);
+      cells.set(key, bucket);
+      left = Math.min(left, box.x);
+      right = Math.max(right, box.x + box.width);
+    });
+  }
+  const slots = block.length * columns.length;
+  let prose = 0;
+  for (const row of block) {
+    const rights = rowColumnRights(row);
+    columns.forEach((column, columnIndex) => {
+      // Only columns with a successor have a bound worth measuring: a cell in
+      // the last column ends wherever its text ends, which says nothing about
+      // whether the cell is prose.
+      if (columnIndex + 1 >= columns.length) return;
+      const start = positions[column]!;
+      const end = positions[columns[columnIndex + 1]!]!;
+      const used = (rights.get(column) ?? start) - start;
+      if (end > start && used / (end - start) > limits.maxCellFill) prose += 1;
+    });
+  }
+  // A uniform column pattern means every cell of the block holds text, so
+  // coverage needs no check here; what remains is telling tables from prose.
+  if (prose / slots > limits.maxFilledCells) return refused;
+  if (right - left < limits.minTableWidth) return refused;
+  const boxById = new Map(
+    block.flatMap((row) => row.spans).map((box) => [box.id, box] as const),
+  );
+  const firstCells = block.map((_, rowIndex) =>
+    (cells.get(`${rowIndex}:0`) ?? []).map(
+      (cellId) => boxById.get(cellId)?.text,
+    ),
+  );
+  // A first column of nothing but bullets or enumerators is a list.
+  if (firstCells.every((texts) => texts.every(isListMarker))) return refused;
+  const gridCells: GridTableCell[] = [];
+  for (let rowIndex = 0; rowIndex < block.length; rowIndex++)
+    for (let columnIndex = 0; columnIndex < columns.length; columnIndex++)
+      gridCells.push({
+        key: `${rowIndex}:${columnIndex}`,
+        rowIndex,
+        columnIndex,
+        spanIds: cells.get(`${rowIndex}:${columnIndex}`) ?? [],
+      });
+  const top = block[0]?.top ?? 0;
+  const bottom = block.at(-1)?.bottom ?? top;
+  return {
+    kind: 'table',
+    table: {
+      id,
+      rowCount: block.length,
+      columnCount: columns.length,
+      x: left,
+      top,
+      width: right - left,
+      height: bottom - top,
+      cells: gridCells,
+    },
+  };
 }

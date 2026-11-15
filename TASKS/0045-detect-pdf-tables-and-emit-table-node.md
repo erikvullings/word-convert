@@ -277,3 +277,46 @@ Three signals are available at very different cost and precision:
   opt-in), merged ruled cells (needs the missing interior rule to be inferred,
   which is exactly the guessing this slice refuses), and confirmation that the
   0041 size splitter keeps a `TableNode` whole.
+- 2026-11-15 pi: Slice 3 started, plus the opt-in switch the earlier slices
+  lacked. `PdfAnalysisOptions` gained `pdfTables: { tagged, ruled, borderless }`
+  (defaults `true`, `true`, `false`), read by both `analysePdf` and
+  `pdfJsReader.read`, so each signal can be turned off independently. The CLI
+  flag that exposes this is still to be done.
+- 2026-11-15 pi: Ruled and borderless detection now share one emitted shape —
+  `GridTable` with a `source` — so the reader has a single grid routing path
+  instead of two near-copies. `detectBorderlessTables(spans, limits)` is pure
+  over retained span boxes.
+- 2026-11-15 pi: Borderless gates, ordered by how badly each one is needed. A
+  block needs at least three consecutive rows sharing one column pattern with
+  every span starting on a recurring column position; adjacent columns need a
+  visible gutter, which is what separates a table from words flowing across a
+  line; most cells must leave space in their column, because cells that run to
+  the column edge are two-column body text; the first column may not be nothing
+  but bullets or enumerators, which is a list; and one ragged row ends the
+  block, so a heading or wrapped line above or below stays prose.
+- 2026-11-15 pi: Two decisions worth keeping. A block refused by a precision
+  gate is silent, and only a block too large to emit counts as unresolved —
+  warning about every list and two-column page would be noise, and no text is
+  lost either way. `minRowCoverage` was removed: within a uniform column
+  pattern every cell holds text by construction, so the gate could never fire
+  and was pretending to check something.
+- 2026-11-15 pi: Bugs found by the tests, not by review. Cell keys were built
+  from page-wide column-cluster ids while the reader asks for positional
+  `row:column` keys, so a real borderless table emitted with only its first
+  column filled; and `maxRowGap` defaulted to exactly the inter-row gap of the
+  test grid, so whether a block held together depended on floating-point noise.
+  Both are locked by tests.
+- 2026-11-15 pi: Evidence. `tests/fixtures/pdf/borderless-table.pdf` (aligned
+  4x3 grid, a heading above it, a bulleted list below) yields one
+  `borderless`/`low` table; the heading stays prose and the list is still the
+  reader's own list block. The corpus is also read with borderless switched on:
+  only that fixture and `formula-false-positives.pdf` yield borderless tables,
+  the latter because its monospaced `Year 2023 2024 2025` rows genuinely are a
+  borderless table of figures — it is there to prove numbers do not become
+  mathematics, and with the signal off by default its formula expectations are
+  untouched. `two-column-article.pdf` stays prose, which is the fill gate
+  working on a real page.
+- 2026-11-15 pi: Cost is bounded and in `documentation/hardening.md`:
+  `maxSpans: 8,000` and at most 16 tables per page, skipped on fallback,
+  rasterized, dense, or span-truncated pages. `REQUIREMENTS.md` now states the
+  borderless rules instead of forbidding the signal outright.

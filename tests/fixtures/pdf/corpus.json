@@ -39,6 +39,14 @@
       "covers": ["ruled table", "stroked cell borders", "table caption"]
     },
     {
+      "file": "borderless-table.pdf",
+      "covers": [
+        "aligned columns without rules",
+        "heading outside the grid",
+        "bulleted list"
+      ]
+    },
+    {
       "file": "ruled-non-tables.pdf",
       "covers": [
         "separator rule",
