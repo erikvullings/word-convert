@@ -18,8 +18,10 @@ import type {
 import { strToU8, zipSync, type Zippable } from 'fflate';
 import {
   createCoverSvg,
+  rasterizeCover,
   type CoverImage,
   type CoverComposition,
+  type CoverRasterizer,
 } from '@wordconvert/cover-generator';
 import {
   KATEX_STYLES,
@@ -46,6 +48,7 @@ export interface EpubWriterOptions extends WriterOptions {
   modified?: string;
   cover?: CoverComposition;
   coverPng?: Uint8Array;
+  coverRasterizer?: CoverRasterizer;
   coverPolicy?: EpubCoverPolicy;
   preserveCoverAspectRatio?: boolean;
   /** Bounded user CSS appended after the generated stylesheet. */
@@ -407,6 +410,8 @@ export async function writeEpub(
       };
     coverPng = undefined;
   }
+  if (!coverPng && cover && options.coverRasterizer)
+    coverPng = await rasterizeCover(cover, options.coverRasterizer);
   const coverPath = coverPng ? 'cover.png' : cover ? 'cover.svg' : undefined;
   const startHeading = resolveStartReadingHeading(
     headings,

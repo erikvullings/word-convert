@@ -378,6 +378,14 @@ type ContentImageImportResult =
       message: string;
     };
 
+type ContentImageSourcesImportResult =
+  | {
+      ok: true;
+      model: DocumentModel;
+      replacements: Map<string, string>;
+    }
+  | Extract<ContentImageImportResult, { ok: false }>;
+
 const DEFAULT_CONTENT_IMAGE_LIMITS: ContentImageImportLimits = {
   maxImages: 100,
   maxImageBytes: 10 * 1024 * 1024,
@@ -398,6 +406,29 @@ export function importContentDataImages(
   model: DocumentModel,
   limits: ContentImageImportLimits = DEFAULT_CONTENT_IMAGE_LIMITS,
 ): ContentImageImportResult {
+  const imported = importContentDataImageSources(
+    collectImageSources(Lexer.lex(markdown)),
+    model,
+    limits,
+  );
+  if (!imported.ok) return imported;
+
+  const normalizedMarkdown = [...imported.replacements].reduce(
+    (content, [source, replacement]) => content.split(source).join(replacement),
+    markdown,
+  );
+  return {
+    ok: true,
+    model: imported.model,
+    markdown: normalizedMarkdown,
+  };
+}
+
+export function importContentDataImageSources(
+  sources: Iterable<string>,
+  model: DocumentModel,
+  limits: ContentImageImportLimits = DEFAULT_CONTENT_IMAGE_LIMITS,
+): ContentImageSourcesImportResult {
   const assetsByUrl = new Map(assetUrls(model));
   const assets = { ...model.assets };
   const replacements = new Map<string, string>();
@@ -408,7 +439,7 @@ export function importContentDataImages(
     .filter((asset) => asset.id.startsWith('editor-image-'))
     .reduce((total, asset) => total + asset.data.byteLength, 0);
 
-  for (const source of new Set(collectImageSources(Lexer.lex(markdown)))) {
+  for (const source of new Set(sources)) {
     if (
       assetsByUrl.has(source) ||
       !source.toLowerCase().startsWith('data:image/')
@@ -444,17 +475,13 @@ export function importContentDataImages(
     totalBytes += parsed.data.byteLength;
   }
 
-  const normalizedMarkdown = [...replacements].reduce(
-    (content, [source, replacement]) => content.split(source).join(replacement),
-    markdown,
-  );
   return {
     ok: true,
     model:
       Object.keys(assets).length === Object.keys(model.assets).length
         ? model
         : { ...model, assets },
-    markdown: normalizedMarkdown,
+    replacements,
   };
 }
 

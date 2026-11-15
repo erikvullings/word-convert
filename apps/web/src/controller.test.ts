@@ -16,6 +16,8 @@ import {
 } from './content-editor.ts';
 import { BrowserPngCoverRasterizer } from './cover-rasterizer.ts';
 
+vi.setConfig({ testTimeout: 15_000 });
+
 vi.mock('./pdf-preview.ts', () => ({
   createPdfPagePreviewRenderer: () => ({
     render: vi.fn(async () => ({

@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { EpubWriterOptions } from '@wordconvert/epub-writer';
 
 declare const __WORDCONVERT_CLI_COMPILED__: boolean;
 
@@ -19,6 +20,22 @@ export function loadCanvas(
 ): typeof import('@napi-rs/canvas') {
   const root = runtimeRoot(directory);
   return createRequire(join(root, 'package.json'))('@napi-rs/canvas');
+}
+
+export function createCoverRasterizer(
+  directory?: string,
+): NonNullable<EpubWriterOptions['coverRasterizer']> {
+  let canvasModule: ReturnType<typeof loadCanvas> | undefined;
+  return {
+    async rasterize(svg, width, height) {
+      canvasModule ??= loadCanvas(directory);
+      const image = await canvasModule.loadImage(Buffer.from(svg));
+      const canvas = canvasModule.createCanvas(width, height);
+      const context = canvas.getContext('2d');
+      context.drawImage(image, 0, 0, width, height);
+      return new Uint8Array(canvas.toBuffer('image/png'));
+    },
+  };
 }
 
 export function loadNativeRuntime(directory?: string) {

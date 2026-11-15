@@ -1,9 +1,9 @@
 # 0046 Fix flaky CLI test timeouts under full suite load
 
-Status: open
+Status: completed
 Priority: medium
-Owner: unassigned
-Agent: pi
+Owner: copilot
+Agent: Copilot App
 Subsystem: testing
 Depends on: 0002
 
@@ -60,3 +60,9 @@ regression by whoever runs the suite next.
   Example: `apps/cli/src/cli.test.ts > CLI arguments and output > defaults to EPUB
   even when streaming output`. No product code change was involved in the runs
   that failed.
+- 2026-11-15 Copilot: Scoped 15-second timeouts to the CLI and controller test
+  files that run conversions or asynchronous worker transitions; external-image
+  CLI integration cases have per-test timeouts. The global Vitest timeout is
+  unchanged. Ten consecutive `pnpm test --reporter=append-only` full-suite runs
+  passed, each with 58 test files passed, 2 skipped, 900 tests passed, and 4
+  skipped.

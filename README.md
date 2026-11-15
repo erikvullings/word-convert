@@ -41,7 +41,8 @@ lossless PNG. Only smaller encodings are used. Override with
 `--image-format preserve` or `--image-quality <1-100>` (EPUB only).
 Pixel dimensions, not DPI metadata, determine the reading resolution.
 Use `--cover <image>` to embed a local JPEG, PNG, WebP, or sanitized SVG cover
-image in EPUB output. For PDF input whose first page is the cover,
+image in EPUB output. The CLI rasterizes covers as PNG and retains the semantic
+XHTML title page. For PDF input whose first page is the cover,
 `--frontpage-cover` renders it as the cover and omits that page's images from
 the body. Front-page cover rendering requires the native runtime, including
 when PDF layout analysis is disabled.

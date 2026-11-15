@@ -11,7 +11,7 @@ import {
 } from '@wordconvert/document-model';
 import {
   contentImageDataUri,
-  importContentDataImages,
+  importContentDataImageSources,
   markdownToBlocks,
 } from './content-editor.ts';
 
@@ -129,6 +129,7 @@ export async function readTextDocument(
     model.warnings.push({ code, severity: 'warning', message });
   };
   const imageSources = new Map<string, string>();
+  const markdownImageSources = new Map<string, string>();
   let imageCount = 0;
   let totalImageBytes = 0;
   async function collect(node: Node, depth = 0): Promise<void> {
@@ -170,6 +171,10 @@ export async function readTextDocument(
             if (src.length > 14 * 1024 * 1024)
               throw new Error('Embedded image exceeds its size limit.');
             imageSources.set(src, src);
+            markdownImageSources.set(
+              src,
+              `wordconvert-image-${String(markdownImageSources.size + 1).padStart(4, '0')}`,
+            );
           } else {
             const resource = await options.loadImage?.(src);
             if (resource) {
@@ -193,6 +198,10 @@ export async function readTextDocument(
               imageSources.set(
                 src,
                 `data:${resource.mediaType};base64,${btoa(binary)}`,
+              );
+              markdownImageSources.set(
+                src,
+                `wordconvert-image-${String(markdownImageSources.size + 1).padStart(4, '0')}`,
               );
             } else {
               imageSources.set(src, '');
@@ -309,7 +318,8 @@ export async function readTextDocument(
     if (tag === 'br') return '  \n';
     if (tag === 'hr') return '\n\n---\n\n';
     if (tag === 'img') {
-      const src = imageSources.get(attribute(node, 'src') ?? '');
+      const source = attribute(node, 'src') ?? '';
+      const src = markdownImageSources.get(source);
       const alt = escaped(attribute(node, 'alt') ?? 'Image');
       return src ? `![${alt}](<${src}>)` : alt;
     }
@@ -429,11 +439,8 @@ export async function readTextDocument(
       )
       .join('');
   }
-  const imported = importContentDataImages(
-    [...imageSources.values()]
-      .filter(Boolean)
-      .map((url) => `![](<${url}>)`)
-      .join('\n\n'),
+  const imported = importContentDataImageSources(
+    [...imageSources.values()].filter(Boolean),
     model,
   );
   if (!imported.ok) throw new Error(imported.message);
@@ -447,7 +454,11 @@ export async function readTextDocument(
   const aliases = new Map<string, string>();
   for (const [source, url] of imageSources) {
     const id = assetIds.get(url);
-    if (id) aliases.set(source, id);
+    if (id) {
+      aliases.set(source, id);
+      const markdownSource = markdownImageSources.get(source);
+      if (markdownSource) aliases.set(markdownSource, id);
+    }
   }
   model.blocks = markdownToBlocks(markdown, model, aliases);
   await normalizeDocumentText(model, options.textNormalization, async () => {

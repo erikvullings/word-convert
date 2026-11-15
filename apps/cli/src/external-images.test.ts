@@ -276,6 +276,7 @@ it.each(['md', 'html'])(
       await rm(directory, { recursive: true, force: true });
     }
   },
+  15_000,
 );
 
 it('skips a remote response with a forged image content type and retains alternative text', async () => {
@@ -320,7 +321,7 @@ it('skips a remote response with a forged image content type and retains alterna
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
-});
+}, 15_000);
 
 it.each(['md', 'html'])(
   'continues after SVG, 403, and 204 images and still includes a later valid image in %s',
@@ -382,4 +383,5 @@ it.each(['md', 'html'])(
       await rm(directory, { recursive: true, force: true });
     }
   },
+  15_000,
 );

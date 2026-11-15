@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import {
   mkdtemp,
   mkdir,
@@ -12,6 +12,8 @@ import { join } from 'node:path';
 import { unzipSync } from 'fflate';
 import { runCli } from './cli.ts';
 import { loadCanvas } from './native-runtime.ts';
+
+vi.setConfig({ testTimeout: 15_000 });
 
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',

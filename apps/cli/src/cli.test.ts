@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import {
   copyFile,
   link,
@@ -14,7 +15,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { unzipSync } from 'fflate';
 import { runCli } from './cli.ts';
+import { loadCanvas } from './native-runtime.ts';
 import { version } from '../package.json';
+
+vi.setConfig({ testTimeout: 15_000 });
 
 const fixture = fileURLToPath(
   new URL(
@@ -92,6 +96,69 @@ afterEach(async () => {
 });
 
 describe('CLI arguments and output', () => {
+  it('keeps large local body images when run with Bun', async () => {
+    const root = await directory();
+    const imagePath = join(root, 'large-image.jpg');
+    const canvasModule = loadCanvas();
+    const canvas = canvasModule.createCanvas(1400, 1800);
+    const context = canvas.getContext('2d');
+    const imageData = context.createImageData(1400, 1800);
+    let state = 0x13579bdf;
+
+    for (let index = 0; index < imageData.data.length; index += 4) {
+      state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+      const gray = state >>> 24;
+      imageData.data[index] = gray;
+      imageData.data[index + 1] = gray;
+      imageData.data[index + 2] = gray;
+      imageData.data[index + 3] = 255;
+    }
+
+    context.putImageData(imageData, 0, 0);
+    const image = canvas.toBuffer('image/jpeg', 90);
+    expect(image.byteLength).toBeGreaterThan(330_000);
+    await writeFile(imagePath, image);
+    for (const [extension, source] of [
+      [
+        'html',
+        '<!doctype html><html lang="en"><body><img src="large-image.jpg" alt="Large image"></body></html>',
+      ],
+      ['md', '# Book\n\n![Large image](large-image.jpg)'],
+    ] as const) {
+      const inputPath = join(root, `large-image.${extension}`);
+      const outputPath = join(root, `large-image-${extension}.epub`);
+      await writeFile(inputPath, source);
+
+      const result = spawnSync(
+        'bun',
+        [
+          fileURLToPath(new URL('./main.ts', import.meta.url)),
+          inputPath,
+          '--output',
+          outputPath,
+          ...fixedDate,
+        ],
+        { encoding: 'utf8', timeout: 20_000 },
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(0);
+
+      const files = unzipSync(await readFile(outputPath));
+      const imagePath = Object.keys(files).find((path) =>
+        /^EPUB\/images\/image-\d+\.(?:jpg|jpeg|png|webp)$/.test(path),
+      );
+      expect(imagePath).toBeDefined();
+      if (!imagePath) throw new Error('EPUB image asset was omitted.');
+
+      const href = imagePath.slice('EPUB/'.length);
+      const opf = new TextDecoder().decode(files['EPUB/package.opf']);
+      const chapter = new TextDecoder().decode(files['EPUB/chapter-001.xhtml']);
+      expect(opf).toContain(`href="${href}" media-type="image/jpeg"`);
+      expect(chapter).toContain(`src="${href}"`);
+    }
+  }, 30_000);
+
   // The first conversion cold-loads reader/writer and native codec modules.
   it('defaults to EPUB even when streaming output', async () => {
     const result = await invoke([fixture, '-o', '-', ...fixedDate]);
@@ -1229,16 +1296,18 @@ describe('CLI arguments and output', () => {
       throw new Error('Expected EPUB bytes.');
     const files = unzipSync(output);
     const opf = new TextDecoder().decode(files['EPUB/package.opf']);
-    const coverSvg = new TextDecoder().decode(files['EPUB/cover.svg']);
     expect(opf).toContain(
-      'href="cover.svg" media-type="image/svg+xml" properties="cover-image"',
+      'href="cover.png" media-type="image/png" properties="cover-image"',
+    );
+    expect(files['EPUB/cover.svg']).toBeUndefined();
+    expect(files['EPUB/cover.png']?.subarray(0, 8)).toEqual(
+      new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
     );
     expect(files['EPUB/cover.xhtml']).toBeDefined();
     expect(opf).toContain('<itemref idref="title-page"/>');
     expect(new TextDecoder().decode(files['EPUB/title.xhtml'])).toContain(
       '<h1>Fixture Corpus</h1>',
     );
-    expect(coverSvg).toContain('data:image/png;base64,');
   });
 
   it('applies semantic EPUB cover, CSS, and image-cap options from local inputs', async () => {
@@ -1269,7 +1338,16 @@ describe('CLI arguments and output', () => {
     expect(new TextDecoder().decode(files['EPUB/styles.css'])).toContain(
       '.reader{line-height:1.8}',
     );
-    expect(files['EPUB/cover.svg']).toBeDefined();
+    expect(files['EPUB/cover.png']).toBeDefined();
+    expect(files['EPUB/cover.svg']).toBeUndefined();
+    const opf = new TextDecoder().decode(files['EPUB/package.opf']);
+    expect(opf).toContain(
+      'href="cover.png" media-type="image/png" properties="cover-image"',
+    );
+    expect(opf).toContain('<itemref idref="title-page"/>');
+    expect(new TextDecoder().decode(files['EPUB/title.xhtml'])).toContain(
+      '<h1>Fixture Corpus</h1>',
+    );
     expect(new TextDecoder().decode(files['EPUB/nav.xhtml'])).toContain(
       'epub:type="landmarks"',
     );

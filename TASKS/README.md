@@ -92,5 +92,9 @@ and reverses one of 0031's rejections; it shares no sequence with the other subt
 
 ## Test reliability
 
-- [ ] 0046 Fix flaky CLI test timeouts under full suite load *(blocks trusting a
+- [x] 0046 Fix flaky CLI test timeouts under full suite load *(blocks trusting a
   red `pnpm test`; seen while implementing 0045, unrelated to it)*
+
+## CLI correctness follow-ups
+
+- [x] 0048 Preserve large body images and rasterize EPUB covers

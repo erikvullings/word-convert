@@ -158,8 +158,10 @@ format changes. Original source documents and their images are never modified.
 
 Use `--cover <path>` to add a local JPEG, PNG, WebP, or SVG image as an EPUB
 cover. Raster files are checked against their signatures and pixel limits; SVG
-is sanitized before embedding. Cover files are limited to 10 MiB. This makes an
-image-only cover without changing the document body:
+is sanitized before use. Cover files are limited to 10 MiB, and the CLI
+rasterizes the composed cover as PNG for downstream EPUB reading systems. The
+semantic XHTML title page remains separate. This makes an image-only cover
+without changing the document body:
 
 ```sh
 wordconvert book.pdf --cover downloaded-cover.jpg -o book.epub
@@ -483,10 +485,11 @@ read locally and its path is never written to the EPUB.
 
 Choose a cover with `--cover-policy source|generated|file|none`. `source` uses
 only a high-confidence extracted PDF cover candidate; if none is available, the
-cover is omitted with a warning. `generated` creates the deterministic
-typographic cover. `file` requires `--cover <path>` and applies the existing
-bounded local-image and signature checks. Supplying `--cover` without a policy
-continues to select `file`. `--no-default-epub-cover` is equivalent to policy
+cover is omitted with a warning; selected source covers are rasterized as PNG.
+`generated` creates the deterministic typographic cover as PNG. `file` requires
+`--cover <path>`, applies the existing bounded local-image and signature checks,
+and rasterizes it as PNG. Supplying `--cover` without a policy continues to
+select `file`. `--no-default-epub-cover` is equivalent to policy
 `none`; it removes the cover image and cover-page spine entry but never the
 semantic title page. The older `--frontpage-cover` path remains available.
 

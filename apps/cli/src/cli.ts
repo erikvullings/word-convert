@@ -131,7 +131,7 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --strict-isbn            Reject ISBNs with an invalid checksum
       --metadata <path>        Bounded v1 JSON sidecar; CLI > sidecar > reader > defaults
       --cover <path>           Bounded JPEG/PNG/WebP or sanitized SVG cover;
-                               keeps cover-image declaration and semantic title page
+                               rasterized as PNG; keeps semantic title page
       --cover-policy <policy>  source, generated, file, or none; default file with --cover
       --no-default-epub-cover  Omit cover image and spine entry, keep title page
       --preserve-cover-aspect-ratio  Letterbox cover images instead of cropping
@@ -1889,6 +1889,12 @@ async function render(
               images.runtimeDir,
             )
           : undefined;
+      const coverRasterizer =
+        images.coverPolicy !== 'none'
+          ? (await import('./native-runtime.ts')).createCoverRasterizer(
+              images.runtimeDir,
+            )
+          : undefined;
       if (
         (images.maxImageSize > 0 || images.maxImageDimensions) &&
         !imageResizer
@@ -1920,6 +1926,7 @@ async function render(
         onWarning,
         ...(images.cover ? { cover: images.cover } : {}),
         ...(images.coverPng ? { coverPng: images.coverPng } : {}),
+        ...(coverRasterizer ? { coverRasterizer } : {}),
         ...(imageResizer ? { imageResizer } : {}),
       });
     }
