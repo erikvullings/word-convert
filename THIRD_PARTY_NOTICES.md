@@ -15,8 +15,9 @@ workspace readers/writers. EPUB shrinking bundles `@xmldom/xmldom` 0.9.12
 `image-size` 2.1.0 (MIT, copyright 2013-present Aditya Yadav).
 Their installed `LICENSE` files were reviewed and copied to
 `LICENSES/xmldom.txt` and `LICENSES/image-size.txt`.
-Static EPUB reference rewriting reuses css-tree (terms in the browser-runtime
-table below) and bundles srcset 5.0.3 (MIT, copyright Sindre Sorhus); its installed
+EPUB output CSS validation and static EPUB reference rewriting reuse css-tree
+(terms in the browser-runtime table below), and static EPUB rewriting bundles
+srcset 5.0.3 (MIT, copyright Sindre Sorhus); its installed
 `license` was reviewed and copied to `LICENSES/srcset.txt`.
 Text conversion also reuses Marked (18.0.11,
 licence terms below) and bundles parse5 8.0.1 (MIT, Ivan Nikulin) with entities
