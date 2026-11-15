@@ -37,6 +37,8 @@ export interface CliPdfOptions extends ConversionOptions {
   listFurniture?: boolean;
   unwrapFactor?: number;
   dehyphenate?: boolean;
+  headerPattern?: string;
+  footerPattern?: string;
   chapterDetection?: ChapterDetectionOptions;
   chapterSplitLevel?: ChapterHeadingLevel;
   toc?: PdfTocOptions;
@@ -148,6 +150,12 @@ export async function readPdf(
       ...(options.dehyphenate !== undefined
         ? { dehyphenate: options.dehyphenate }
         : {}),
+      ...(options.headerPattern !== undefined
+        ? { headerPattern: options.headerPattern }
+        : {}),
+      ...(options.footerPattern !== undefined
+        ? { footerPattern: options.footerPattern }
+        : {}),
       ...(options.chapterDetection
         ? { chapterDetection: options.chapterDetection }
         : {}),
@@ -197,6 +205,12 @@ export async function readPdf(
         : {}),
       ...(options.dehyphenate !== undefined
         ? { dehyphenate: options.dehyphenate }
+        : {}),
+      ...(options.headerPattern !== undefined
+        ? { headerPattern: options.headerPattern }
+        : {}),
+      ...(options.footerPattern !== undefined
+        ? { footerPattern: options.footerPattern }
         : {}),
       ...(options.chapterDetection
         ? { chapterDetection: options.chapterDetection }

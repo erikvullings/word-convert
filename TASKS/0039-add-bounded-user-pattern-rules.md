@@ -1,6 +1,6 @@
 # 0039 Add bounded user pattern rules for furniture and text cleanup
 
-Status: open
+Status: done
 Priority: medium
 Owner: unassigned
 Agent: pi

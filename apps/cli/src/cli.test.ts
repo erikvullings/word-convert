@@ -183,6 +183,9 @@ describe('CLI arguments and output', () => {
       '--remove-furniture',
     );
     expect((await invoke(['--help'])).output[0]).toContain('--list-furniture');
+    expect((await invoke(['--help'])).output[0]).toContain('--search-replace');
+    expect((await invoke(['--help'])).output[0]).toContain('--header-regex');
+    expect((await invoke(['--help'])).output[0]).toContain('--footer-regex');
     expect((await invoke(['--help'])).output[0]).toContain('--no-images');
     expect((await invoke(['--help'])).output[0]).toContain('--debug-pipeline');
     expect((await invoke(['--help'])).output[0]).toContain(
@@ -219,6 +222,45 @@ describe('CLI arguments and output', () => {
     const html = await readFile(output, 'utf8');
     expect(html).toContain('“hello”… fi');
     expect(html).toContain('· · ·');
+  });
+
+  it('applies UTF-8 search/replace rules to semantic input in file order', async () => {
+    const directoryPath = await directory();
+    const input = join(directoryPath, 'rules.md');
+    const rules = join(directoryPath, 'rules.txt');
+    const output = join(directoryPath, 'rules.html');
+    await writeFile(input, 'before needle', 'utf8');
+    await writeFile(rules, '# ordered pairs\nneedle\nmiddle\nmiddle\nafter\n');
+
+    const result = await invoke([
+      input,
+      '--search-replace',
+      rules,
+      '--format',
+      'html',
+      '--output',
+      output,
+      ...fixedDate,
+    ]);
+
+    expect(result.code).toBe(0);
+    expect(await readFile(output, 'utf8')).toContain('before after');
+  });
+
+  it('rejects over-budget rules before parsing a PDF input', async () => {
+    const directoryPath = await directory();
+    const input = join(directoryPath, 'invalid.pdf');
+    const rules = join(directoryPath, 'oversized-rules.txt');
+    await writeFile(input, 'not a pdf');
+    await writeFile(rules, 'x\n'.repeat(16_385), 'utf8');
+
+    const result = await invoke([input, '--search-replace', rules]);
+
+    expect(result.code).toBe(2);
+    expect(result.errors).toContain(
+      'Search/replace rules file exceeds 32768 bytes.',
+    );
+    expect(result.errors).not.toContain('Invalid PDF');
   });
 
   it('passes PDF TOC source and visible contents options through to EPUB output', async () => {
@@ -641,14 +683,16 @@ describe('CLI arguments and output', () => {
       .map((row) => row.split('\t'));
     expect(rows.length).toBeGreaterThan(0);
     expect(rows[0]?.[0]).toMatch(/^pdf-furniture-/);
-    expect(rows[0]?.[5]).toBeTruthy();
+    expect(rows[0]?.[7]).toBeTruthy();
     expect(rows[0]?.slice(1, 5)).toEqual([
-      expect.any(String),
+      'automatic',
+      'header',
       expect.stringMatching(/^(?:odd|even)$/),
       expect.stringMatching(/^(?:low|medium|high)$/),
-      expect.stringMatching(/^\d+\/\d+ \[/),
     ]);
-    const automaticallyRemoved = rows.find((row) => row[6] === 'yes');
+    expect(rows[0]?.[5]).toMatch(/^\d+%$/);
+    expect(rows[0]?.[6]).toMatch(/^\d+\/\d+ \[/);
+    const automaticallyRemoved = rows.find((row) => row[8] === 'yes');
     if (!automaticallyRemoved?.[0])
       throw new Error('Expected an automatically removed candidate.');
     const output = await directory();

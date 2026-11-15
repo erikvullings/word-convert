@@ -315,6 +315,7 @@ describe('App', () => {
           normalizedText: 'chapter one',
           pageParity: 'odd',
           pageNumbers: [1, 3, 5],
+          pageCoverage: 0.5,
           confidence: 'high',
           removed: true,
         },

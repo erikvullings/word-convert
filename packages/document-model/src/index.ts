@@ -1,3 +1,5 @@
+import type { TextReplacementRule } from './normalization/pattern-rules.ts';
+
 export const DOCUMENT_MODEL_SCHEMA = 'wordconvert.document' as const;
 export const DOCUMENT_MODEL_VERSION = 1 as const;
 
@@ -33,6 +35,21 @@ export {
   normalizeDocumentBlocks,
   normalizeDocumentText,
 } from './normalization/text.ts';
+export {
+  MAX_TEXT_PATTERN_CANDIDATE_LINES,
+  MAX_TEXT_PATTERN_FILE_BYTES,
+  MAX_TEXT_PATTERN_LENGTH,
+  MAX_TEXT_PATTERN_LINE_LENGTH,
+  MAX_TEXT_PATTERN_MATCHES,
+  MAX_TEXT_PATTERN_RULES,
+  MAX_TEXT_PATTERN_WORK_MS,
+  MAX_TEXT_REPLACEMENT_LENGTH,
+  PatternRulesFileError,
+  compileTextReplacementRule,
+  parseTextPatternRules,
+  type CompiledTextReplacementRule,
+  type TextReplacementRule,
+} from './normalization/pattern-rules.ts';
 
 export type Confidence = 'low' | 'medium' | 'high' | 'certain';
 
@@ -392,6 +409,7 @@ export interface TextNormalizationOptions {
   unsmartenPunctuation?: boolean;
   sceneBreakMarker?: SceneBreakMarker;
   language?: string;
+  textRules?: readonly TextReplacementRule[];
 }
 
 export interface TextNormalizationSummary {
@@ -400,6 +418,11 @@ export interface TextNormalizationSummary {
   ligatures: number;
   punctuationSmartened: number;
   punctuationUnsmartened: number;
+  patternMatches: number;
+  patternRulesRejected: number;
+  patternRejectedRuleIds: string;
+  patternWorkLimitExceeded: boolean;
+  emptyBlocksRemoved: number;
   budgetExceeded: boolean;
 }
 

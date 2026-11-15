@@ -22,6 +22,8 @@ This document is the release checklist for security, privacy, performance, and b
 | Excessive PDF input | `maxInputBytes: 50 MiB`, `maxPages: 2,000`, `maxTextItems: 2,000,000`, and `maxTextItemsPerPage: 100,000` | PDF reader corpus and configurable-limit tests |
 | PDF text normalization | Dehyphenation is opt-in and builds document-wide evidence for at most 250,000 words; over-budget documents preserve ambiguous hyphens and report the limit | PDF text-normalization tests cover evidence, URL/link/code preservation, and deterministic limit handling |
 | Semantic text normalization | At most 5,000,000 text characters and 500,000 semantic nodes; ligature decoding is default-on, punctuation smartening opt-in, code and code blocks skipped, link destinations/equation sources/assets untouched, and over-budget text preserved with a warning | `document-model/src/normalization/text.test.ts` covers scene breaks, blank-paragraph confidence, ligatures, punctuation traps, language, identity, idempotence, and budget handling |
+| User text patterns | UTF-8 rules files: 32 KiB, 20 pairs, 256-character search patterns, 1,024-character replacements; each input line at most 2,048 characters, 50,000 candidate lines, 10,000 matches, and 1,000 ms per document; `gu` flags only, no backreferences/lookarounds/word-boundary assertions/quantified groups/stacked or multiple variable quantifiers, empty matches, or bounds above 1,000; literal replacement and URL/code/TeX/asset protection | Rules parser and shared normalization tests cover ordering, empty replacements, limits, hostile nested quantifiers, URL/code/equation preservation, empty-block pruning; CLI verifies over-budget rejection before PDF parsing |
+| PDF user furniture patterns | Header/footer expressions see only each page's first/last non-empty text line, at most two candidate lines per page; candidates group by rule/parity and require at least two pages plus high confidence for automatic removal | `pdf-reader/src/index.test.ts` covers first/last-line candidates, page coverage/confidence, and a one-page match retained for review |
 | Excessive PDF raster images | `maxImagePixels: 40,000,000` per image, `maxImages: 10,000`, and `maxTotalImagePixels: 80,000,000` across placements | PDF reader configurable per-image and aggregate-limit tests |
 | Dense or slow PDF pages | Pages with at least `denseVectorPathsPerPage: 2,500` path operations use the user's dense-page choice; each page stage has a `pageTimeoutMs: 60,000` deadline, then falls back to a whole-page image with its text, then to text only, and finally to a recoverable `resource-limit` error. Page images are charged to the existing image budgets; abandoned attempts cannot charge them | PDF reader dense-page and deadline tests; worker question, answer, and cancellation tests |
 | PDF vector figure rendering | Detect connected path regions, render only bounded regions to passive PNG, and charge them to the existing image-count and pixel budgets | PDF reader figure-region and aggregate-limit tests; browser conversion check |
@@ -85,6 +87,15 @@ Content selection recognizes enclosing main/ARIA landmarks and conventional
 `main`/`content` IDs before individual article cards. This preserves sibling
 publisher sections and main content nested inside server form wrappers; form
 controls and active markup remain omitted.
+
+The CLI search/replace file is independently fatal-decoded UTF-8 and bounded
+before any source document or PDF page is parsed. Pattern syntax is structurally
+screened before JavaScript `RegExp` construction, and matching uses line-sized
+inputs with explicit candidate, match, line-length, cancellation, and wall-clock
+budgets. Rejected expressions produce rule-ID warnings; hitting an execution
+budget preserves the unfinished text. CLI diagnostics report only the number
+of general rules, not their expressions. Patterns are never persisted by the
+SPA.
 
 CLI `--include-external-images` explicitly enables image downloads for local
 Markdown/HTML input. Only HTTPS on port 443 without URL credentials is allowed.

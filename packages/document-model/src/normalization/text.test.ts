@@ -6,6 +6,7 @@ import {
   normalizeDocumentText,
   type BlockNode,
   type DocumentModel,
+  type TextReplacementRule,
 } from '../index.ts';
 
 function model(blocks: BlockNode[], language = 'en'): DocumentModel {
@@ -57,6 +58,184 @@ describe('shared text normalization', () => {
         isSceneBreakOrnament,
       ),
     ).toBe(false);
+  });
+
+  it('applies ordered text rules without rewriting URLs, code, or TeX sources', async () => {
+    const rules: TextReplacementRule[] = [
+      { id: 'first', search: 'needle', replace: 'middle' },
+      { id: 'second', search: 'middle', replace: 'done' },
+    ];
+    const source = model([
+      paragraph('needle https://example.test/needle'),
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'needle', marks: [{ type: 'code' }] }],
+      },
+      { type: 'codeBlock', text: 'needle' },
+      {
+        type: 'paragraph',
+        children: [
+          {
+            type: 'link',
+            href: 'https://example.test/needle',
+            children: [{ type: 'text', text: 'needle' }],
+          },
+          { type: 'equation', equationId: 'eq-1' },
+        ],
+      },
+    ]);
+    source.equations['eq-1'] = {
+      id: 'eq-1',
+      source: { format: 'tex', value: '\\text{needle}' },
+      conversionComplete: true,
+    };
+
+    await normalizeDocumentText(source, { textRules: rules });
+
+    expect(source.blocks).toMatchObject([
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'done https://example.test/needle' }],
+      },
+      {
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'needle', marks: [{ type: 'code' }] }],
+      },
+      { type: 'codeBlock', text: 'needle' },
+      {
+        type: 'paragraph',
+        children: [
+          {
+            type: 'link',
+            href: 'https://example.test/needle',
+            children: [{ type: 'text', text: 'done' }],
+          },
+          { type: 'equation', equationId: 'eq-1' },
+        ],
+      },
+    ]);
+    expect(source.equations['eq-1']?.source.value).toBe('\\text{needle}');
+  });
+
+  it('drops rule-emptied paragraphs, list items, and table cells and counts them', async () => {
+    const source = model([
+      paragraph('remove'),
+      {
+        type: 'list',
+        ordered: false,
+        items: [
+          { blocks: [paragraph('remove')] },
+          { blocks: [paragraph('keep')] },
+        ],
+      },
+      {
+        type: 'table',
+        rows: [
+          {
+            cells: [
+              { blocks: [paragraph('remove')] },
+              { blocks: [paragraph('keep')] },
+            ],
+          },
+        ],
+      },
+    ]);
+    const summary = await normalizeDocumentText(source, {
+      textRules: [{ id: 'remove', search: 'remove', replace: '' }],
+    });
+
+    expect(source.blocks).toMatchObject([
+      {
+        type: 'list',
+        items: [{ blocks: [{ type: 'paragraph' }] }],
+      },
+      {
+        type: 'table',
+        rows: [
+          {
+            cells: [{ blocks: [{ type: 'paragraph' }] }],
+          },
+        ],
+      },
+    ]);
+    expect(summary.emptyBlocksRemoved).toBeGreaterThanOrEqual(3);
+  });
+
+  it('rejects catastrophic nested quantifiers and names the rejected rule', async () => {
+    const source = model([paragraph('a'.repeat(2_000) + '!')]);
+
+    const summary = await normalizeDocumentText(source, {
+      textRules: [{ id: 'hostile-rule', search: '(?:a+)+$', replace: 'bad' }],
+    });
+
+    expect(source.blocks).toEqual([paragraph('a'.repeat(2_000) + '!')]);
+    expect(summary.patternRulesRejected).toBe(1);
+    expect(summary.patternRejectedRuleIds).toBe('hostile-rule');
+    expect(source.warnings.at(-1)).toMatchObject({
+      severity: 'warning',
+      details: { patternRejectedRuleIds: 'hostile-rule' },
+    });
+  });
+
+  it('does not partially apply a typed rule set above the hard pair limit', async () => {
+    const source = model([paragraph('needle')]);
+    const textRules: TextReplacementRule[] = Array.from(
+      { length: 21 },
+      (_, index) => ({
+        id: `rule-${index + 1}`,
+        search: index === 0 ? 'needle' : `rule-${index}`,
+        replace: 'changed',
+      }),
+    );
+
+    const summary = await normalizeDocumentText(source, { textRules });
+
+    expect(source.blocks).toEqual([paragraph('needle')]);
+    expect(summary.patternRulesRejected).toBe(21);
+    expect(summary.patternRejectedRuleIds).toBe('rule-21');
+  });
+
+  it('stops at the match budget and preserves the unfinished line', async () => {
+    const source = model(
+      Array.from({ length: 6 }, () => paragraph('a'.repeat(2_048))),
+    );
+
+    const summary = await normalizeDocumentText(source, {
+      textRules: [{ id: 'many-matches', search: 'a', replace: '' }],
+    });
+
+    expect(source.blocks).toEqual([
+      paragraph('a'.repeat(2_048)),
+      paragraph('a'.repeat(2_048)),
+    ]);
+    expect(summary.patternMatches).toBe(8_192);
+    expect(summary.patternWorkLimitExceeded).toBe(true);
+    expect(summary.patternRejectedRuleIds).toBe('many-matches');
+    expect(source.warnings.at(-1)).toMatchObject({
+      severity: 'warning',
+      details: { patternWorkLimitExceeded: true },
+    });
+  });
+
+  it('checks cancellation while applying rules across text nodes', async () => {
+    const source = model([
+      paragraph('before'),
+      paragraph('before'),
+      paragraph('before'),
+    ]);
+    let checkpoints = 0;
+
+    await expect(
+      normalizeDocumentText(
+        source,
+        { textRules: [{ id: 'replace', search: 'before', replace: 'after' }] },
+        async () => {
+          if (++checkpoints === 4) throw new Error('cancelled');
+        },
+      ),
+    ).rejects.toThrow('cancelled');
+    expect(source.blocks[0]).toEqual(paragraph('after'));
+    expect(source.blocks[1]).toEqual(paragraph('before'));
   });
 
   it('leaves uncentered ornaments and isolated blanks alone', async () => {

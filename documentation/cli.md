@@ -280,6 +280,23 @@ IDs are rejected. A candidate cannot be both kept and removed; explicit remove
 and `--no-remove-furniture` are conflicting options. `--no-remove-furniture`
 retains high-confidence automatic candidates and reports how many it retained.
 
+User patterns can nominate only the first or last non-empty text line on each
+PDF page:
+
+```sh
+wordconvert book.pdf --header-regex '^Journal of Example$' --list-furniture
+wordconvert book.pdf --footer-regex '^Copyright .+$' -o cleaned.epub
+```
+
+These are reviewable `header`/`footer` candidates grouped by rule and odd/even
+page parity. Coverage and confidence are calculated with the same parity-aware
+rules as automatic furniture detection. Only high-confidence candidates seen on
+at least two pages are removed automatically; one-off or lower-confidence
+matches remain. Use the listed candidate ID with `--remove-furniture` or
+`--keep-furniture` to override the automatic decision. Patterns run on page
+lines before the automatic classification, but do not bypass its confidence
+gate. The patterns are PDF-only.
+
 `--crop-top` and `--crop-bottom` take fractions from 0 to 1 of each rotated
 page. Their sum must be less than 0.9 so at least 10% remains. Cropping is a
 reader operation and works with `--no-layout`; it changes no defaults when
@@ -630,6 +647,38 @@ Transform counts and the bounded-work result are included in a deterministic
 `text-normalization-summary` warning. The pass is limited to 5,000,000 text
 characters and 500,000 semantic nodes per document; code, code blocks, link
 destinations, equations, and asset bytes are not rewritten.
+
+Use `--search-replace <file>` for ordered document-wide inline text cleanup:
+
+```text
+# comments start with # (leading spaces are allowed)
+old term
+new term
+^running footer$
+
+```
+
+The file is UTF-8 with alternating search and replacement lines; the blank
+replacement above deletes matching text. A final line terminator is ignored,
+but other blank lines are records. Search patterns are case-sensitive Unicode
+regular expressions using `gu` (global, Unicode) flags, applied in file order
+to each text line. Matches cannot span lines, and original URL text, link
+destinations, code spans/blocks, TeX/equation sources, and asset data are
+preserved. Replacements are literal plain text: `$1`, HTML, and other markup
+are not expanded or interpreted.
+
+The file is limited to 32 KiB and 20 pairs; each search is limited to 256
+characters and each replacement to 1,024. Empty searches are invalid. Regexes
+with backreferences, lookarounds, word-boundary assertions, quantified groups,
+stacked quantifiers,
+multiple variable quantifiers, empty-string matches, or quantifier bounds over
+1,000 are rejected with a warning naming the stable rule ID. Invalid syntax is
+also skipped with a warning. A conversion-wide pattern budget caps each input
+line at 2,048 characters, total candidate lines at 50,000, total matches at
+10,000, and pattern work at 1,000 ms; work checks cooperate with cancellation.
+When a limit is reached, remaining text is preserved and a warning identifies
+the rule. Empty paragraphs and structures emptied by a rule are dropped and
+counted, including emptied list items and table cells.
 
 ### PDF tables
 

@@ -1546,6 +1546,101 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
     expect(text.match(/Chapter One/g)).toHaveLength(1);
   });
 
+  it('reports bounded header and footer patterns as confidence-gated candidates', async () => {
+    const seasons = ['Winter', 'Spring', 'Summer', 'Autumn'];
+    const pages = Array.from({ length: 4 }, (_, index) => {
+      const number = index + 1;
+      return {
+        number,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        spans: [
+          span(`Journal ${seasons[index]} issue`, 0.08, 0.03),
+          span(`Body page ${number}`, 0.08, 0.25),
+          span(`Back matter ${String.fromCharCode(65 + index)}`, 0.08, 0.96),
+        ],
+        links: [],
+        images: [],
+      };
+    });
+
+    const result = await analysePdf(rawDocument(pages), {
+      conversionDate: '2026-08-29',
+      headerPattern: '^Journal .+ issue$',
+      footerPattern: '^Back matter .+$',
+    });
+    const text = JSON.stringify(result.model.blocks);
+
+    expect(text).not.toMatch(/Journal issue|Back matter/u);
+    expect(result.analysis.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: 'pdf-header-pattern',
+          kind: 'header',
+          pageParity: 'odd',
+          pageNumbers: [1, 3],
+          pageCoverage: 1,
+          confidence: 'high',
+          removed: true,
+        }),
+        expect.objectContaining({
+          ruleId: 'pdf-footer-pattern',
+          kind: 'footer',
+          pageParity: 'even',
+          pageNumbers: [2, 4],
+          pageCoverage: 1,
+          confidence: 'high',
+          removed: true,
+        }),
+      ]),
+    );
+    expect(
+      result.analysis.candidates.filter(
+        ({ id }) => !id.startsWith('pdf-pattern-'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('keeps a one-page furniture-pattern match for review', async () => {
+    const pages = Array.from({ length: 4 }, (_, index) => {
+      const number = index + 1;
+      return {
+        number,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        spans: [
+          span(
+            number === 1 ? 'One-off title' : `Other title ${number}`,
+            0.08,
+            0.03,
+          ),
+          span(`Body page ${number}`, 0.08, 0.25),
+        ],
+        links: [],
+        images: [],
+      };
+    });
+
+    const result = await analysePdf(rawDocument(pages), {
+      conversionDate: '2026-08-29',
+      headerPattern: '^One-off title$',
+    });
+
+    expect(result.analysis.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: 'pdf-header-pattern',
+          pageNumbers: [1],
+          confidence: 'low',
+          removed: false,
+        }),
+      ]),
+    );
+    expect(JSON.stringify(result.model.blocks)).toContain('One-off title');
+  });
+
   describe('PDF.js reader', () => {
     it('promotes repeated unstyled chapter openers with confident provenance', async () => {
       const result = await pdfJsReader.read(

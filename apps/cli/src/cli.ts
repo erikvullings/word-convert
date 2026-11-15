@@ -14,6 +14,9 @@ import {
   DEFAULT_CHAPTER_DETECTION,
   importStylePreset,
   isConversionError,
+  parseTextPatternRules,
+  PatternRulesFileError,
+  MAX_TEXT_PATTERN_FILE_BYTES,
   validateChapterDetection,
   type ChapterDetectionMode,
   type ChapterDetectionOptions,
@@ -117,6 +120,8 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --crop-top <0..1>       Omit text above this fraction of each PDF page
       --crop-bottom <0..1>    Omit text below this fraction of each PDF page
       --no-remove-furniture   Retain detected repeated headers, footers, and page numbers
+      --header-regex <pattern> Match only each PDF page's first text line as furniture
+      --footer-regex <pattern> Match only each PDF page's last text line as furniture
       --remove-furniture <id> Remove a detected furniture candidate (repeatable)
       --keep-furniture <id>   Retain a detected furniture candidate (repeatable)
       --list-furniture        List detected PDF furniture candidates and exit
@@ -133,6 +138,7 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --keep-ligatures         Preserve ﬁ-style ligature characters; default normalizes
       --smarten-punctuation    Convert unambiguous quotes, dashes, and ellipses
       --unsmarten-punctuation  Convert typographic quotes, dashes, and ellipses to ASCII
+      --search-replace <file> Apply bounded UTF-8 regex/replacement line pairs
       --replace-scene-breaks <marker> Use asterisks, dots, floral, or em-dash instead of rules
       --formula-ocr           Enable TexTeller OCR, downloading missing models once
       --formula-model-dir <dir> Enable TexTeller (encoder.onnx, decoder.onnx,
@@ -484,7 +490,9 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         values['crop-bottom'] !== undefined ||
         values['list-furniture'] ||
         values['unwrap-factor'] !== undefined ||
-        values.dehyphenate !== undefined)
+        values.dehyphenate !== undefined ||
+        values['header-regex'] !== undefined ||
+        values['footer-regex'] !== undefined)
     )
       throw new UsageError(
         'PDF rendering, analysis, and extraction options require PDF input.',
@@ -522,6 +530,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       await protectSource(input, output);
       if (presetPath) await protectSource(presetPath, output);
       if (values.cover) await protectSource(values.cover, output);
+      if (values['search-replace'])
+        await protectSource(values['search-replace'], output);
       if (values['layout-model'])
         await protectSource(values['layout-model'], output);
       if (values['formula-model-dir'])
@@ -536,6 +546,37 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       if (!preset.ok || !preset.mappings)
         throw new UsageError(preset.error ?? 'Invalid style preset.');
       stylePreset = preset.mappings;
+    }
+    if (values['search-replace']) {
+      try {
+        let rulesBytes: Uint8Array;
+        try {
+          rulesBytes = await readBounded(
+            values['search-replace'],
+            MAX_TEXT_PATTERN_FILE_BYTES,
+          );
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.message.startsWith('File exceeds the ')
+          )
+            throw new UsageError(
+              `Search/replace rules file exceeds ${MAX_TEXT_PATTERN_FILE_BYTES} bytes.`,
+            );
+          throw error;
+        }
+        textNormalization.textRules = parseTextPatternRules(
+          new TextDecoder('utf-8', { fatal: true }).decode(rulesBytes),
+        );
+      } catch (error) {
+        if (error instanceof PatternRulesFileError)
+          throw new UsageError(error.message);
+        if (error instanceof TypeError)
+          throw new UsageError(
+            'Search/replace rules file must be valid UTF-8.',
+          );
+        throw error;
+      }
     }
     const verbose = Math.max(
       requestedVerbose,
@@ -595,7 +636,18 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
             : null,
         unwrapFactor: extension === '.pdf' ? (unwrapFactor ?? 0.45) : null,
         dehyphenate: extension === '.pdf' ? (dehyphenate ?? false) : null,
-        textNormalization,
+        textNormalization: {
+          sceneBreaks,
+          blankParagraphs,
+          ligatures: !(values['keep-ligatures'] ?? false),
+          smartenPunctuation: values['smarten-punctuation'] ?? false,
+          unsmartenPunctuation: values['unsmarten-punctuation'] ?? false,
+          ...(sceneBreakMarker ? { sceneBreakMarker } : {}),
+          ...(values.language ? { language: values.language } : {}),
+        },
+        searchReplaceRuleCount: textNormalization.textRules?.length ?? 0,
+        headerPattern: Boolean(values['header-regex']),
+        footerPattern: Boolean(values['footer-regex']),
         chapterDetection: extension === '.pdf' ? chapterDetection : null,
         chapterMark,
         chapterSplitLevel,
@@ -790,6 +842,12 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         ...(pdfTables ? { pdfTables } : {}),
         ...(unwrapFactor !== undefined ? { unwrapFactor } : {}),
         ...(dehyphenate !== undefined ? { dehyphenate } : {}),
+        ...(values['header-regex'] !== undefined
+          ? { headerPattern: values['header-regex'] }
+          : {}),
+        ...(values['footer-regex'] !== undefined
+          ? { footerPattern: values['footer-regex'] }
+          : {}),
         chapterDetection,
         chapterSplitLevel,
         toc: {
@@ -941,6 +999,9 @@ function parseArguments(argv: string[]) {
         'no-images': { type: 'boolean' },
         'unwrap-factor': { type: 'string' },
         dehyphenate: { type: 'string' },
+        'search-replace': { type: 'string' },
+        'header-regex': { type: 'string' },
+        'footer-regex': { type: 'string' },
         'scene-breaks': { type: 'string' },
         'blank-paragraphs': { type: 'string' },
         'keep-ligatures': { type: 'boolean' },
@@ -1129,13 +1190,15 @@ function formatFurnitureCandidates(analysis: PdfAnalysisSummary): string {
   if (analysis.candidates.length === 0)
     return 'No PDF furniture candidates detected.\n';
   const rows = [
-    'id\tkind\tparity\tconfidence\tpage coverage\tnormalized text\tremoved',
+    'id\trule\tkind\tparity\tconfidence\tparity coverage\tpages\tnormalized text\tremoved',
     ...analysis.candidates.map((candidate) =>
       [
         candidate.id,
+        candidate.ruleId ?? 'automatic',
         candidate.kind,
         candidate.pageParity,
         candidate.confidence,
+        `${(candidate.pageCoverage * 100).toFixed(0)}%`,
         `${candidate.pageNumbers.length}/${analysis.pageCount} [${candidate.pageNumbers.join(',')}]`,
         candidate.normalizedText,
         candidate.removed ? 'yes' : 'no',

@@ -92,6 +92,13 @@ blank-paragraph cleanup, and ligature retention are configurable. These
 transforms preserve code, URLs, equations, and assets and report deterministic
 counts. See [the CLI guide](documentation/cli.md#text-normalization).
 
+For exceptional source cleanup, `--search-replace <file>` applies bounded,
+ordered UTF-8 regex/replacement pairs to inline text. PDF-only
+`--header-regex` and `--footer-regex` create reviewable furniture candidates;
+only repeated high-confidence matches are removed automatically. See the
+[pattern-rule limits and file format](documentation/cli.md#text-normalization)
+and [PDF furniture options](documentation/cli.md#pdf-page-numbers-running-headers-and-footers).
+
 PDF chapter detection defaults to `automatic`: repeated, short, spaced body-style
 openers matching chapter/book/section/prologue/epilogue/part are promoted to
 headings only when paragraph segmentation is trustworthy. Explicit style mappings

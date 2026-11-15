@@ -4,8 +4,13 @@ import {
   DEFAULT_CHAPTER_DETECTION,
   createSceneBreakBlock,
   createTextNormalizationWarning,
+  compileTextReplacementRule,
   isSceneBreakOrnament,
   mergeHeadingRuns,
+  MAX_TEXT_PATTERN_CANDIDATE_LINES,
+  MAX_TEXT_PATTERN_LINE_LENGTH,
+  MAX_TEXT_PATTERN_MATCHES,
+  MAX_TEXT_PATTERN_WORK_MS,
   normalizeDocumentBlocks,
   validateChapterDetection,
   type AnalysedStyle,
@@ -247,6 +252,8 @@ export interface PdfAnalysisOptions extends ConversionOptions {
   pdfTables?: PdfTableOptions;
   crop?: Partial<PdfCropOptions>;
   removeDetectedFurniture?: boolean;
+  headerPattern?: string;
+  footerPattern?: string;
   removedCandidateIds?: readonly string[];
   retainedCandidateIds?: readonly string[];
   styleMappings?: Readonly<Record<string, StyleMapping>>;
@@ -266,8 +273,10 @@ export interface PdfFurnitureCandidate {
   normalizedText: string;
   pageParity: 'odd' | 'even';
   pageNumbers: number[];
+  pageCoverage: number;
   confidence: 'low' | 'medium' | 'high';
   removed: boolean;
+  ruleId?: string;
 }
 
 /** A table the reader turned into a `TableNode`, reported for review. */
@@ -633,7 +642,8 @@ export async function analysePdf(
     total: analysisSteps,
     message: 'Detecting repeated page content.',
   });
-  const candidates = await detectFurniture(raw, linesByPage, options);
+  const furniture = await detectFurniture(raw, linesByPage, options);
+  const candidates = furniture.candidates;
   const removedCandidateIds = new Set(
     candidates.filter(({ removed }) => removed).map(({ id }) => id),
   );
@@ -643,6 +653,8 @@ export async function analysePdf(
     removedCandidateIds,
     options,
   );
+  for (const spanId of furniture.patternRemovedSpanIds)
+    candidateBySpan.add(spanId);
   options.onProgress?.({
     phase: 'analyse',
     completed: raw.pages.length + 1,
@@ -650,7 +662,7 @@ export async function analysePdf(
     message: 'Applying PDF cleanup choices.',
   });
   const croppedSpanIds = new Set<string>();
-  const warnings: ConversionWarning[] = [];
+  const warnings: ConversionWarning[] = [...furniture.warnings];
   const scannedPages: number[] = [];
   const noisyOcrPages: number[] = [];
   const retainedPages: RawPdfPage[] = [];
@@ -4219,12 +4231,17 @@ function taggedRoles(
   return roles;
 }
 
+interface DetectedFurniture {
+  candidates: PdfFurnitureCandidate[];
+  patternRemovedSpanIds: Set<string>;
+  warnings: ConversionWarning[];
+}
+
 async function detectFurniture(
   raw: RawPdfDocument,
   linesByPage: ReadonlyMap<number, readonly PdfLine[]>,
   options: PdfAnalysisOptions,
-): Promise<PdfFurnitureCandidate[]> {
-  if (raw.pageCount < 4) return [];
+): Promise<DetectedFurniture> {
   const groups = new Map<
     string,
     {
@@ -4234,27 +4251,29 @@ async function detectFurniture(
       pages: number[];
     }
   >();
-  for (const page of raw.pages) {
-    await analysisCheckpoint(options);
-    for (const line of linesByPage.get(page.number) ?? []) {
-      const kind = furnitureKind(line);
-      if (!kind || !line.text.trim()) continue;
-      const normalized = normalizeFurniture(line.text);
-      const key = furnitureKey(line, page.number, kind);
-      const group = groups.get(key) ?? {
-        normalized,
-        kind,
-        lines: [],
-        pages: [],
-      };
-      group.lines.push(line);
-      group.pages.push(page.number);
-      groups.set(key, group);
+  if (raw.pageCount >= 4) {
+    for (const page of raw.pages) {
+      await analysisCheckpoint(options);
+      for (const line of linesByPage.get(page.number) ?? []) {
+        const kind = furnitureKind(line);
+        if (!kind || !line.text.trim()) continue;
+        const normalized = normalizeFurniture(line.text);
+        const key = furnitureKey(line, page.number, kind);
+        const group = groups.get(key) ?? {
+          normalized,
+          kind,
+          lines: [],
+          pages: [],
+        };
+        group.lines.push(line);
+        group.pages.push(page.number);
+        groups.set(key, group);
+      }
     }
   }
   const explicitlyRemoved = new Set(options.removedCandidateIds ?? []);
   const explicitlyRetained = new Set(options.retainedCandidateIds ?? []);
-  return [...groups.entries()]
+  const candidates = [...groups.entries()]
     .filter(([, group]) => new Set(group.pages).size >= 2)
     .map(([key, group]) => {
       const parity: PdfFurnitureCandidate['pageParity'] =
@@ -4280,11 +4299,183 @@ async function detectFurniture(
         pageNumbers: [...new Set(group.pages)].sort(
           (left, right) => left - right,
         ),
+        pageCoverage: ratio,
         confidence,
         removed,
       };
-    })
-    .sort((left, right) => left.id.localeCompare(right.id));
+    });
+  const warnings: ConversionWarning[] = [];
+  const patternRemovedSpanIds = new Set<string>();
+  const configuredPatterns = [
+    ...(options.headerPattern !== undefined
+      ? [
+          {
+            id: 'pdf-header-pattern',
+            kind: 'header' as const,
+            search: options.headerPattern,
+          },
+        ]
+      : []),
+    ...(options.footerPattern !== undefined
+      ? [
+          {
+            id: 'pdf-footer-pattern',
+            kind: 'footer' as const,
+            search: options.footerPattern,
+          },
+        ]
+      : []),
+  ];
+  const compiledPatterns = configuredPatterns.map((rule) => ({
+    ...compileTextReplacementRule({
+      id: rule.id,
+      search: rule.search,
+      replace: '',
+    }),
+    kind: rule.kind,
+  }));
+  const patternGroups = new Map<
+    string,
+    {
+      ruleId: string;
+      ruleHash: string;
+      kind: 'header' | 'footer';
+      parity: PdfFurnitureCandidate['pageParity'];
+      lines: PdfLine[];
+      pages: number[];
+    }
+  >();
+  let patternCandidateLines = 0;
+  let patternMatches = 0;
+  const patternStartedAt = Date.now();
+  const workLimitRuleIds = new Set<string>();
+  for (const rule of compiledPatterns) {
+    if (rule.rejection) {
+      warnings.push({
+        code: 'pdf-furniture-pattern-rejected',
+        severity: 'warning',
+        message: `PDF furniture pattern ${rule.id} was rejected: ${rule.rejection}.`,
+        details: { ruleId: rule.id },
+      });
+    }
+  }
+  if (!compiledPatterns.some(({ pattern }) => pattern))
+    return {
+      candidates: candidates.sort((left, right) =>
+        left.id.localeCompare(right.id),
+      ),
+      patternRemovedSpanIds,
+      warnings,
+    };
+  for (const page of raw.pages) {
+    await analysisCheckpoint(options);
+    const pageLines = (linesByPage.get(page.number) ?? []).filter(({ text }) =>
+      text.trim(),
+    );
+    const candidatesForPage = [
+      ...(pageLines[0]
+        ? [{ line: pageLines[0], kind: 'header' as const }]
+        : []),
+      ...(pageLines.length > 1
+        ? [{ line: pageLines.at(-1)!, kind: 'footer' as const }]
+        : pageLines[0]
+          ? [{ line: pageLines[0], kind: 'footer' as const }]
+          : []),
+    ];
+    for (const { line, kind } of candidatesForPage) {
+      if (++patternCandidateLines > MAX_TEXT_PATTERN_CANDIDATE_LINES) {
+        for (const rule of compiledPatterns)
+          if (rule.pattern) workLimitRuleIds.add(rule.id);
+        break;
+      }
+      if (line.text.length > MAX_TEXT_PATTERN_LINE_LENGTH) {
+        for (const rule of compiledPatterns)
+          if (rule.pattern && rule.kind === kind) workLimitRuleIds.add(rule.id);
+        continue;
+      }
+      for (const rule of compiledPatterns) {
+        if (rule.kind !== kind || !rule.pattern) continue;
+        if (Date.now() - patternStartedAt > MAX_TEXT_PATTERN_WORK_MS) {
+          workLimitRuleIds.add(rule.id);
+          break;
+        }
+        rule.pattern.lastIndex = 0;
+        if (!rule.pattern.test(line.text)) continue;
+        if (++patternMatches > MAX_TEXT_PATTERN_MATCHES) {
+          workLimitRuleIds.add(rule.id);
+          break;
+        }
+        const parity = page.number % 2 === 0 ? 'even' : 'odd';
+        const key = `${rule.id}|${kind}|${parity}`;
+        const group = patternGroups.get(key) ?? {
+          ruleId: rule.id,
+          ruleHash: hash(rule.search),
+          kind,
+          parity,
+          lines: [],
+          pages: [],
+        };
+        group.lines.push(line);
+        group.pages.push(page.number);
+        patternGroups.set(key, group);
+      }
+    }
+    if (patternMatches > MAX_TEXT_PATTERN_MATCHES) break;
+  }
+  for (const ruleId of workLimitRuleIds) {
+    warnings.push({
+      code: 'pdf-furniture-pattern-budget',
+      severity: 'warning',
+      message: `PDF furniture pattern work limit reached; remaining candidates were retained. Rule: ${ruleId}.`,
+      details: { ruleId },
+    });
+  }
+  for (const group of patternGroups.values()) {
+    const pageNumbers = [...new Set(group.pages)].sort(
+      (left, right) => left - right,
+    );
+    const parityPages = raw.pages.filter(
+      ({ number }) => (number % 2 === 0 ? 'even' : 'odd') === group.parity,
+    ).length;
+    const ratio = pageNumbers.length / Math.max(parityPages, 1);
+    const confidence: PdfFurnitureCandidate['confidence'] =
+      pageNumbers.length < 2
+        ? 'low'
+        : ratio >= 0.75
+          ? 'high'
+          : ratio >= 0.5
+            ? 'medium'
+            : 'low';
+    const id = `pdf-pattern-${group.ruleId}-${group.ruleHash}-${group.kind}-${group.parity}`;
+    const removed =
+      explicitlyRemoved.has(id) ||
+      (!explicitlyRetained.has(id) &&
+        options.removeDetectedFurniture !== false &&
+        confidence === 'high');
+    const candidate: PdfFurnitureCandidate = {
+      id,
+      ruleId: group.ruleId,
+      kind: group.kind,
+      text: group.lines[0]?.text.trim() ?? '',
+      normalizedText: normalizeFurniture(group.lines[0]?.text ?? ''),
+      pageParity: group.parity,
+      pageNumbers,
+      pageCoverage: ratio,
+      confidence,
+      removed,
+    };
+    candidates.push(candidate);
+    if (removed)
+      for (const line of group.lines)
+        for (const span of line.spans) patternRemovedSpanIds.add(span.id);
+  }
+  return {
+    candidates: candidates.sort((left, right) =>
+      left.id.localeCompare(right.id),
+    ),
+    patternRemovedSpanIds,
+    warnings,
+  };
 }
 
 async function furnitureSpanIds(

@@ -8,12 +8,26 @@ import type {
   TextNormalizationOptions,
   TextNormalizationSummary,
 } from '../index.ts';
+import {
+  MAX_TEXT_PATTERN_CANDIDATE_LINES,
+  MAX_TEXT_PATTERN_LINE_LENGTH,
+  MAX_TEXT_PATTERN_MATCHES,
+  MAX_TEXT_PATTERN_RULES,
+  MAX_TEXT_PATTERN_WORK_MS,
+  compileTextReplacementRule,
+  type CompiledTextReplacementRule,
+} from './pattern-rules.ts';
 
 export const MAX_TEXT_NORMALIZATION_TEXT = 5_000_000;
 export const MAX_TEXT_NORMALIZATION_NODES = 500_000;
 
 export const DEFAULT_TEXT_NORMALIZATION_OPTIONS: Readonly<
-  Required<Omit<TextNormalizationOptions, 'sceneBreakMarker' | 'language'>>
+  Required<
+    Omit<
+      TextNormalizationOptions,
+      'sceneBreakMarker' | 'language' | 'textRules'
+    >
+  >
 > = {
   sceneBreaks: true,
   blankParagraphs: true,
@@ -74,6 +88,14 @@ interface WorkBudget {
   nodes: number;
   text: number;
   exceeded: boolean;
+  patterns: CompiledTextReplacementRule[];
+  patternStartedAt: number;
+  patternCandidateLines: number;
+  patternMatches: number;
+  patternOutputCharacters: number;
+  patternRulesRejected: number;
+  patternRejectedRuleIds: string[];
+  patternWorkLimitExceeded: boolean;
 }
 
 function blankSummary(): TextNormalizationSummary {
@@ -83,7 +105,44 @@ function blankSummary(): TextNormalizationSummary {
     ligatures: 0,
     punctuationSmartened: 0,
     punctuationUnsmartened: 0,
+    patternMatches: 0,
+    patternRulesRejected: 0,
+    patternRejectedRuleIds: '',
+    patternWorkLimitExceeded: false,
+    emptyBlocksRemoved: 0,
     budgetExceeded: false,
+  };
+}
+
+function createWorkBudget(
+  options: ReturnType<typeof resolveOptions>,
+  summary: TextNormalizationSummary,
+): WorkBudget {
+  const suppliedRules = options.textRules ?? [];
+  const exceedsRuleLimit = suppliedRules.length > MAX_TEXT_PATTERN_RULES;
+  const patterns = exceedsRuleLimit
+    ? []
+    : suppliedRules.map(compileTextReplacementRule);
+  const rejected = patterns.filter(({ rejection }) => rejection);
+  const rejectedRuleIds = exceedsRuleLimit
+    ? [suppliedRules[MAX_TEXT_PATTERN_RULES]?.id ?? 'text-rule-limit']
+    : rejected.map(({ id }) => id);
+  summary.patternRulesRejected = exceedsRuleLimit
+    ? suppliedRules.length
+    : rejected.length;
+  summary.patternRejectedRuleIds = rejectedRuleIds.join(',');
+  return {
+    nodes: 0,
+    text: 0,
+    exceeded: false,
+    patterns,
+    patternStartedAt: Date.now(),
+    patternCandidateLines: 0,
+    patternMatches: 0,
+    patternOutputCharacters: 0,
+    patternRulesRejected: summary.patternRulesRejected,
+    patternRejectedRuleIds: rejectedRuleIds,
+    patternWorkLimitExceeded: false,
   };
 }
 
@@ -217,14 +276,15 @@ async function normalizeBlockList(
   deleteIsolatedBlanks: boolean,
   checkpoint: () => Promise<void>,
   depth = 0,
-): Promise<void> {
+): Promise<boolean> {
   if (budget.exceeded || depth > 128) {
     budget.exceeded = true;
-    return;
+    return false;
   }
+  let removedByRule = false;
   let processed = 0;
   for (let index = 0; index < blocks.length;) {
-    if (!visit(budget)) break;
+    if (!visit(budget)) return removedByRule;
     if (processed++ % 256 === 0) await checkpoint();
     const block = blocks[index];
     if (!block) break;
@@ -266,8 +326,9 @@ async function normalizeBlockList(
       continue;
     }
     if (block.type === 'list') {
-      for (const item of block.items)
-        await normalizeBlockList(
+      for (let itemIndex = 0; itemIndex < block.items.length;) {
+        const item = block.items[itemIndex]!;
+        const emptiedByRule = await normalizeBlockList(
           item.blocks,
           options,
           summary,
@@ -276,10 +337,25 @@ async function normalizeBlockList(
           checkpoint,
           depth + 1,
         );
+        if (emptiedByRule && item.blocks.length === 0) {
+          block.items.splice(itemIndex, 1);
+          summary.emptyBlocksRemoved++;
+          removedByRule = true;
+        } else itemIndex++;
+      }
+      if (removedByRule && block.items.length === 0) {
+        blocks.splice(index, 1);
+        summary.emptyBlocksRemoved++;
+        continue;
+      }
     } else if (block.type === 'table') {
-      for (const row of block.rows)
-        for (const cell of row.cells)
-          await normalizeBlockList(
+      for (let rowIndex = 0; rowIndex < block.rows.length;) {
+        const row = block.rows[rowIndex]!;
+        let rowRemovedByRule = false;
+        for (let cellIndex = 0; cellIndex < row.cells.length;) {
+          const cell = row.cells[cellIndex]!;
+          const hadBlocks = cell.blocks.length > 0;
+          const emptiedByRule = await normalizeBlockList(
             cell.blocks,
             options,
             summary,
@@ -288,10 +364,33 @@ async function normalizeBlockList(
             checkpoint,
             depth + 1,
           );
+          if (hadBlocks && emptiedByRule && cell.blocks.length === 0) {
+            row.cells.splice(cellIndex, 1);
+            summary.emptyBlocksRemoved++;
+            removedByRule = true;
+            rowRemovedByRule = true;
+          } else cellIndex++;
+        }
+        if (rowRemovedByRule && row.cells.length === 0) {
+          block.rows.splice(rowIndex, 1);
+          summary.emptyBlocksRemoved++;
+        } else rowIndex++;
+      }
       if (block.caption)
-        normalizeInlineNodes(block.caption, options, summary, budget);
-    } else if (block.type === 'blockquote')
-      await normalizeBlockList(
+        await normalizeInlineNodes(
+          block.caption,
+          options,
+          summary,
+          budget,
+          checkpoint,
+        );
+      if (removedByRule && block.rows.length === 0) {
+        blocks.splice(index, 1);
+        summary.emptyBlocksRemoved++;
+        continue;
+      }
+    } else if (block.type === 'blockquote') {
+      const emptiedByRule = await normalizeBlockList(
         block.blocks,
         options,
         summary,
@@ -300,36 +399,78 @@ async function normalizeBlockList(
         checkpoint,
         depth + 1,
       );
-    else if (block.type === 'paragraph' || block.type === 'heading')
-      normalizeInlineNodes(block.children, options, summary, budget);
-    else if (block.type === 'imageBlock' && block.caption)
-      normalizeInlineNodes(block.caption, options, summary, budget);
+      if (emptiedByRule && block.blocks.length === 0) {
+        blocks.splice(index, 1);
+        summary.emptyBlocksRemoved++;
+        removedByRule = true;
+        continue;
+      }
+    } else if (block.type === 'paragraph' || block.type === 'heading') {
+      const changed = await normalizeInlineNodes(
+        block.children,
+        options,
+        summary,
+        budget,
+        checkpoint,
+      );
+      if (changed && !isContentParagraph(block)) {
+        blocks.splice(index, 1);
+        summary.emptyBlocksRemoved++;
+        removedByRule = true;
+        continue;
+      }
+    } else if (block.type === 'imageBlock' && block.caption)
+      await normalizeInlineNodes(
+        block.caption,
+        options,
+        summary,
+        budget,
+        checkpoint,
+      );
     index++;
   }
+  return removedByRule;
 }
 
-function normalizeInlineNodes(
+async function normalizeInlineNodes(
   nodes: InlineNode[],
   options: ReturnType<typeof resolveOptions>,
   summary: TextNormalizationSummary,
   budget: WorkBudget,
+  checkpoint: () => Promise<void>,
   depth = 0,
-): void {
+): Promise<boolean> {
   if (budget.exceeded || depth > 128) {
     budget.exceeded = true;
-    return;
+    return false;
   }
-  for (const node of nodes) {
-    if (!visit(budget)) return;
+  let changed = false;
+  let processed = 0;
+  for (let index = 0; index < nodes.length; index++) {
+    if (!visit(budget)) return changed;
+    if (processed++ % 256 === 0) await checkpoint();
+    const node = nodes[index];
+    if (!node) continue;
     if (node.type === 'link') {
-      normalizeInlineNodes(node.children, options, summary, budget, depth + 1);
+      const linkChanged = await normalizeInlineNodes(
+        node.children,
+        options,
+        summary,
+        budget,
+        checkpoint,
+        depth + 1,
+      );
+      changed ||= linkChanged;
+      if (linkChanged && node.children.length === 0) {
+        nodes.splice(index--, 1);
+      }
       continue;
     }
     if (node.type !== 'text' || node.marks?.some(({ type }) => type === 'code'))
       continue;
     if (budget.text + node.text.length > MAX_TEXT_NORMALIZATION_TEXT) {
       budget.exceeded = true;
-      return;
+      return changed;
     }
     budget.text += node.text.length;
     let text = node.text;
@@ -346,8 +487,164 @@ function normalizeInlineNodes(
     } else if (options.unsmartenPunctuation) {
       text = unsmarten(text, summary);
     }
+    let ruleChanged = false;
+    if (
+      budget.patterns.some(({ pattern }) => pattern) &&
+      !budget.patternWorkLimitExceeded
+    ) {
+      const result = await applyTextRules(text, budget, checkpoint);
+      text = result.text;
+      ruleChanged = result.changed;
+      changed ||= ruleChanged;
+      summary.patternMatches += result.matches;
+    }
     node.text = text;
+    if (ruleChanged && text.length === 0) nodes.splice(index--, 1);
   }
+  return changed;
+}
+
+const TEXT_URL = /(?:https?:\/\/|www\.)[^\s]+/giu;
+
+async function applyTextRules(
+  source: string,
+  budget: WorkBudget,
+  checkpoint: () => Promise<void>,
+): Promise<{ text: string; changed: boolean; matches: number }> {
+  let output = '';
+  let sourceOffset = 0;
+  let changed = false;
+  let matches = 0;
+  let checkedLines = 0;
+  for (const line of source.split(/(\r?\n)/u)) {
+    const lineStart = sourceOffset;
+    sourceOffset += line.length;
+    if (/^\r?\n$/u.test(line)) {
+      output += line;
+      continue;
+    }
+    if (!line) {
+      output += line;
+      continue;
+    }
+    if (checkedLines++ % 64 === 0) await checkpoint();
+    if (
+      ++budget.patternCandidateLines > MAX_TEXT_PATTERN_CANDIDATE_LINES ||
+      line.length > MAX_TEXT_PATTERN_LINE_LENGTH ||
+      Date.now() - budget.patternStartedAt > MAX_TEXT_PATTERN_WORK_MS
+    ) {
+      budget.patternWorkLimitExceeded = true;
+      const ruleId = budget.patterns.find(({ pattern }) => pattern)?.id;
+      if (ruleId && !budget.patternRejectedRuleIds.includes(ruleId))
+        budget.patternRejectedRuleIds.push(ruleId);
+      return {
+        text: output + source.slice(lineStart),
+        changed,
+        matches,
+      };
+    }
+    const urls = [...line.matchAll(TEXT_URL)];
+    let lineIndex = 0;
+    let transformedLine = '';
+    let lineChanged = false;
+    let lineMatches = 0;
+    for (const url of urls) {
+      const start = url.index!;
+      const result = applyRulesToSegment(
+        line.slice(lineIndex, start),
+        budget,
+        lineMatches,
+      );
+      if (result.exceeded) {
+        budget.patternWorkLimitExceeded = true;
+        return { text: output + source.slice(lineStart), changed, matches };
+      }
+      transformedLine += result.text;
+      lineMatches += result.matches;
+      lineChanged ||= result.changed;
+      transformedLine += url[0];
+      lineIndex = start + url[0].length;
+    }
+    const result = applyRulesToSegment(
+      line.slice(lineIndex),
+      budget,
+      lineMatches,
+    );
+    if (result.exceeded) {
+      budget.patternWorkLimitExceeded = true;
+      return { text: output + source.slice(lineStart), changed, matches };
+    }
+    transformedLine += result.text;
+    lineMatches += result.matches;
+    lineChanged ||= result.changed;
+    if (
+      budget.patternOutputCharacters + transformedLine.length >
+      MAX_TEXT_NORMALIZATION_TEXT
+    ) {
+      budget.patternWorkLimitExceeded = true;
+      const ruleId = budget.patterns.find(({ pattern }) => pattern)?.id;
+      if (ruleId && !budget.patternRejectedRuleIds.includes(ruleId))
+        budget.patternRejectedRuleIds.push(ruleId);
+      return { text: output + source.slice(lineStart), changed, matches };
+    }
+    output += transformedLine;
+    matches += lineMatches;
+    changed ||= lineChanged;
+    budget.patternMatches += lineMatches;
+    budget.patternOutputCharacters += transformedLine.length;
+  }
+  return { text: output, changed, matches };
+}
+
+function applyRulesToSegment(
+  source: string,
+  budget: WorkBudget,
+  alreadyMatched: number,
+): { text: string; matches: number; changed: boolean; exceeded: boolean } {
+  let text = source;
+  let totalMatches = 0;
+  for (const rule of budget.patterns) {
+    if (!rule.pattern || budget.patternWorkLimitExceeded) continue;
+    if (Date.now() - budget.patternStartedAt > MAX_TEXT_PATTERN_WORK_MS) {
+      if (!budget.patternRejectedRuleIds.includes(rule.id))
+        budget.patternRejectedRuleIds.push(rule.id);
+      return { text: source, matches: 0, changed: false, exceeded: true };
+    }
+    const pattern = rule.pattern;
+    pattern.lastIndex = 0;
+    let output = '';
+    let cursor = 0;
+    let count = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      if (match[0].length === 0) {
+        if (!budget.patternRejectedRuleIds.includes(rule.id))
+          budget.patternRejectedRuleIds.push(rule.id);
+        return { text: source, matches: 0, changed: false, exceeded: true };
+      }
+      if (
+        budget.patternMatches + alreadyMatched + totalMatches + count >
+        MAX_TEXT_PATTERN_MATCHES
+      ) {
+        if (!budget.patternRejectedRuleIds.includes(rule.id))
+          budget.patternRejectedRuleIds.push(rule.id);
+        return { text: source, matches: 0, changed: false, exceeded: true };
+      }
+      output += text.slice(cursor, match.index) + rule.replace;
+      cursor = match.index + match[0].length;
+      count++;
+    }
+    if (count > 0) {
+      text = output + text.slice(cursor);
+      totalMatches += count;
+    }
+  }
+  return {
+    text,
+    matches: totalMatches,
+    changed: text !== source,
+    exceeded: false,
+  };
 }
 
 function smarten(
@@ -497,6 +794,11 @@ async function normalizeBlocksWithBudget(
     );
   }
   summary.budgetExceeded ||= budget.exceeded;
+  summary.patternRulesRejected = budget.patternRulesRejected;
+  summary.patternRejectedRuleIds = [
+    ...new Set(budget.patternRejectedRuleIds),
+  ].join(',');
+  summary.patternWorkLimitExceeded = budget.patternWorkLimitExceeded;
 }
 
 export async function normalizeDocumentBlocks(
@@ -511,7 +813,7 @@ export async function normalizeDocumentBlocks(
     ...(language && !options?.language ? { language } : {}),
   });
   const summary = { ...blankSummary(), ...initialSummary };
-  const budget: WorkBudget = { nodes: 0, text: 0, exceeded: false };
+  const budget = createWorkBudget(resolved, summary);
   await normalizeBlocksWithBudget(
     blocks,
     resolved,
@@ -533,7 +835,7 @@ export async function normalizeDocumentText(
     ...(language && !options?.language ? { language } : {}),
   });
   const summary = blankSummary();
-  const budget: WorkBudget = { nodes: 0, text: 0, exceeded: false };
+  const budget = createWorkBudget(resolved, summary);
   const verifyCancellation = checkpoint ?? (async () => {});
   await normalizeBlocksWithBudget(
     model.blocks,
@@ -562,12 +864,24 @@ export async function normalizeDocumentText(
 export function createTextNormalizationWarning(
   summary: TextNormalizationSummary,
 ): ConversionWarning {
+  const hasPatternWarnings =
+    summary.patternRulesRejected > 0 || summary.patternWorkLimitExceeded;
   return {
     code: 'text-normalization-summary',
-    severity: summary.budgetExceeded ? 'warning' : 'info',
-    message: summary.budgetExceeded
-      ? 'Text normalization reached its work limit; remaining text was preserved.'
-      : 'Text normalization completed with the reported changes.',
-    details: { ...summary },
+    severity: summary.budgetExceeded || hasPatternWarnings ? 'warning' : 'info',
+    message:
+      summary.patternRulesRejected > 0
+        ? `Text pattern rules rejected: ${summary.patternRejectedRuleIds}.`
+        : summary.patternWorkLimitExceeded
+          ? `Text pattern work limit reached; remaining text was preserved. Rule: ${summary.patternRejectedRuleIds}.`
+          : summary.budgetExceeded
+            ? 'Text normalization reached its work limit; remaining text was preserved.'
+            : 'Text normalization completed with the reported changes.',
+    details: {
+      ...summary,
+      ...(summary.patternRejectedRuleIds
+        ? { patternRejectedRuleIds: summary.patternRejectedRuleIds }
+        : {}),
+    },
   };
 }
