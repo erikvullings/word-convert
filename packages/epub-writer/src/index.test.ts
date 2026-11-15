@@ -709,6 +709,21 @@ describe('writeEpub tagged table output', () => {
           },
         ],
       },
+      {
+        type: 'paragraph',
+        // `splitChapters` only starts a chapter at a level-2 heading once 50
+        // words have followed the previous one, so this filler is what makes a
+        // split happen at all. Without it the whole document is one chapter and
+        // the assertion below proves nothing.
+        children: [
+          {
+            type: 'text',
+            text: Array.from({ length: 60 }, (_, index) => `word${index}`).join(
+              ' ',
+            ),
+          },
+        ],
+      },
       { type: 'heading', level: 2, children: [{ type: 'text', text: 'Two' }] },
       { type: 'paragraph', children: [{ type: 'text', text: 'After' }] },
     ]);

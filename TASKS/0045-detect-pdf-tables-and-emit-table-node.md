@@ -333,3 +333,10 @@ Three signals are available at very different cost and precision:
   converted; `--no-layout` is currently required for a ruled or borderless table
   to survive. Tracked as 0047, and the new CLI tests pass `--no-layout` so they
   measure the flag rather than that interaction.
+- 2026-11-15 pi: Rebase note. `3331ef5` made `splitChapters()` require 50 words
+  after a level-2 heading before the next one starts a chapter, which stopped
+  the whole-table test from splitting at all — it was then trivially passing
+  with a single chapter. The test now carries 60 filler words before the second
+  heading so the guarantee (a table is never cut across chapters) is measured on
+  a document that really splits. Also relevant to 0041: the size splitter has to
+  respect the same minimum, not just the table rule.
