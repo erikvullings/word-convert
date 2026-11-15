@@ -88,6 +88,8 @@ and reverses one of 0031's rejections; it shares no sequence with the other subt
 - [ ] 0043 Extract PDF image alt text captions and cover candidates
 - [ ] 0044 Add conversion pipeline stage dumps and verbosity levels
 - [ ] 0045 Detect PDF tables and emit TableNode *(added on request; not a calibre feature)*
+- [ ] 0047 Keep structured PDF tables over learned picture regions *(found while
+  testing 0045 through the CLI; blocks ruled tables in the default CLI configuration)*
 
 ## Test reliability
 

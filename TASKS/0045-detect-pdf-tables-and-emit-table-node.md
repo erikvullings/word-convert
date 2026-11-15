@@ -320,3 +320,16 @@ Three signals are available at very different cost and precision:
   `maxSpans: 8,000` and at most 16 tables per page, skipped on fallback,
   rasterized, dense, or span-truncated pages. `REQUIREMENTS.md` now states the
   borderless rules instead of forbidding the signal outright.
+- 2026-11-15 pi: `--pdf-tables <list>` landed in the CLI: a comma-separated
+  subset of `tagged`, `ruled`, `borderless`, or `none`, defaulting to
+  `tagged,ruled`. Signals not named are switched off, so it narrows as well as
+  widens what the reader may infer. Unknown signals, `none` combined with a
+  signal, and non-PDF input are argument errors. `apps/cli/src/cli.ts`,
+  `documentation/cli.md` and `README.md` changed together per `AGENTS.md`.
+- 2026-11-15 pi: Testing the flag through `runCli` exposed a precedence problem
+  that the reader-level tests could not see. With the CLI's default Heron layout
+  analysis on, a learned `picture`/`table` proposal covers the ruled grid, the
+  region is rasterized, and the grid is reported unresolved instead of
+  converted; `--no-layout` is currently required for a ruled or borderless table
+  to survive. Tracked as 0047, and the new CLI tests pass `--no-layout` so they
+  measure the flag rather than that interaction.

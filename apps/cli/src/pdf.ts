@@ -9,11 +9,13 @@ import {
   automaticProvider,
   type ProviderSelection,
 } from './inference-options.ts';
+import type { PdfTableOptions } from '@wordconvert/pdf-reader';
 
 export interface CliPdfOptions extends ConversionOptions {
   layoutModel?: string;
   formulaModelDir?: string;
   rasterize?: boolean;
+  pdfTables?: PdfTableOptions;
   runtimeDir?: string;
   executionProvider?: ProviderSelection;
   onDiagnostic?: (message: string) => void;
@@ -83,6 +85,7 @@ export async function readPdf(
       conversionDate: options.conversionDate,
       filename,
       densePageMode: adapters ? 'image-and-prose' : 'extract',
+      ...(options.pdfTables ? { pdfTables: options.pdfTables } : {}),
       ...(adapters ? { figureRasterizer: adapters.figureRasterizer } : {}),
       ...(adapters?.layoutDetector
         ? { layoutDetector: adapters.layoutDetector }

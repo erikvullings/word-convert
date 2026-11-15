@@ -79,6 +79,9 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --rasterize             Render PDF vectors/pages using the native runtime
       --layout-model <path>   Use a local Heron ONNX model instead of the cached default
       --no-layout             Disable default PDF layout analysis (no Heron download)
+      --pdf-tables <list>     PDF table signals: tagged, ruled, borderless (comma
+                              separated), or none. Default tagged,ruled; borderless
+                              infers tables from aligned columns alone
       --formula-ocr           Enable TexTeller OCR, downloading missing models once
       --formula-model-dir <dir> Enable TexTeller (encoder.onnx, decoder.onnx,
                               tokenizer.json); overrides cached formula models
@@ -226,6 +229,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       throw new UsageError(
         'Formula mode must be source, mathml, katex, or disabled.',
       );
+    const pdfTables = parsePdfTableSignals(values['pdf-tables']);
     const maxImageSize = parseMaxImageSize(values['max-image-size']);
     const imageFormat = values['image-format'] ?? 'jpeg';
     if (imageFormat !== 'jpeg' && imageFormat !== 'preserve')
@@ -297,6 +301,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       throw new UsageError(
         'PDF rendering and model options require PDF input.',
       );
+    if (values['pdf-tables'] && extension !== '.pdf')
+      throw new UsageError('--pdf-tables requires PDF input.');
     if (presetPath && extension !== '.docx')
       throw new UsageError('Style presets apply only to DOCX input.');
     const output =
@@ -421,6 +427,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
               executionProvider: provider,
               onDiagnostic: io.stderr,
               ...(values.rasterize ? { rasterize: true } : {}),
+              ...(pdfTables ? { pdfTables } : {}),
               ...(layoutModel ? { layoutModel } : {}),
               ...(formulaModelDir ? { formulaModelDir } : {}),
               ...(values['runtime-dir']
@@ -509,6 +516,7 @@ function parseArguments(argv: string[]) {
         'image-quality': { type: 'string' },
         'split-chapters': { type: 'boolean' },
         rasterize: { type: 'boolean' },
+        'pdf-tables': { type: 'string' },
         'no-layout': { type: 'boolean' },
         'formula-ocr': { type: 'boolean' },
         offline: { type: 'boolean' },
@@ -549,6 +557,40 @@ function inferOutputFormat(output: string | undefined): Format | undefined {
     );
   return undefined;
 }
+const PDF_TABLE_SIGNALS = ['tagged', 'ruled', 'borderless'] as const;
+
+/**
+ * `--pdf-tables` takes a comma-separated subset of the table signals, or
+ * `none`. Signals not named are turned off, so the option can narrow as well
+ * as widen what the reader is allowed to infer.
+ */
+function parsePdfTableSignals(value: string | undefined) {
+  if (value === undefined) return undefined;
+  const requested = value
+    .split(',')
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part.length > 0);
+  const none = { tagged: false, ruled: false, borderless: false };
+  if (requested.length === 0) return none;
+  if (requested.includes('none')) {
+    if (requested.length > 1)
+      throw new UsageError(
+        '--pdf-tables none cannot be combined with table signals.',
+      );
+    return none;
+  }
+  for (const signal of requested)
+    if (!(PDF_TABLE_SIGNALS as readonly string[]).includes(signal))
+      throw new UsageError(
+        `--pdf-tables accepts ${PDF_TABLE_SIGNALS.join(', ')}, or none.`,
+      );
+  return {
+    tagged: requested.includes('tagged'),
+    ruled: requested.includes('ruled'),
+    borderless: requested.includes('borderless'),
+  };
+}
+
 function isFormulaMode(value: string): value is MathOutputMode {
   return ['source', 'mathml', 'katex', 'disabled'].includes(value);
 }

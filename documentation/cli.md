@@ -429,6 +429,37 @@ runs a real CPU inference pass. Copy this model wherever convenient on the
 destination machine and pass its path with `--layout-model`. This avoids the
 default download. `--no-layout` disables layout analysis entirely.
 
+### PDF tables
+
+Tables are converted when the source states them or the geometry closes.
+`--pdf-tables` selects which signals the reader may act on:
+
+| Signal | Source | Default |
+| --- | --- | --- |
+| `tagged` | A `Table` element in the tagged structure tree, with its declared rows, cells, and spans | on |
+| `ruled` | A closed grid of straight stroked cell borders | on |
+| `borderless` | Recurring aligned columns separated by gutters, without any rules | off |
+
+```sh
+wordconvert report.pdf --pdf-tables tagged,ruled --format epub
+wordconvert report.pdf --pdf-tables none --format html
+```
+
+Signals you do not name are switched off, so `--pdf-tables tagged` keeps only
+tagged tables and `--pdf-tables none` keeps every table as paragraphs.
+`borderless` is off by default because it infers a grid from alignment alone;
+enable it only where the layout is known to hold tables, and review the result,
+because lists and two-column text are close neighbours. Unknown signals and
+combining `none` with a signal are argument errors, and the option requires PDF
+input.
+
+Detection never loses text and never emits a partial table: cells and captions
+carry exactly the text the paragraph path would have produced, and a table that
+cannot be resolved stays paragraphs with a `pdf-table-structure-unresolved` note
+on stderr. Learned picture and table proposals from Heron layout analysis
+currently win over a ruled or borderless grid, so pass `--no-layout` when such a
+table must be converted as a table.
+
 ### TexTeller formula OCR
 
 Enable OCR with `wordconvert document.pdf --formula-ocr`. It downloads and

@@ -145,6 +145,10 @@ describe('CLI arguments and output', () => {
     [pdf, '--clear-model-cache'],
     [fixture, '--execution-provider', 'coreml', '--layout-model', 'model.onnx'],
     [pdf, '--execution-provider', ''],
+    [pdf, '--pdf-tables', 'nonsense'],
+    [pdf, '--pdf-tables', 'none,ruled'],
+    [pdf, '--pdf-tables', ''],
+    [fixture, '--pdf-tables', 'none'],
   ])('rejects invalid arguments %j', async (...args) => {
     const result = await invoke(args);
     expect(result.code).toBe(2);
@@ -347,4 +351,63 @@ describe('CLI arguments and output', () => {
     await writeFile(input, 'not a DOCX');
     expect((await invoke([input])).code).toBe(1);
   });
+});
+
+describe('CLI PDF table signals', () => {
+  const path = (name: string) =>
+    fileURLToPath(
+      new URL(`../../../tests/fixtures/pdf/${name}`, import.meta.url),
+    );
+  // Layout analysis is left off here: this covers what `--pdf-tables` selects,
+  // and a learned picture/table proposal currently wins over a ruled grid
+  // (TASKS/0047), which would hide the signal being tested.
+  const html = async (args: string[]) => {
+    const result = await invoke([
+      ...args,
+      '--no-layout',
+      '-f',
+      'html',
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+    expect(result.code).toBe(0);
+    return String(result.output[0]);
+  };
+
+  it('turns ruled table detection off on request', async () => {
+    expect(await html([path('ruled-table.pdf')])).toContain('<table');
+    const output = await html([
+      path('ruled-table.pdf'),
+      '--pdf-tables',
+      'none',
+    ]);
+    expect(output).not.toContain('<table');
+    // Turning the signal off must not lose the cells either.
+    expect(output).toContain('Revenue');
+    expect(output).toContain('120');
+  }, 30_000);
+
+  it('enables borderless tables on request', async () => {
+    expect(await html([path('borderless-table.pdf')])).not.toContain('<table');
+    const output = await html([
+      path('borderless-table.pdf'),
+      '--pdf-tables',
+      'tagged,ruled,borderless',
+    ]);
+    expect(output).toContain('<table');
+    expect(output).toContain('Region');
+    expect(output).toContain('44%');
+    // The heading and the list below the grid stay paragraphs.
+    expect(output).toContain('Distribution by region');
+    expect(output).toContain('figures are unaudited');
+  }, 30_000);
+
+  it('keeps only the tagged signal when the others are dropped', async () => {
+    const tagged = path('tagged-table.pdf');
+    expect(await html([tagged, '--pdf-tables', 'ruled'])).not.toContain(
+      '<table',
+    );
+    expect(await html([tagged, '--pdf-tables', 'tagged'])).toContain('<table');
+  }, 30_000);
 });

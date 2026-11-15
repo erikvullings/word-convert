@@ -64,6 +64,12 @@ headers, and footers. EPUB shrinking removes page numbers and repeated running
 matter only when explicit page-break markers support that classification.
 Text baked into images remains.
 
+PDF tables become table blocks when the source declares them (`tagged`) or their
+cell borders close into a grid (`ruled`). `--pdf-tables` selects which of those
+signals the reader may act on, accepts `none` to keep tables as paragraphs, and
+can opt into `borderless`, which infers a table from aligned columns alone and
+stays off by default. A table that cannot be resolved stays paragraphs.
+
 With [Bun 1.3.11](https://bun.sh/) installed for development:
 
 ```sh
