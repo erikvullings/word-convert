@@ -41,6 +41,37 @@ function model(blocks: DocumentModel['blocks']): DocumentModel {
 }
 
 describe('writeHtml', () => {
+  it('renders contents links to paragraph spine-position anchors', () => {
+    const input = model([
+      {
+        type: 'paragraph',
+        id: 'pdf-page-1',
+        children: [{ type: 'text', text: 'Body text' }],
+      },
+    ]);
+    input.toc = [
+      {
+        label: 'Introduction',
+        target: 'pdf-page-1',
+        level: 1,
+        provenance: {
+          source: 'pdf-outline',
+          method: 'extracted',
+          confidence: 'medium',
+        },
+        confidence: 'medium',
+      },
+    ];
+
+    const html = writeHtml(input, {
+      conversionDate: '2026-07-15',
+      inlineToc: true,
+    });
+
+    expect(html).toContain('<a href="#pdf-page-1">Introduction</a>');
+    expect(html).toContain('<p id="pdf-page-1">Body text</p>');
+  });
+
   it('renders normalized paragraph indentation with generated CSS classes', () => {
     const html = writeHtml(
       model([
@@ -143,7 +174,7 @@ describe('writeHtml', () => {
     expect(disabled).not.toContain('<math');
   });
 
-  it('writes deterministic semantic standalone HTML with a heading TOC', () => {
+  it('writes deterministic semantic standalone HTML with nested heading contents', () => {
     const input = model([
       { type: 'heading', level: 1, children: [{ type: 'text', text: 'One' }] },
       {
@@ -174,9 +205,8 @@ describe('writeHtml', () => {
     expect(first).toContain('<!doctype html>');
     expect(first).toContain('<title>A &lt;safe&gt; title</title>');
     expect(first).toContain(
-      '<main><h1 class="document-title">A &lt;safe&gt; title</h1><div class="table-of-contents"><h2>Contents</h2>',
+      '<main><h1 class="document-title">A &lt;safe&gt; title</h1><nav class="table-of-contents" aria-label="Contents"><h2>Contents</h2><ol><li><a href="#one">One</a><ol><li>',
     );
-    expect(first).not.toContain('<nav');
     expect(first).toContain('<a href="#one">One</a>');
     expect(first).toContain('<a href="#source-toc-123">1.1 One</a>');
     expect(first).toContain('<h1 id="one">One</h1>');
@@ -186,6 +216,34 @@ describe('writeHtml', () => {
     expect(first).toContain('p>img{display:block');
     expect(first).toContain('@media print');
     expect(first).toContain('data:font/woff2;base64,d09GMg==');
+  });
+
+  it('can place a titled contents section after the document body', () => {
+    const html = writeHtml(
+      model([
+        {
+          type: 'heading',
+          level: 1,
+          children: [{ type: 'text', text: 'Part' }],
+        },
+        {
+          type: 'heading',
+          level: 2,
+          children: [{ type: 'text', text: 'Chapter' }],
+        },
+        { type: 'paragraph', children: [{ type: 'text', text: 'Body' }] },
+      ]),
+      {
+        conversionDate: '2026-07-15',
+        tocTitle: 'Index',
+        tocAtEnd: true,
+      },
+    );
+
+    expect(html.indexOf('<p>Body</p>')).toBeLessThan(html.indexOf('<nav'));
+    expect(html).toContain(
+      '<nav class="table-of-contents" aria-label="Index"><h2>Index</h2><ol><li><a href="#part">Part</a><ol><li><a href="#chapter">Chapter</a>',
+    );
   });
 
   it('does not duplicate a title already represented by a level-one heading', () => {

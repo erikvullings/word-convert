@@ -78,7 +78,7 @@ and reverses one of 0031's rejections; it shares no sequence with the other subt
 - [x] 0034 Add document-wide PDF de-hyphenation *(needs 0033)*
 - [x] 0035 Normalize PDF indents and remove fake page margins
 - [ ] 0036 Add configurable chapter detection marking and heading-run merging *(needs 0033)*
-- [ ] 0037 Build hierarchical filtered tables of contents for PDF books *(needs 0036)*
+- [x] 0037 Build hierarchical filtered tables of contents for PDF books *(needs 0036)*
 - [ ] 0038 Add scene break blank paragraph and punctuation normalization
 - [ ] 0039 Add bounded user pattern rules for furniture and text cleanup
 - [ ] 0040 Complete publication metadata and add CLI overrides with a sidecar file

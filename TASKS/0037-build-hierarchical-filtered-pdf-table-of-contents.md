@@ -1,6 +1,6 @@
 # 0037 Build hierarchical filtered tables of contents for PDF books
 
-Status: open
+Status: done
 Priority: medium
 Owner: unassigned
 Agent: pi

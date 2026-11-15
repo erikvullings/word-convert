@@ -1,7 +1,9 @@
 import {
   applyChapterMarks,
+  createTocFromHeadings,
   countChapterGroups,
   isChapterMark,
+  nestTocEntries,
 } from '@wordconvert/document-model';
 import type {
   BlockNode,
@@ -12,6 +14,7 @@ import type {
   WriterOptions,
   ChapterHeadingLevel,
   ChapterMark,
+  TocEntry,
 } from '@wordconvert/document-model';
 import { strToU8, zipSync, type Zippable } from 'fflate';
 import {
@@ -26,6 +29,9 @@ export interface MarkdownWriterOptions extends WriterOptions {
   includePageBreaks?: boolean;
   chapterSplitLevel?: ChapterHeadingLevel;
   chapterMark?: ChapterMark;
+  inlineToc?: boolean;
+  tocAtEnd?: boolean;
+  tocTitle?: string;
 }
 
 interface RenderContext {
@@ -36,6 +42,7 @@ interface RenderContext {
   warn: (warning: ConversionWarning) => void;
   formulaMode: MathOutputMode;
   includeInternalLinks: boolean;
+  includeContentsAnchors: boolean;
   includePageBreaks: boolean;
   indentedParagraphs: number;
 }
@@ -122,6 +129,9 @@ function writeWithAssets(
     ...model,
     blocks: applyChapterMarks(model.blocks, chapterSplitLevel, chapterMark),
   };
+  const toc: TocEntry[] =
+    chapterModel.toc ??
+    (options.inlineToc ? createTocFromHeadings(chapterModel.blocks) : []);
   options.onWarning?.({
     code: 'markdown-chapter-count',
     severity: 'info',
@@ -136,6 +146,7 @@ function writeWithAssets(
     warn: (warning) => options.onWarning?.(warning),
     formulaMode: options.formulaMode ?? 'source',
     includeInternalLinks: options.includeInternalLinks ?? true,
+    includeContentsAnchors: options.inlineToc === true,
     includePageBreaks:
       options.includePageBreaks ??
       (chapterMark === 'pagebreak' || chapterMark === 'both'),
@@ -144,6 +155,10 @@ function writeWithAssets(
   const body = renderBlocks(chapterModel.blocks, context);
   const title = renderDocumentTitle(model);
   const notes = renderNotes(context);
+  const contents =
+    options.inlineToc === true
+      ? renderMarkdownToc(toc, options.tocTitle ?? 'Contents')
+      : '';
   if (context.indentedParagraphs > 0)
     context.warn({
       code: 'markdown-paragraph-indent-omitted',
@@ -152,7 +167,25 @@ function writeWithAssets(
         'Markdown has no portable paragraph indentation syntax; indentation was omitted.',
       details: { paragraphs: context.indentedParagraphs },
     });
-  return `${title}${title && body ? '\n\n' : ''}${body}${notes ? `\n\n${notes}` : ''}\n`;
+  const before = options.tocAtEnd ? '' : contents;
+  const after = options.tocAtEnd ? contents : '';
+  return `${title}${title && (before || body) ? '\n\n' : ''}${before}${before && body ? '\n\n' : ''}${body}${notes ? `\n\n${notes}` : ''}${after ? `\n\n${after}` : ''}\n`;
+}
+
+function renderMarkdownToc(
+  entries: readonly TocEntry[],
+  title: string,
+): string {
+  const nested = nestTocEntries(entries);
+  if (nested.length === 0) return '';
+  const render = (nodes: typeof nested, depth: number): string =>
+    nodes
+      .map(
+        ({ target, label, children }, index) =>
+          `${'  '.repeat(depth)}${index + 1}. [${escapeText(label, true)}](#${escapeDestination(target)})${children.length ? `\n${render(children, depth + 1)}` : ''}`,
+      )
+      .join('\n');
+  return `## ${escapeText(title)}\n\n${render(nested, 0)}`;
 }
 
 function renderDocumentTitle(model: DocumentModel): string {
@@ -210,7 +243,13 @@ function renderBlock(block: BlockNode, context: RenderContext): string {
     }
     case 'paragraph':
       if (block.indent) context.indentedParagraphs++;
-      return renderInlines(block.children, context);
+      return `${
+        (context.includeInternalLinks || context.includeContentsAnchors) &&
+        block.id &&
+        safeFragmentId(block.id)
+          ? `<a id="${escapeHtmlAttribute(block.id)}"></a>\n`
+          : ''
+      }${renderInlines(block.children, context)}`;
     case 'blockquote':
       return renderBlocks(block.blocks, context)
         .split('\n')

@@ -34,6 +34,38 @@ function model(blocks: DocumentModel['blocks']): DocumentModel {
 }
 
 describe('writeMarkdown', () => {
+  it('renders contents links to paragraph anchors even when source links are disabled', () => {
+    const input = model([
+      {
+        type: 'paragraph',
+        id: 'pdf-page-1',
+        children: [{ type: 'text', text: 'Body text' }],
+      },
+    ]);
+    input.toc = [
+      {
+        label: 'Introduction',
+        target: 'pdf-page-1',
+        level: 1,
+        provenance: {
+          source: 'pdf-outline',
+          method: 'extracted',
+          confidence: 'medium',
+        },
+        confidence: 'medium',
+      },
+    ];
+
+    const markdown = writeMarkdown(input, {
+      conversionDate: '2026-07-15',
+      inlineToc: true,
+      includeInternalLinks: false,
+    });
+
+    expect(markdown).toContain('[Introduction](#pdf-page-1)');
+    expect(markdown).toContain('<a id="pdf-page-1"></a>\nBody text');
+  });
+
   it('omits paragraph indentation and reports the documented plain-Markdown fallback', () => {
     const warnings: ConversionWarning[] = [];
     const markdown = writeMarkdown(
@@ -243,6 +275,34 @@ describe('writeMarkdown', () => {
         includeInternalLinks: false,
       }),
     ).toBe('1 Introduction\n\n## 1 Introduction\n');
+  });
+
+  it('writes a nested, titled contents list at the requested position', () => {
+    const input = model([
+      {
+        type: 'heading',
+        level: 1,
+        children: [{ type: 'text', text: 'Part' }],
+      },
+      {
+        type: 'heading',
+        level: 2,
+        children: [{ type: 'text', text: 'Chapter' }],
+      },
+      { type: 'paragraph', children: [{ type: 'text', text: 'Body' }] },
+    ]);
+
+    const markdown = writeMarkdown(input, {
+      conversionDate: '2026-07-15',
+      inlineToc: true,
+      tocAtEnd: true,
+      tocTitle: 'Index',
+    });
+
+    expect(markdown).toContain(
+      '## Index\n\n1. [Part](#part)\n  1. [Chapter](#chapter)',
+    );
+    expect(markdown.indexOf('Body')).toBeLessThan(markdown.indexOf('## Index'));
   });
 
   it('writes headings, escaped paragraphs, formatting, and safe links', () => {

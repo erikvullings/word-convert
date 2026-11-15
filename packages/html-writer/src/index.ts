@@ -1,7 +1,9 @@
 import {
   applyChapterMarks,
+  createTocFromHeadings,
   countChapterGroups,
   isChapterMark,
+  nestTocEntries,
 } from '@wordconvert/document-model';
 import type {
   BlockNode,
@@ -13,6 +15,7 @@ import type {
   ChapterHeadingLevel,
   ChapterMark,
   ConversionWarning,
+  TocEntry,
 } from '@wordconvert/document-model';
 import { strToU8, zipSync, type Zippable } from 'fflate';
 import {
@@ -29,18 +32,13 @@ export interface HtmlWriterOptions extends WriterOptions {
   chapterSplitLevel?: ChapterHeadingLevel;
   chapterMark?: ChapterMark;
   onWarning?: (warning: ConversionWarning) => void;
-}
-
-interface HeadingEntry {
-  level: number;
-  id: string;
-  label: string;
+  inlineToc?: boolean;
+  tocAtEnd?: boolean;
+  tocTitle?: string;
 }
 
 interface RenderContext {
   model: DocumentModel;
-  headings: HeadingEntry[];
-  headingIndex: number;
   referencedNotes: string[];
   assetUrl: (asset: DocumentAsset) => string | undefined;
   formulaMode: MathOutputMode;
@@ -101,6 +99,8 @@ export function writeHtml(
     ...model,
     blocks: applyChapterMarks(model.blocks, chapterSplitLevel, chapterMark),
   };
+  const generatedToc = createTocFromHeadings(chapterModel.blocks);
+  const toc = chapterModel.toc ?? generatedToc;
   options.onWarning?.({
     code: 'html-chapter-count',
     severity: 'info',
@@ -116,6 +116,10 @@ export function writeHtml(
         chapterModel,
         (asset) => dataUrl(asset),
         options.formulaMode ?? 'source',
+        toc,
+        options.inlineToc ?? true,
+        options.tocAtEnd ?? false,
+        options.tocTitle ?? 'Contents',
       );
   if (options.mode === 'fragment') {
     options.onStage?.({
@@ -146,6 +150,10 @@ export async function writeHtmlZip(
         model,
         (asset) => registry.paths.get(asset.id),
         options.formulaMode ?? 'source',
+        model.toc ?? createTocFromHeadings(model.blocks),
+        options.inlineToc ?? true,
+        options.tocAtEnd ?? false,
+        options.tocTitle ?? 'Contents',
       );
   const title = escapeHtml(model.metadata.title?.value ?? 'Untitled document');
   const language = sanitizeLanguage(model.metadata.language?.value ?? 'en');
@@ -224,19 +232,21 @@ function writeFragment(
   model: DocumentModel,
   assetUrl: RenderContext['assetUrl'],
   formulaMode: MathOutputMode,
+  toc: readonly TocEntry[],
+  inlineToc: boolean,
+  tocAtEnd: boolean,
+  tocTitle: string,
 ): string {
-  const headings = collectHeadings(model.blocks);
   const context: RenderContext = {
     model,
-    headings,
-    headingIndex: 0,
     referencedNotes: [],
     assetUrl,
     formulaMode,
   };
   const content = renderBlocks(model.blocks, context);
   const notes = renderNotes(context);
-  return `<main>${renderDocumentTitle(model)}${renderToc(headings)}${content}${notes}</main>`;
+  const contents = inlineToc ? renderToc(toc, tocTitle) : '';
+  return `<main>${renderDocumentTitle(model)}${tocAtEnd ? '' : contents}${content}${notes}${tocAtEnd ? contents : ''}</main>`;
 }
 
 function renderDocumentTitle(model: DocumentModel): string {
@@ -259,37 +269,17 @@ function normaliseText(value: string): string {
   return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 }
 
-function collectHeadings(blocks: BlockNode[]): HeadingEntry[] {
-  const counts = new Map<string, number>();
-  const headings: HeadingEntry[] = [];
-  const visit = (nodes: BlockNode[]): void => {
-    for (const block of nodes) {
-      if (block.type === 'heading') {
-        const text = plainText(block.children);
-        const label = block.numbering ? `${block.numbering} ${text}` : text;
-        const base = slug(block.id ?? text);
-        const count = (counts.get(base) ?? 0) + 1;
-        counts.set(base, count);
-        headings.push({
-          level: block.level,
-          id: count === 1 ? base : `${base}-${count}`,
-          label,
-        });
-      } else if (block.type === 'list') {
-        for (const item of block.items) visit(item.blocks);
-      } else if (block.type === 'table') {
-        for (const row of block.rows)
-          for (const cell of row.cells) visit(cell.blocks);
-      } else if (block.type === 'blockquote') visit(block.blocks);
-    }
-  };
-  visit(blocks);
-  return headings;
-}
-
-function renderToc(headings: HeadingEntry[]): string {
-  if (headings.length === 0) return '';
-  return `<div class="table-of-contents"><h2>Contents</h2><ol>${headings.map(({ id, label }) => `<li><a href="#${escapeAttribute(id)}">${escapeHtml(label)}</a></li>`).join('')}</ol></div>`;
+function renderToc(entries: readonly TocEntry[], title: string): string {
+  const nested = nestTocEntries(entries);
+  if (nested.length === 0) return '';
+  const render = (items: typeof nested): string =>
+    items
+      .map(
+        ({ target, label, children }) =>
+          `<li><a href="#${escapeAttribute(target)}">${escapeHtml(label)}</a>${children.length ? `<ol>${render(children)}</ol>` : ''}</li>`,
+      )
+      .join('');
+  return `<nav class="table-of-contents" aria-label="${escapeAttribute(title)}"><h2>${escapeHtml(title)}</h2><ol>${render(nested)}</ol></nav>`;
 }
 
 function renderBlocks(blocks: BlockNode[], context: RenderContext): string {
@@ -300,14 +290,14 @@ function renderBlock(block: BlockNode, context: RenderContext): string {
   switch (block.type) {
     case 'paragraph': {
       const classes = paragraphIndentClasses(block.indent);
-      return `<p${classes ? ` class="${classes}"` : ''}>${renderInlines(block.children, context)}</p>`;
+      const id = block.id ? ` id="${escapeAttribute(block.id)}"` : '';
+      return `<p${id}${classes ? ` class="${classes}"` : ''}>${renderInlines(block.children, context)}</p>`;
     }
     case 'heading': {
-      const heading = context.headings[context.headingIndex++];
       const numbering = block.numbering
         ? `${escapeHtml(block.numbering)} `
         : '';
-      return `<h${block.level} id="${escapeAttribute(heading?.id ?? 'section')}">${numbering}${renderInlines(block.children, context)}</h${block.level}>`;
+      return `<h${block.level} id="${escapeAttribute(block.id ?? 'section')}">${numbering}${renderInlines(block.children, context)}</h${block.level}>`;
     }
 
     case 'list': {

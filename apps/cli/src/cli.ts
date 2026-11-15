@@ -80,6 +80,17 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --chapter-detection <mode> off, automatic (default), or custom (PDF input)
       --chapter-mark <mark>    pagebreak, rule, none (default), or both
       --chapter-split-level <1-6>  Heading level that starts chapters; default 2
+      --toc-source <source>    automatic (default), embedded, generated, or off (PDF)
+      --use-auto-toc           Force TOC creation from internal links (PDF)
+      --no-chapters-in-toc     Disable all TOC entries (PDF)
+      --toc-threshold <n>      Add internal-link TOC entries below this chapter count; default 6
+      --max-toc-links <n>      Maximum internal-link TOC entries; default 50
+      --duplicate-links-in-toc Allow repeated labels only for distinct targets
+      --no-toc-embedded        Prefer generated headings over PDF bookmarks
+      --toc-filter <pattern>   Bounded case-insensitive TOC label filter (PDF)
+      --toc-title <text>       Contents heading; default Contents
+      --toc-inline             Add a visible contents page/section
+      --toc-at-end             Place visible contents after book content
       --title <text>           Override inferred title
       --author <name>          Override authors (repeat for multiple authors)
       --cover <path>           Use a JPEG, PNG, WebP, or SVG EPUB cover image
@@ -300,6 +311,45 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     const chapterSplitLevel = parseChapterSplitLevel(
       values['chapter-split-level'],
     );
+    const tocSource = parseTocSource(
+      values['toc-source'],
+      values['no-chapters-in-toc'] ?? false,
+      values['no-toc-embedded'] ?? false,
+    );
+    const tocThreshold = parseTocLimit(
+      values['toc-threshold'],
+      6,
+      'toc-threshold',
+    );
+    const maxTocLinks = parseTocLimit(
+      values['max-toc-links'],
+      50,
+      'max-toc-links',
+    );
+    const tocFilter = parseTocFilter(values['toc-filter']);
+    const tocTitle = values['toc-title'];
+    if (tocTitle !== undefined && tocTitle.length > 200)
+      throw new UsageError('--toc-title must be at most 200 characters.');
+    if (values['toc-at-end'] && !values['toc-inline'])
+      throw new UsageError('--toc-at-end requires --toc-inline.');
+    if (
+      extension !== '.pdf' &&
+      (values['toc-source'] !== undefined ||
+        values['use-auto-toc'] ||
+        values['no-chapters-in-toc'] ||
+        values['toc-threshold'] !== undefined ||
+        values['max-toc-links'] !== undefined ||
+        values['duplicate-links-in-toc'] ||
+        values['no-toc-embedded'] ||
+        values['toc-filter'] !== undefined)
+    )
+      throw new UsageError(
+        'PDF TOC source and link options require PDF input.',
+      );
+    if (values['use-auto-toc'] && tocSource === 'off')
+      throw new UsageError(
+        '--use-auto-toc cannot be combined with --no-chapters-in-toc or --toc-source off.',
+      );
     const maxImageSize = parseMaxImageSize(values['max-image-size']);
     const imageFormat = values['image-format'] ?? 'jpeg';
     if (imageFormat !== 'jpeg' && imageFormat !== 'preserve')
@@ -511,6 +561,20 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         chapterDetection: extension === '.pdf' ? chapterDetection : null,
         chapterMark,
         chapterSplitLevel,
+        toc:
+          extension === '.pdf'
+            ? {
+                source: tocSource,
+                threshold: tocThreshold,
+                maxLinks: maxTocLinks,
+                duplicateLinks: values['duplicate-links-in-toc'] ?? false,
+                useAutoToc: values['use-auto-toc'] ?? false,
+                ...(tocFilter ? { filter: tocFilter } : {}),
+              }
+            : null,
+        tocTitle: tocTitle ?? null,
+        inlineToc: values['toc-inline'] ?? false,
+        tocAtEnd: values['toc-at-end'] ?? false,
         stylePreset: presetPath ? sanitizeBasename(presetPath) : null,
         cover: values.cover ? sanitizeBasename(values.cover) : null,
         title: sanitizeRequestText(values.title),
@@ -689,6 +753,14 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         ...(dehyphenate !== undefined ? { dehyphenate } : {}),
         chapterDetection,
         chapterSplitLevel,
+        toc: {
+          source: tocSource,
+          threshold: tocThreshold,
+          maxLinks: maxTocLinks,
+          duplicateLinks: values['duplicate-links-in-toc'] ?? false,
+          useAutoToc: values['use-auto-toc'] ?? false,
+          ...(tocFilter ? { filter: tocFilter } : {}),
+        },
         ...(layoutModel ? { layoutModel } : {}),
         ...(formulaModelDir ? { formulaModelDir } : {}),
         ...(values['runtime-dir'] ? { runtimeDir: values['runtime-dir'] } : {}),
@@ -768,6 +840,9 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       imageQuality,
       chapterMark,
       chapterSplitLevel,
+      tocTitle,
+      inlineToc: values['toc-inline'] ?? false,
+      tocAtEnd: values['toc-at-end'] ?? false,
       runtimeDir: values['runtime-dir'],
       warn: io.stderr,
       ...(cover ? { cover } : {}),
@@ -830,6 +905,17 @@ function parseArguments(argv: string[]) {
         'chapter-detection': { type: 'string' },
         'chapter-mark': { type: 'string' },
         'chapter-split-level': { type: 'string' },
+        'toc-source': { type: 'string' },
+        'use-auto-toc': { type: 'boolean' },
+        'no-chapters-in-toc': { type: 'boolean' },
+        'toc-threshold': { type: 'string' },
+        'max-toc-links': { type: 'string' },
+        'duplicate-links-in-toc': { type: 'boolean' },
+        'no-toc-embedded': { type: 'boolean' },
+        'toc-filter': { type: 'string' },
+        'toc-title': { type: 'string' },
+        'toc-inline': { type: 'boolean' },
+        'toc-at-end': { type: 'boolean' },
         language: { type: 'string' },
         identifier: { type: 'string' },
         'formula-mode': { type: 'string' },
@@ -1166,6 +1252,63 @@ function parseChapterSplitLevel(
   return level as ChapterHeadingLevel;
 }
 
+function parseTocSource(
+  value: string | undefined,
+  noChapters: boolean,
+  noEmbedded: boolean,
+): 'automatic' | 'embedded' | 'generated' | 'off' {
+  if (noChapters && (value !== undefined || noEmbedded))
+    throw new UsageError(
+      '--no-chapters-in-toc cannot be combined with --toc-source or --no-toc-embedded.',
+    );
+  if (noEmbedded && value !== undefined)
+    throw new UsageError(
+      '--no-toc-embedded cannot be combined with --toc-source.',
+    );
+  if (noChapters) return 'off';
+  if (noEmbedded) return 'generated';
+  const source = value ?? 'automatic';
+  if (
+    source !== 'automatic' &&
+    source !== 'embedded' &&
+    source !== 'generated' &&
+    source !== 'off'
+  )
+    throw new UsageError(
+      '--toc-source must be automatic, embedded, generated, or off.',
+    );
+  return source;
+}
+
+function parseTocLimit(
+  value: string | undefined,
+  fallback: number,
+  name: string,
+): number {
+  const parsed = Number(value ?? fallback);
+  if (!/^\d+$/.test(value ?? String(fallback)) || parsed > 500)
+    throw new UsageError(`--${name} must be an integer from 0 to 500.`);
+  return parsed;
+}
+
+function parseTocFilter(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value.length === 0 ||
+    value.length > 128 ||
+    /\\[1-9]|[|()]|[+*?]|\{\d+(?:,\d*)?\}/u.test(value)
+  )
+    throw new UsageError(
+      '--toc-filter must be a valid pattern of at most 128 characters without groups, alternation, backreferences, or quantifiers.',
+    );
+  try {
+    new RegExp(value, 'iu');
+  } catch {
+    throw new UsageError('--toc-filter must be a valid regular expression.');
+  }
+  return value;
+}
+
 async function render(
   model: DocumentModel,
   format: Format,
@@ -1177,6 +1320,9 @@ async function render(
     imageQuality: number;
     chapterMark: ChapterMark;
     chapterSplitLevel: ChapterHeadingLevel;
+    tocTitle: string | undefined;
+    inlineToc: boolean;
+    tocAtEnd: boolean;
     runtimeDir: string | undefined;
     warn: (message: string) => void;
     cover?: EpubWriterOptions['cover'];
@@ -1189,6 +1335,9 @@ async function render(
     formulaMode,
     chapterMark: images.chapterMark,
     chapterSplitLevel: images.chapterSplitLevel,
+    ...(images.tocTitle ? { tocTitle: images.tocTitle } : {}),
+    inlineToc: images.inlineToc,
+    tocAtEnd: images.tocAtEnd,
     ...(images.onStage ? { onStage: images.onStage } : {}),
   };
   const onWarning = (warning: DocumentModel['warnings'][number]): void => {
@@ -1225,6 +1374,9 @@ async function render(
         imageQuality: images.imageQuality,
         chapterMark: images.chapterMark,
         chapterSplitLevel: images.chapterSplitLevel,
+        ...(images.tocTitle ? { tocTitle: images.tocTitle } : {}),
+        inlineToc: images.inlineToc,
+        tocAtEnd: images.tocAtEnd,
         onWarning,
         ...(images.cover ? { cover: images.cover } : {}),
         ...(images.coverPng ? { coverPng: images.coverPng } : {}),

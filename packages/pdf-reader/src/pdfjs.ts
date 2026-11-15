@@ -178,8 +178,15 @@ interface PdfJsImage {
 interface PdfJsAnnotation {
   subtype?: unknown;
   url?: unknown;
+  dest?: unknown;
   rect?: unknown;
 }
+
+type PdfDestinationResolver = (
+  destination: unknown,
+) => Promise<
+  { page: number; position?: { x?: number; top?: number } } | undefined
+>;
 
 interface PdfJsInlineImageMap {
   transform: Matrix;
@@ -256,6 +263,14 @@ export async function extractPdfWithPdfJs(
       readMetadata(document),
       readOutline(document),
     ]);
+    const destinationPageViewports = new Map<
+      number,
+      { width: number; height: number; transform: Matrix }
+    >();
+    const resolveInternalDestination: PdfDestinationResolver = (destination) =>
+      outlineDestinationPage(document!, destination, {
+        pageViewports: destinationPageViewports,
+      });
     const pageNumbers = representativePageNumbers(
       document.numPages,
       options.samplePageCount,
@@ -290,6 +305,7 @@ export async function extractPdfWithPdfJs(
             countOmittedImages: !isSample && options.extractImages === false,
             densePageMode,
             guard,
+            resolveDestination: resolveInternalDestination,
           });
           if (extracted.denseMode) densePageMode = extracted.denseMode;
           textItems += extracted.page.spans.length;
@@ -352,7 +368,8 @@ export async function extractPdfWithPdfJs(
       pageCount: document.numPages,
       pages,
       metadata,
-      outline,
+      outline: outline.items,
+      ...(outline.truncated ? { outlineTruncated: true } : {}),
     };
   } catch (cause) {
     if (cause instanceof PdfReadError) throw cause;
@@ -413,6 +430,7 @@ export interface GuardedPageContext {
   densePageMode: PdfDensePageMode | undefined;
   /** Set after the first page deadline; later pages no longer share the layout model with abandoned work. */
   guard: { timedOut: boolean };
+  resolveDestination?: PdfDestinationResolver;
 }
 
 function countImagePlacements(operators: PdfOperatorList): number {
@@ -497,6 +515,7 @@ export async function readGuardedPage(
             budgets.image,
             figureRasterizer,
             signal,
+            context.resolveDestination,
           )
         : readPage(
             page,
@@ -513,6 +532,7 @@ export async function readGuardedPage(
             loadedOperators,
             !dense && !context.guard.timedOut,
             options.tableSignals,
+            context.resolveDestination,
           ),
     );
     const densePage = dense ? { dense: true } : {};
@@ -540,6 +560,7 @@ export async function readGuardedPage(
           budgets.image,
           figureRasterizer,
           signal,
+          context.resolveDestination,
         ),
       );
       if (rasterized)
@@ -555,7 +576,13 @@ export async function readGuardedPage(
     }
   }
   const textOnly = await attemptPage(context, (signal) =>
-    readTextOnlyPage(page, pageNumber, limits, signal),
+    readTextOnlyPage(
+      page,
+      pageNumber,
+      limits,
+      signal,
+      context.resolveDestination,
+    ),
   );
   if (textOnly)
     return {
@@ -831,6 +858,7 @@ async function readPageText(
   pageNumber: number,
   limits: PdfReaderLimits,
   cancellation?: CancellationSignal,
+  resolveDestination?: PdfDestinationResolver,
 ): Promise<{ spans: RawPdfTextSpan[]; links: RawPdfLink[] }> {
   const viewport = page.getViewport({ scale: 1 });
   const [text, annotations] = await Promise.all([
@@ -842,7 +870,7 @@ async function readPageText(
   ]);
   throwIfCancelled(cancellation);
   enforcePageTextLimit(text, limits);
-  const links = readLinks(annotations, viewport);
+  const links = await readLinks(annotations, viewport, resolveDestination);
   return {
     spans: readSpans(
       text,
@@ -879,6 +907,7 @@ async function readTextOnlyPage(
   pageNumber: number,
   limits: PdfReaderLimits,
   cancellation?: CancellationSignal,
+  resolveDestination?: PdfDestinationResolver,
 ): Promise<RawPdfPage> {
   const viewport = page.getViewport({ scale: 1 });
   const { spans, links } = await readPageText(
@@ -886,6 +915,7 @@ async function readTextOnlyPage(
     pageNumber,
     limits,
     cancellation,
+    resolveDestination,
   );
   return {
     number: pageNumber,
@@ -907,12 +937,19 @@ async function readRasterizedPage(
   imageBudget: PdfImageBudget,
   rasterizer: PdfFigureRasterizer,
   cancellation?: CancellationSignal,
+  resolveDestination?: PdfDestinationResolver,
 ): Promise<RawPdfPage> {
   const viewport = page.getViewport({ scale: 1 });
   const text =
     mode === 'image-only'
       ? { spans: [], links: [] }
-      : await readPageText(page, pageNumber, limits, cancellation);
+      : await readPageText(
+          page,
+          pageNumber,
+          limits,
+          cancellation,
+          resolveDestination,
+        );
   const spans =
     mode === 'image-and-prose' ? proseSpans(text.spans) : text.spans;
   const linkIds = new Set(spans.map(({ linkId }) => linkId));
@@ -1173,6 +1210,7 @@ async function readPage(
     tagged: true,
     ruled: true,
   },
+  resolveDestination?: PdfDestinationResolver,
 ): Promise<RawPdfPage> {
   const viewport = page.getViewport({ scale: 1 });
   const [text, annotations, structure, operators] = await Promise.all([
@@ -1186,7 +1224,7 @@ async function readPage(
   ]);
   throwIfCancelled(cancellation);
   enforcePageTextLimit(text, limits);
-  const links = readLinks(annotations, viewport);
+  const links = await readLinks(annotations, viewport, resolveDestination);
   const spans = readSpans(
     text,
     links,
@@ -1425,21 +1463,25 @@ export function readSpans(
   return spans;
 }
 
-function readLinks(
+async function readLinks(
   annotations: readonly unknown[],
   viewport: PageViewport,
-): RawPdfLink[] {
+  resolveDestination?: PdfDestinationResolver,
+): Promise<RawPdfLink[]> {
   const links: RawPdfLink[] = [];
   for (const annotation of annotations) {
     if (!isRecord(annotation)) continue;
     const value = annotation as PdfJsAnnotation;
-    if (
-      value.subtype !== 'Link' ||
-      typeof value.url !== 'string' ||
-      !isSafeLink(value.url) ||
-      !isNumberArray(value.rect, 4)
-    )
-      continue;
+    if (value.subtype !== 'Link' || !isNumberArray(value.rect, 4)) continue;
+    const externalHref =
+      typeof value.url === 'string' && isSafeLink(value.url)
+        ? value.url
+        : undefined;
+    const destination =
+      externalHref || value.dest === undefined
+        ? undefined
+        : await resolveDestination?.(value.dest);
+    if (!externalHref && !destination) continue;
     const first = viewport.convertToViewportPoint(
       value.rect[0]!,
       value.rect[1]!,
@@ -1455,7 +1497,21 @@ function readLinks(
     const bottom = Math.max(rectangle[1]!, rectangle[3]!);
     links.push({
       id: `pdf-link-${links.length}`,
-      href: value.url,
+      href:
+        externalHref ??
+        `#pdf-page-${destination!.page}${
+          destination!.position?.top === undefined
+            ? ''
+            : `-top-${destination!.position.top.toFixed(4)}`
+        }`,
+      ...(destination
+        ? {
+            destinationPage: destination.page,
+            ...(destination.position?.top === undefined
+              ? {}
+              : { destinationTop: destination.position.top }),
+          }
+        : {}),
       x: clamp(left / viewport.width),
       top: clamp(top / viewport.height),
       width: clamp((right - left) / viewport.width),
@@ -3085,26 +3141,155 @@ function pdfDate(value: string | undefined): string | undefined {
 
 async function readOutline(
   document: PDFDocumentProxy,
-): Promise<RawPdfOutlineItem[]> {
+): Promise<{ items: RawPdfOutlineItem[]; truncated: boolean }> {
   const outline = await document.getOutline();
-  return (outline ?? []).map((item) => ({
-    title: item.title,
-    ...(typeof item.dest === 'string' ? { destination: item.dest } : {}),
-    children: readOutlineChildren(item.items),
-  }));
+  const state = {
+    count: 0,
+    truncated: false,
+    pageViewports: new Map<
+      number,
+      { width: number; height: number; transform: Matrix }
+    >(),
+  };
+  const items = await readOutlineChildren(document, outline ?? [], state, 1);
+  return { items, truncated: state.truncated };
 }
 
-function readOutlineChildren(items: readonly unknown[]): RawPdfOutlineItem[] {
-  return items
-    .filter(isRecord)
-    .map((item) => ({
-      title: stringValue(item.title) ?? '',
-      ...(typeof item.dest === 'string' ? { destination: item.dest } : {}),
-      children: Array.isArray(item.items)
-        ? readOutlineChildren(item.items)
-        : [],
-    }))
-    .filter(({ title }) => Boolean(title));
+async function readOutlineChildren(
+  document: PDFDocumentProxy,
+  items: readonly unknown[],
+  state: {
+    count: number;
+    truncated: boolean;
+    pageViewports: Map<
+      number,
+      { width: number; height: number; transform: Matrix }
+    >;
+  },
+  depth: number,
+): Promise<RawPdfOutlineItem[]> {
+  const output: RawPdfOutlineItem[] = [];
+  for (const value of items) {
+    if (!isRecord(value)) continue;
+    if (depth > 6 || state.count >= 500) {
+      state.truncated = true;
+      break;
+    }
+    const title = stringValue(value.title)?.trim() ?? '';
+    if (!title) continue;
+    state.count++;
+    const boundedTitle = title.slice(0, 512);
+    if (boundedTitle.length !== title.length) state.truncated = true;
+    const resolved = await outlineDestinationPage(document, value.dest, state);
+    const children = Array.isArray(value.items)
+      ? await readOutlineChildren(document, value.items, state, depth + 1)
+      : [];
+    output.push({
+      title: boundedTitle,
+      ...(resolved ? { page: resolved.page } : {}),
+      ...(resolved?.position ? { position: resolved.position } : {}),
+      children,
+    });
+  }
+  return output;
+}
+
+async function outlineDestinationPage(
+  document: PDFDocumentProxy,
+  destination: unknown,
+  state: {
+    pageViewports: Map<
+      number,
+      { width: number; height: number; transform: Matrix }
+    >;
+  },
+): Promise<
+  { page: number; position?: { x?: number; top?: number } } | undefined
+> {
+  let explicit: unknown;
+  try {
+    explicit =
+      typeof destination === 'string'
+        ? await document.getDestination(destination)
+        : destination;
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(explicit) || explicit.length === 0) return undefined;
+  const reference = explicit[0];
+  let pageIndex: number;
+  if (typeof reference === 'number')
+    pageIndex = Number.isInteger(reference) ? reference : -1;
+  else {
+    if (typeof reference !== 'object' || reference === null) return undefined;
+    try {
+      pageIndex = await document.getPageIndex(
+        reference as Parameters<typeof document.getPageIndex>[0],
+      );
+    } catch {
+      return undefined;
+    }
+  }
+  if (pageIndex < 0 || pageIndex >= document.numPages) return undefined;
+  const pageNumber = pageIndex + 1;
+  const position = await outlineDestinationPosition(
+    document,
+    pageNumber,
+    explicit,
+    state.pageViewports,
+  );
+  return { page: pageNumber, ...(position ? { position } : {}) };
+}
+
+async function outlineDestinationPosition(
+  document: PDFDocumentProxy,
+  pageNumber: number,
+  destination: readonly unknown[],
+  cache: Map<number, { width: number; height: number; transform: Matrix }>,
+): Promise<{ x?: number; top?: number } | undefined> {
+  const x = destinationNumber(destination[2]);
+  const y = destinationNumber(destination[3]);
+  if (x === undefined && y === undefined) return undefined;
+  let page = cache.get(pageNumber);
+  if (!page) {
+    const proxy = await document.getPage(pageNumber);
+    try {
+      const viewport = proxy.getViewport({ scale: 1 });
+      page = {
+        width: viewport.width,
+        height: viewport.height,
+        transform: viewport.transform as Matrix,
+      };
+      cache.set(pageNumber, page);
+    } finally {
+      proxy.cleanup();
+    }
+  }
+  const pointX =
+    page.transform[0] * (x ?? 0) +
+    page.transform[2] * (y ?? 0) +
+    page.transform[4];
+  const pointY =
+    page.transform[1] * (x ?? 0) +
+    page.transform[3] * (y ?? 0) +
+    page.transform[5];
+  return {
+    ...(x === undefined ? {} : { x: clamp(pointX / Math.max(page.width, 1)) }),
+    ...(y === undefined
+      ? {}
+      : { top: clamp(pointY / Math.max(page.height, 1)) }),
+  };
+}
+
+function destinationNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (
+    isRecord(value) &&
+    typeof value.num === 'number' &&
+    Number.isFinite(value.num)
+  )
+    return value.num;
+  return undefined;
 }
 
 function isTextItem(value: unknown): value is TextItem {

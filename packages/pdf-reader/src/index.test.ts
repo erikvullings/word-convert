@@ -1781,6 +1781,69 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
       });
     });
 
+    it('resolves nested PDF bookmarks to bounded page positions and semantic headings', async () => {
+      const bytes = await fixture('nested-outline.pdf');
+      const raw = await pdfJsReader.readRaw(bytes, {
+        conversionDate: '2026-08-29',
+      });
+
+      expect(raw.outline).toMatchObject([
+        {
+          title: 'Part One',
+          page: 1,
+          children: [
+            {
+              title: 'Chapter One',
+              page: 1,
+              children: [{ title: 'Section One', page: 2 }],
+            },
+          ],
+        },
+      ]);
+      expect(raw.outline[0]?.position?.top).toBeGreaterThanOrEqual(0);
+      expect(raw.outline[0]?.position?.top).toBeLessThanOrEqual(1);
+
+      const result = await pdfJsReader.read(bytes, {
+        conversionDate: '2026-08-29',
+      });
+      expect(result.model.toc).toMatchObject([
+        {
+          label: 'Part One',
+          level: 1,
+          provenance: { source: 'pdf-outline' },
+        },
+        {
+          label: 'Chapter One',
+          level: 2,
+          provenance: { source: 'pdf-outline' },
+        },
+        {
+          label: 'Section One',
+          level: 3,
+          provenance: { source: 'pdf-outline' },
+        },
+      ]);
+    });
+
+    it('limits hostile bookmark depth and title length', async () => {
+      const raw = await pdfJsReader.readRaw(
+        await fixture('hostile-outline.pdf'),
+        {
+          conversionDate: '2026-08-29',
+        },
+      );
+      let item = raw.outline[0];
+      let depth = item ? 1 : 0;
+      while (item?.children[0]) {
+        item = item.children[0];
+        depth++;
+      }
+
+      expect(depth).toBe(6);
+      expect(raw.outline[0]?.title).toHaveLength(512);
+      expect(raw.outlineTruncated).toBe(true);
+    });
+
     it('extracts a deterministic representative page sample without images', async () => {
       const raw = await pdfJsReader.readRaw(
         await fixture('one-column-book.pdf'),
@@ -1857,6 +1920,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
         warning: [
           'pdf-ocr-not-supported',
           'pdf-line-reflow-summary',
+          'pdf-toc-source',
           'chapters-detected',
         ],
       });
@@ -2352,6 +2416,395 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
         type: 'heading',
         id: '1-introduction',
       }),
+    );
+    expect(result.model.toc).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: '1. Introduction',
+          target: '1-introduction',
+          provenance: expect.objectContaining({
+            source: 'pdf-text',
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it('prefers resolved embedded outlines and filters descendants without dropping the remaining TOC', async () => {
+    const raw = rawDocument([
+      {
+        number: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        spans: [
+          span('Chapter One', 0.18, 0.1, { fontSize: 18, bold: true }),
+          span('Section One', 0.18, 0.2, { fontSize: 14, bold: true }),
+          span('Chapter Two', 0.18, 0.4, { fontSize: 18, bold: true }),
+          span('Body text.', 0.18, 0.5),
+        ],
+        links: [],
+        images: [],
+      },
+    ]);
+    raw.outline = [
+      {
+        title: 'Appendix',
+        page: 1,
+        position: { top: 0.1 },
+        children: [
+          {
+            title: 'Appendix Section',
+            page: 1,
+            position: { top: 0.2 },
+            children: [],
+          },
+        ],
+      },
+      {
+        title: 'Keep Chapter',
+        page: 1,
+        position: { top: 0.4 },
+        children: [],
+      },
+    ];
+
+    const embedded = await analysePdf(raw, {
+      conversionDate: '2026-08-31',
+      styleMappings: {
+        'pdf-body-18-bold-roman': 'heading1',
+        'pdf-body-14-bold-roman': 'heading2',
+      },
+      toc: { source: 'automatic' },
+    });
+    expect(embedded.model.toc).toMatchObject([
+      {
+        label: 'Appendix',
+        level: 1,
+        provenance: {
+          source: 'pdf-outline',
+          location: 'pdf-page:1:top:0.1000',
+        },
+      },
+      { label: 'Appendix Section', level: 2 },
+      { label: 'Keep Chapter', level: 1 },
+    ]);
+
+    const filtered = await analysePdf(raw, {
+      conversionDate: '2026-08-31',
+      styleMappings: {
+        'pdf-body-18-bold-roman': 'heading1',
+        'pdf-body-14-bold-roman': 'heading2',
+      },
+      toc: { source: 'automatic', filter: 'Appendix' },
+    });
+    expect(filtered.model.toc?.map(({ label }) => label)).toEqual([
+      'Keep Chapter',
+    ]);
+    expect(filtered.model.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'pdf-toc-filtered',
+        details: { removed: 2 },
+      }),
+    );
+
+    const generated = await analysePdf(raw, {
+      conversionDate: '2026-08-31',
+      styleMappings: {
+        'pdf-body-18-bold-roman': 'heading1',
+        'pdf-body-14-bold-roman': 'heading2',
+      },
+      toc: { source: 'generated' },
+    });
+    expect(
+      generated.model.toc?.every(
+        ({ provenance }) => provenance.source !== 'pdf-outline',
+      ),
+    ).toBe(true);
+
+    const disabled = await analysePdf(raw, {
+      conversionDate: '2026-08-31',
+      styleMappings: {
+        'pdf-body-18-bold-roman': 'heading1',
+        'pdf-body-14-bold-roman': 'heading2',
+      },
+      toc: { source: 'off' },
+    });
+    expect(disabled.model.toc).toEqual([]);
+
+    const cyclic: RawPdfDocument['outline'][number] = {
+      title: 'Loop',
+      page: 1,
+      children: [],
+    };
+    cyclic.children.push(cyclic);
+    raw.outline = [cyclic];
+    const cycleResult = await analysePdf(raw, {
+      conversionDate: '2026-08-31',
+      styleMappings: {
+        'pdf-body-18-bold-roman': 'heading1',
+        'pdf-body-14-bold-roman': 'heading2',
+      },
+      toc: { source: 'embedded' },
+    });
+    expect(cycleResult.model.toc).toHaveLength(1);
+    expect(cycleResult.model.toc?.[0]?.label).toBe('Loop');
+  });
+
+  it('recognizes leaderless and tabbed printed TOCs without treating prose as entries', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Contents', 0.18, 0.1, { fontSize: 16 }),
+            span('Alpha 12', 0.18, 0.2),
+            span('Beta 13', 0.18, 0.35),
+            span('Gamma\t14', 0.18, 0.5),
+            span('Delta .... 15', 0.18, 0.65),
+            span('This ordinary numbered paragraph ends with 2.', 0.18, 0.8),
+          ],
+          links: [],
+          images: [],
+        },
+        {
+          number: 2,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Alpha', 0.18, 0.1, { fontSize: 16, bold: true }),
+            span('Beta', 0.18, 0.3, { fontSize: 16, bold: true }),
+            span('Gamma', 0.18, 0.5, { fontSize: 16, bold: true }),
+            span('Delta', 0.18, 0.7, { fontSize: 16, bold: true }),
+            span('Body text.', 0.18, 0.9),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      {
+        conversionDate: '2026-08-31',
+        styleMappings: { 'pdf-body-16-bold-roman': 'heading1' },
+      },
+    );
+
+    const linkedPrintedEntries = result.model.blocks
+      .filter(
+        (block) =>
+          block.type === 'paragraph' &&
+          block.children.some((child) => child.type === 'link'),
+      )
+      .flatMap((block) =>
+        block.type === 'paragraph'
+          ? block.children.flatMap((child) =>
+              child.type === 'link' ? [child.href] : [],
+            )
+          : [],
+      );
+    expect(linkedPrintedEntries).toEqual(
+      expect.arrayContaining(['#alpha', '#beta', '#gamma', '#delta']),
+    );
+    expect(result.model.blocks).toContainEqual(
+      expect.objectContaining({
+        type: 'paragraph',
+        children: [
+          expect.objectContaining({
+            type: 'text',
+            text: 'This ordinary numbered paragraph ends with 2.',
+          }),
+        ],
+      }),
+    );
+  });
+
+  it('anchors embedded outlines to a spine position when no semantic heading exists', async () => {
+    const raw = rawDocument([
+      {
+        number: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        spans: [
+          span(
+            'This is ordinary body text with no semantic heading.',
+            0.18,
+            0.3,
+            {
+              linkId: 'internal',
+            },
+          ),
+        ],
+        links: [
+          {
+            id: 'internal',
+            href: '#pdf-page-1-top-0.7000',
+            destinationPage: 1,
+            destinationTop: 0.7,
+            x: 0.18,
+            top: 0.3,
+            width: 0.6,
+            height: 0.02,
+          },
+        ],
+        images: [],
+      },
+    ]);
+    raw.outline = [
+      {
+        title: 'Introduction',
+        page: 1,
+        position: { top: 0.7 },
+        children: [],
+      },
+    ];
+
+    const result = await analysePdf(raw, {
+      conversionDate: '2026-08-31',
+      toc: { source: 'embedded' },
+    });
+
+    expect(result.model.blocks).toContainEqual(
+      expect.objectContaining({
+        type: 'paragraph',
+        id: 'pdf-page-1',
+      }),
+    );
+    expect(result.model.blocks).toContainEqual(
+      expect.objectContaining({
+        type: 'paragraph',
+        children: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'link',
+            href: '#pdf-page-1',
+          }),
+        ]),
+      }),
+    );
+    expect(result.model.toc).toMatchObject([
+      {
+        label: 'Introduction',
+        target: 'pdf-page-1',
+        provenance: {
+          source: 'pdf-outline',
+          reason:
+            'Resolved an embedded PDF bookmark to a generated spine-position anchor.',
+        },
+      },
+    ]);
+  });
+
+  it('uses only safe internal links and resolves them to the nearest heading target', async () => {
+    const raw = rawDocument([
+      {
+        number: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        spans: [
+          span('Chapter One', 0.18, 0.1, { fontSize: 18, bold: true }),
+          span('Body text.', 0.18, 0.2),
+          span('Overview', 0.18, 0.35, { linkId: 'first' }),
+          span('Overview', 0.18, 0.45, { linkId: 'second' }),
+          span('External', 0.18, 0.55, { linkId: 'external' }),
+          span('Chapter Two', 0.18, 0.8, { fontSize: 18, bold: true }),
+        ],
+        links: [
+          {
+            id: 'first',
+            href: '#pdf-page-1-top-0.1000',
+            destinationPage: 1,
+            destinationTop: 0.1,
+            x: 0.18,
+            top: 0.35,
+            width: 0.2,
+            height: 0.02,
+          },
+          {
+            id: 'second',
+            href: '#pdf-page-1-top-0.8000',
+            destinationPage: 1,
+            destinationTop: 0.8,
+            x: 0.18,
+            top: 0.45,
+            width: 0.2,
+            height: 0.02,
+          },
+          {
+            id: 'external',
+            href: 'https://example.test',
+            x: 0.18,
+            top: 0.55,
+            width: 0.2,
+            height: 0.02,
+          },
+        ],
+        images: [],
+      },
+    ]);
+    const options = {
+      conversionDate: '2026-08-31',
+      styleMappings: { 'pdf-body-18-bold-roman': 'heading1' as const },
+      toc: { source: 'generated' as const },
+    };
+
+    const defaultToc = await analysePdf(raw, options);
+    expect(
+      defaultToc.model.toc?.filter(({ label }) => label === 'Overview'),
+    ).toHaveLength(1);
+    expect(
+      defaultToc.model.toc?.some(({ label }) => label === 'External'),
+    ).toBe(false);
+    expect(defaultToc.model.blocks).toContainEqual(
+      expect.objectContaining({
+        type: 'paragraph',
+        children: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'link',
+            href: '#chapter-two',
+          }),
+        ]),
+      }),
+    );
+
+    const duplicates = await analysePdf(raw, {
+      ...options,
+      toc: { ...options.toc, duplicateLinks: true },
+    });
+    expect(
+      duplicates.model.toc?.filter(({ label }) => label === 'Overview'),
+    ).toHaveLength(2);
+  });
+
+  it('retains the unfiltered TOC with a warning when a filter matches every entry', async () => {
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            span('Chapter One', 0.18, 0.1, { fontSize: 18, bold: true }),
+            span('Body text.', 0.18, 0.2),
+          ],
+          links: [],
+          images: [],
+        },
+      ]),
+      {
+        conversionDate: '2026-08-31',
+        styleMappings: { 'pdf-body-18-bold-roman': 'heading1' },
+        toc: { source: 'generated', filter: '^' },
+      },
+    );
+
+    expect(result.model.toc).toHaveLength(1);
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({ code: 'pdf-toc-filter-empty' }),
     );
   });
 

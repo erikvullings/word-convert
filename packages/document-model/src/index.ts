@@ -21,6 +21,8 @@ export {
   type ChapterHeadingLevel,
   type ChapterMark,
 } from './chapter-detection.ts';
+export { createTocFromHeadings, nestTocEntries } from './toc.ts';
+export type { NestedTocEntry } from './toc.ts';
 
 export type Confidence = 'low' | 'medium' | 'high' | 'certain';
 
@@ -121,6 +123,7 @@ export type InlineNode =
 export interface ParagraphNode {
   type: 'paragraph';
   children: InlineNode[];
+  id?: string;
   styleId?: string;
   indent?: ParagraphIndent;
 }
@@ -141,6 +144,15 @@ export interface HeadingNode {
   styleId?: string;
   id?: string;
   provenance?: Provenance;
+}
+
+export interface TocEntry {
+  label: string;
+  /** Safe generated fragment identifier without the leading `#`. */
+  target: string;
+  level: number;
+  provenance: Provenance;
+  confidence: Confidence;
 }
 
 export interface ListNode {
@@ -318,6 +330,7 @@ export interface DocumentModel {
   notes: Record<string, Note>;
   styles: AnalysedStyle[];
   warnings: ConversionWarning[];
+  toc?: TocEntry[];
 }
 
 export type ProgressPhase =
@@ -448,6 +461,45 @@ export function validateDocumentModel(value: unknown): ValidationResult {
   for (const key of ['blocks', 'styles', 'warnings'] as const) {
     if (!Array.isArray(value[key]))
       issues.push({ path: key, code: 'type', message: 'Expected an array.' });
+  }
+  if (value.toc !== undefined) {
+    if (!Array.isArray(value.toc) || value.toc.length > 500) {
+      issues.push({
+        path: 'toc',
+        code: 'limit',
+        message: 'Expected at most 500 table-of-contents entries.',
+      });
+    } else {
+      for (const [index, entry] of value.toc.entries()) {
+        if (
+          !isRecord(entry) ||
+          typeof entry.label !== 'string' ||
+          entry.label.length > 512 ||
+          typeof entry.target !== 'string' ||
+          !/^[A-Za-z0-9_.:-]{1,128}$/.test(entry.target) ||
+          typeof entry.level !== 'number' ||
+          !Number.isInteger(entry.level) ||
+          entry.level < 1 ||
+          entry.level > 6 ||
+          !isRecord(entry.provenance) ||
+          typeof entry.provenance.source !== 'string' ||
+          !['extracted', 'inferred', 'default', 'user'].includes(
+            String(entry.provenance.method),
+          ) ||
+          !['low', 'medium', 'high', 'certain'].includes(
+            String(entry.provenance.confidence),
+          ) ||
+          !['low', 'medium', 'high', 'certain'].includes(
+            String(entry.confidence),
+          )
+        )
+          issues.push({
+            path: `toc.${index}`,
+            code: 'shape',
+            message: 'Expected a bounded table-of-contents entry.',
+          });
+      }
+    }
   }
   if (Array.isArray(value.blocks))
     validateParagraphIndents(value.blocks, 'blocks', issues);

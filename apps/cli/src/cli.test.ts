@@ -25,8 +25,13 @@ const fixture = fileURLToPath(
 const pdf = fileURLToPath(
   new URL('../../../tests/fixtures/pdf/one-column-book.pdf', import.meta.url),
 );
+const nestedPdf = fileURLToPath(
+  new URL('../../../tests/fixtures/pdf/nested-outline.pdf', import.meta.url),
+);
 const existingPdfFixtures = [
   'one-column-book.pdf',
+  'nested-outline.pdf',
+  'hostile-outline.pdf',
   'two-column-article.pdf',
   'tagged-article.pdf',
   'tagged-table.pdf',
@@ -132,6 +137,8 @@ describe('CLI arguments and output', () => {
     ['--chapter-detection', 'unknown', '--chapter-detection must be'],
     ['--chapter-mark', 'break', '--chapter-mark must be'],
     ['--chapter-split-level', '7', '--chapter-split-level must be'],
+    ['--toc-source', 'unknown', '--toc-source must be'],
+    ['--toc-filter', '(Chapter)', '--toc-filter must be'],
   ])('rejects invalid %s values', async (option, value, message) => {
     const result = await invoke([pdf, option, value, ...fixedDate]);
 
@@ -152,6 +159,15 @@ describe('CLI arguments and output', () => {
     );
     expect((await invoke(['--help'])).output[0]).toContain('--unwrap-factor');
     expect((await invoke(['--help'])).output[0]).toContain('--dehyphenate');
+    expect((await invoke(['--help'])).output[0]).toContain('--toc-source');
+    expect((await invoke(['--help'])).output[0]).toContain('--toc-inline');
+    expect((await invoke(['--help'])).output[0]).toContain('--toc-filter');
+    expect((await invoke(['--help'])).output[0]).toContain('--toc-threshold');
+    expect((await invoke(['--help'])).output[0]).toContain('--max-toc-links');
+    expect((await invoke(['--help'])).output[0]).toContain(
+      '--duplicate-links-in-toc',
+    );
+    expect((await invoke(['--help'])).output[0]).toContain('--no-toc-embedded');
     expect((await invoke(['--help'])).output[0]).toContain('--crop-top');
     expect((await invoke(['--help'])).output[0]).toContain(
       '--remove-furniture',
@@ -167,6 +183,42 @@ describe('CLI arguments and output', () => {
       'Pipeline dumps contain document text',
     );
     expect((await invoke(['--version'])).output[0]).toBe(`${version}\n`);
+  });
+
+  it('passes PDF TOC source and visible contents options through to EPUB output', async () => {
+    const result = await invoke([
+      nestedPdf,
+      '--no-layout',
+      '--toc-source',
+      'generated',
+      '--toc-inline',
+      '--toc-title',
+      'Index',
+      '--toc-at-end',
+      '-f',
+      'epub',
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+
+    expect(result.code, result.errors).toBe(0);
+    const output = result.output[0];
+    expect(output).toBeInstanceOf(Uint8Array);
+    if (!(output instanceof Uint8Array)) return;
+    const files = unzipSync(output);
+    expect(new TextDecoder().decode(files['EPUB/contents.xhtml'])).toContain(
+      '<h1>Index</h1>',
+    );
+    expect(
+      new TextDecoder()
+        .decode(files['EPUB/package.opf'])
+        .indexOf('<itemref idref="inline-toc"/>'),
+    ).toBeGreaterThan(
+      new TextDecoder()
+        .decode(files['EPUB/package.opf'])
+        .indexOf('<itemref idref="chapter-001"/>'),
+    );
   });
 
   it('dumps the same PDF stages and preserves output bytes', async () => {

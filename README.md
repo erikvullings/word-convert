@@ -97,6 +97,15 @@ file boundaries; HTML uses page-break/rule elements and Markdown uses a page-bre
 comment/rule. Chapter markers are inserted only between top-level content blocks.
 See [the CLI guide](documentation/cli.md#chapter-detection-and-marking).
 
+PDF TOCs prefer resolved bookmarks, then semantic headings, with printed-contents
+and internal-link fallback when fewer than six chapters are detected. Configure
+the source with `--toc-source automatic|embedded|generated|off`; use
+`--toc-threshold`, `--max-toc-links`, `--duplicate-links-in-toc`, and
+`--toc-filter` to tune fallback behavior. `--toc-inline`, `--toc-title`, and
+`--toc-at-end` control the visible contents section/page in generated HTML,
+Markdown, and EPUB. See [the CLI guide](documentation/cli.md#pdf-tables-of-contents)
+for precedence and compatibility flags.
+
 The CLI also exposes PDF extraction controls: `--crop-top <0..1>` and
 `--crop-bottom <0..1>` trim rotated-page text (their sum must stay below `0.9`);
 `--no-remove-furniture` retains automatic header/footer/page-number candidates;

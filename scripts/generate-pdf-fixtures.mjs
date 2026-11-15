@@ -21,6 +21,8 @@ const fixedDate = new Date('2026-08-29T12:00:00.000Z');
 await mkdir(outputDirectory, { recursive: true });
 
 await save('one-column-book.pdf', await oneColumnBook());
+await save('nested-outline.pdf', await nestedOutlineBook());
+await save('hostile-outline.pdf', await hostileOutlineBook());
 await save('unstyled-chapters.pdf', await unstyledChapters());
 await save('split-heading-title.pdf', await splitHeadingTitle());
 await save('part-nesting.pdf', await partNesting());
@@ -67,6 +69,22 @@ await writeFile(
         {
           file: 'one-column-book.pdf',
           covers: ['metadata', 'running headers', 'page numbers', 'link'],
+        },
+        {
+          file: 'nested-outline.pdf',
+          covers: [
+            'nested PDF bookmarks',
+            'resolved destinations',
+            'heading hierarchy',
+          ],
+        },
+        {
+          file: 'hostile-outline.pdf',
+          covers: [
+            'deeply nested PDF bookmarks',
+            'oversized bookmark title',
+            'outline depth and title limits',
+          ],
         },
         {
           file: 'unstyled-chapters.pdf',
@@ -292,6 +310,56 @@ async function oneColumnBook() {
     });
   }
   addOutline(document, 'Chapter One', document.getPage(0));
+  return document;
+}
+
+async function nestedOutlineBook() {
+  const document = await baseDocument('Nested Outline Book');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const bold = await document.embedFont(StandardFonts.TimesRomanBold);
+  const first = document.addPage([600, 800]);
+  first.drawText('Part One', { x: 60, y: 700, size: 26, font: bold });
+  first.drawText('Chapter One', { x: 60, y: 660, size: 20, font: bold });
+  first.drawText('The first chapter contains ordinary body text.', {
+    x: 60,
+    y: 610,
+    size: 11,
+    font: body,
+  });
+  const second = document.addPage([600, 800]);
+  second.drawText('Section One', { x: 60, y: 700, size: 18, font: bold });
+  second.drawText('The section contains its own body paragraph.', {
+    x: 60,
+    y: 650,
+    size: 11,
+    font: body,
+  });
+  addOutline(
+    document,
+    'Part One',
+    first,
+    [
+      {
+        title: 'Chapter One',
+        page: first,
+        top: 660,
+        children: [{ title: 'Section One', page: second, top: 700 }],
+      },
+    ],
+    700,
+  );
+  return document;
+}
+
+async function hostileOutlineBook() {
+  const document = await baseDocument('Hostile Outline Book');
+  const page = document.addPage([600, 800]);
+  const heading = await document.embedFont(StandardFonts.TimesRomanBold);
+  page.drawText('Anchor Heading', { x: 60, y: 700, size: 24, font: heading });
+  let child = { title: 'Deep Level 8', page, children: [] };
+  for (let level = 7; level >= 2; level--)
+    child = { title: `Deep Level ${level}`, page, children: [child] };
+  addOutline(document, 'H'.repeat(700), page, [child], 700);
   return document;
 }
 
@@ -1185,20 +1253,69 @@ function addLink(document, page, rectangle, href) {
   page.node.set(PDFName.of('Annots'), document.context.obj([annotation]));
 }
 
-function addOutline(document, title, page) {
-  const root = document.context.obj({ Type: 'Outlines', Count: 1 });
+function addOutline(document, title, page, children = [], top) {
+  const root = document.context.obj({
+    Type: 'Outlines',
+    Count: 1 + outlineCount(children),
+  });
   const rootReference = document.context.register(root);
   const item = document.context.obj({
     Title: PDFString.of(title),
     Parent: rootReference,
-    Dest: [page.ref, PDFName.of('Fit')],
+    Dest: outlineDestination(page, top),
   });
   const itemReference = document.context.register(item);
   root.set(PDFName.of('First'), itemReference);
   root.set(PDFName.of('Last'), itemReference);
+  addOutlineChildren(document, item, itemReference, children);
   document.catalog.set(PDFName.of('Outlines'), rootReference);
 }
 
+function outlineCount(items) {
+  return items.reduce(
+    (total, item) => total + 1 + outlineCount(item.children ?? []),
+    0,
+  );
+}
+
+function addOutlineChildren(document, parent, parentReference, children) {
+  const references = children.map((child) =>
+    document.context.register(
+      document.context.obj({
+        Title: PDFString.of(child.title),
+        Parent: parentReference,
+        Dest: outlineDestination(child.page, child.top),
+        ...(child.children?.length
+          ? { Count: outlineCount(child.children) }
+          : {}),
+      }),
+    ),
+  );
+  if (references[0]) parent.set(PDFName.of('First'), references[0]);
+  if (references.at(-1)) parent.set(PDFName.of('Last'), references.at(-1));
+  for (let index = 0; index < references.length; index++) {
+    const reference = references[index];
+    const previous = references[index - 1];
+    const next = references[index + 1];
+    if (!reference) continue;
+    if (previous) reference.set(PDFName.of('Prev'), previous);
+    if (next) reference.set(PDFName.of('Next'), next);
+    const child = children[index];
+    if (child?.children?.length)
+      addOutlineChildren(
+        document,
+        document.context.lookup(reference),
+        reference,
+        child.children,
+      );
+  }
+}
+
+function outlineDestination(page, top) {
+  return top === undefined
+    ? [page.ref, PDFName.of('Fit')]
+    : [page.ref, PDFName.of('XYZ'), 60, top, null];
+}
 async function save(name, document) {
   const bytes = await document.save({
     addDefaultPage: false,

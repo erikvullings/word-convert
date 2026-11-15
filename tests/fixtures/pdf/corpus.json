@@ -6,6 +6,22 @@
       "covers": ["metadata", "running headers", "page numbers", "link"]
     },
     {
+      "file": "nested-outline.pdf",
+      "covers": [
+        "nested PDF bookmarks",
+        "resolved destinations",
+        "heading hierarchy"
+      ]
+    },
+    {
+      "file": "hostile-outline.pdf",
+      "covers": [
+        "deeply nested PDF bookmarks",
+        "oversized bookmark title",
+        "outline depth and title limits"
+      ]
+    },
+    {
       "file": "unstyled-chapters.pdf",
       "covers": [
         "repeated body-font chapter openers",

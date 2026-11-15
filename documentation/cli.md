@@ -330,6 +330,34 @@ title before splitting, including when their block styles differ; inline
 formatting and numbering are retained, and the first heading's ID remains
 stable. Different heading levels remain separate.
 
+### PDF tables of contents
+
+PDF output uses resolved embedded bookmarks first, then semantic headings.
+When fewer than six chapters are detected, recognized printed-contents links
+and other internal links can supplement the TOC, up to 50 entries. External
+links are never TOC entries. `--toc-threshold <n>` and `--max-toc-links <n>`
+change those defaults (each accepts 0-500); `--duplicate-links-in-toc` allows
+the same label at different internal destinations. A bounded `--toc-filter
+<pattern>` removes matching entries and their nested descendants. If a filter
+would remove every entry, the original TOC is retained with a warning.
+
+Use `--toc-source automatic|embedded|generated|off` to choose the source:
+`automatic` prefers bookmarks and falls back to headings, `embedded` requests
+bookmarks but warns and falls back to headings when they cannot be resolved,
+`generated` ignores bookmarks, and `off` disables TOC entries. The compatibility
+flags `--no-toc-embedded`, `--use-auto-toc`, and `--no-chapters-in-toc` select
+generated headings, force internal-link TOC entries, and disable entries,
+respectively. `--use-auto-toc` overrides source selection; it cannot be combined
+with `--no-chapters-in-toc` or `--toc-source off`.
+
+For HTML, Markdown, and EPUB, `--toc-inline` adds a visible contents section or
+page; EPUB keeps its navigation document separate. The contents title defaults
+to `Contents` and can be changed with `--toc-title <text>`. Use
+`--toc-at-end` with `--toc-inline` to place the visible contents after the book.
+These writer options also work for non-PDF input. Existing EPUB input remains on
+its archive-preserving shrink path and does not use these PDF or semantic-writer
+TOC options.
+
 ## Run from source
 
 Install Node 24+, the repository's pinned pnpm, and Bun 1.3.11:

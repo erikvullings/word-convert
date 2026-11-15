@@ -18,7 +18,9 @@ import {
   type PipelineDebugSink,
   type Provenance,
   type StyleMapping,
+  type TocEntry,
   type TableNode,
+  createTocFromHeadings,
 } from '@wordconvert/document-model';
 import { PdfReadError } from './error.ts';
 import {
@@ -109,6 +111,8 @@ export interface RawPdfTextSpan {
 export interface RawPdfLink {
   id: string;
   href: string;
+  destinationPage?: number;
+  destinationTop?: number;
   x: number;
   top: number;
   width: number;
@@ -196,7 +200,8 @@ export interface RawPdfMetadata {
 
 export interface RawPdfOutlineItem {
   title: string;
-  destination?: string;
+  page?: number;
+  position?: { x?: number; top?: number };
   children: RawPdfOutlineItem[];
 }
 
@@ -206,6 +211,18 @@ export interface RawPdfDocument {
   pages: RawPdfPage[];
   metadata: RawPdfMetadata;
   outline: RawPdfOutlineItem[];
+  outlineTruncated?: boolean;
+}
+
+export type PdfTocSource = 'automatic' | 'embedded' | 'generated' | 'off';
+
+export interface PdfTocOptions {
+  source?: PdfTocSource;
+  threshold?: number;
+  maxLinks?: number;
+  duplicateLinks?: boolean;
+  filter?: string;
+  useAutoToc?: boolean;
 }
 
 export interface PdfCropOptions {
@@ -231,6 +248,7 @@ export interface PdfAnalysisOptions extends ConversionOptions {
   styleMappings?: Readonly<Record<string, StyleMapping>>;
   chapterDetection?: ChapterDetectionOptions;
   chapterSplitLevel?: ChapterHeadingLevel;
+  toc?: PdfTocOptions;
   formulaDecisions?: Readonly<Record<string, PdfFormulaDecision>>;
   manualFormulaRegions?: readonly PdfManualFormulaRegion[];
   formulaRecognizer?: PdfFormulaRecognizer;
@@ -270,6 +288,7 @@ export interface PdfAnalysisSummary {
   formulaCandidates?: PdfFormulaCandidate[];
   formulaImageRegions?: PdfFormulaImageRegion[];
   tables?: PdfDetectedTable[];
+  tocSource?: PdfTocSource;
 }
 
 export interface PdfReflowIssue {
@@ -307,6 +326,90 @@ const resolveTableSignals = (options: PdfAnalysisOptions) => ({
   ruled: options.pdfTables?.ruled ?? true,
   borderless: options.pdfTables?.borderless ?? false,
 });
+
+interface ResolvedPdfTocOptions {
+  source: PdfTocSource;
+  threshold: number;
+  maxLinks: number;
+  duplicateLinks: boolean;
+  useAutoToc: boolean;
+  filter?: RegExp;
+}
+
+function validatePdfTocOptions(
+  options: PdfTocOptions | undefined,
+): ResolvedPdfTocOptions {
+  const source = options?.source ?? 'automatic';
+  const threshold = options?.threshold ?? 6;
+  const maxLinks = options?.maxLinks ?? 50;
+  if (!['automatic', 'embedded', 'generated', 'off'].includes(source))
+    throw new PdfReadError(
+      'invalid-input',
+      'PDF TOC source must be automatic, embedded, generated, or off.',
+      { phase: 'analyse', details: { path: 'toc.source' } },
+    );
+  if (!Number.isInteger(threshold) || threshold < 0 || threshold > 500)
+    throw new PdfReadError(
+      'invalid-input',
+      'PDF TOC threshold must be an integer from 0 to 500.',
+      { phase: 'analyse', details: { path: 'toc.threshold' } },
+    );
+  if (!Number.isInteger(maxLinks) || maxLinks < 0 || maxLinks > 500)
+    throw new PdfReadError(
+      'invalid-input',
+      'PDF TOC maximum links must be an integer from 0 to 500.',
+      { phase: 'analyse', details: { path: 'toc.maxLinks' } },
+    );
+  if (
+    options?.duplicateLinks !== undefined &&
+    typeof options.duplicateLinks !== 'boolean'
+  )
+    throw new PdfReadError(
+      'invalid-input',
+      'PDF TOC duplicateLinks must be a boolean.',
+      { phase: 'analyse', details: { path: 'toc.duplicateLinks' } },
+    );
+  if (
+    options?.useAutoToc !== undefined &&
+    typeof options.useAutoToc !== 'boolean'
+  )
+    throw new PdfReadError(
+      'invalid-input',
+      'PDF TOC useAutoToc must be a boolean.',
+      { phase: 'analyse', details: { path: 'toc.useAutoToc' } },
+    );
+  let filter: RegExp | undefined;
+  if (options?.filter !== undefined) {
+    if (
+      typeof options.filter !== 'string' ||
+      options.filter.length === 0 ||
+      options.filter.length > 128 ||
+      /\\[1-9]|[|()]|[+*?]|\{\d+(?:,\d*)?\}/u.test(options.filter)
+    )
+      throw new PdfReadError(
+        'invalid-input',
+        'PDF TOC filter must be a literal pattern of at most 128 characters.',
+        { phase: 'analyse', details: { path: 'toc.filter' } },
+      );
+    try {
+      filter = new RegExp(options.filter, 'iu');
+    } catch {
+      throw new PdfReadError(
+        'invalid-input',
+        'PDF TOC filter is not a valid pattern.',
+        { phase: 'analyse', details: { path: 'toc.filter' } },
+      );
+    }
+  }
+  return {
+    source: source as PdfTocSource,
+    threshold,
+    maxLinks,
+    duplicateLinks: options?.duplicateLinks ?? false,
+    useAutoToc: options?.useAutoToc ?? false,
+    ...(filter ? { filter } : {}),
+  };
+}
 
 export interface PdfReaderOptions extends PdfAnalysisOptions {
   limits?: Partial<PdfReaderLimits>;
@@ -500,6 +603,7 @@ export async function analysePdf(
       },
     );
   }
+  const tocOptions = validatePdfTocOptions(options.toc);
   const crop = validateCrop(options.crop);
   const unwrapFactor = options.unwrapFactor ?? DEFAULT_PDF_UNWRAP_FACTOR;
   if (!Number.isFinite(unwrapFactor) || unwrapFactor < 0 || unwrapFactor > 1)
@@ -805,6 +909,11 @@ export async function analysePdf(
     styles,
     retainedPages,
     options,
+    new Set(
+      flattenOutline(raw.outline).flatMap(({ item }) =>
+        item.page === undefined ? [] : [item.page],
+      ),
+    ),
     semanticCandidates,
     unwrapFactor,
     wordEvidence,
@@ -869,6 +978,17 @@ export async function analysePdf(
     normalizePdfLists(normalizePdfToc(chapterResult.blocks)),
   );
   const blocks = mergedHeadings.blocks;
+  const headings = createTocFromHeadings(blocks);
+  const pageHeadings = pdfPageHeadings(headings);
+  resolvePdfPageLinks(blocks, pageHeadings);
+  const toc = createPdfToc(
+    raw,
+    blocks,
+    headings,
+    pageHeadings,
+    tocOptions,
+    warnings,
+  );
   if (chapterResult.segmentationTooFlat)
     warnings.push({
       code: 'pdf-chapter-segmentation-too-flat',
@@ -914,6 +1034,13 @@ export async function analysePdf(
       splitLevel: options.chapterSplitLevel ?? 2,
     },
   });
+  if (raw.outlineTruncated)
+    warnings.push({
+      code: 'pdf-outline-limit-exceeded',
+      severity: 'warning',
+      message:
+        'The embedded PDF outline exceeded the supported depth or entry limit; remaining entries were omitted.',
+    });
   if (truncatedGeometryPages.length > 0)
     warnings.push({
       code: 'pdf-table-geometry-truncated',
@@ -960,6 +1087,7 @@ export async function analysePdf(
       version: DOCUMENT_MODEL_VERSION,
       metadata: metadata(raw, options),
       blocks,
+      toc,
       assets: Object.fromEntries(
         retainedPages.flatMap((page) =>
           page.images.map((image) => [
@@ -1002,11 +1130,404 @@ export async function analysePdf(
       formulaCandidates,
       formulaImageRegions,
       ...(tables.length > 0 ? { tables } : {}),
+      tocSource:
+        toc.length === 0
+          ? 'off'
+          : toc.some(({ provenance }) => provenance.source === 'pdf-outline')
+            ? 'embedded'
+            : 'generated',
     },
   };
   options.onStage?.({ stage: 'analysis', data: result.analysis });
   options.onStage?.({ stage: 'model', data: result.model });
   return result;
+}
+
+interface PdfPageHeading {
+  heading: TocEntry;
+  page: number;
+  top?: number;
+}
+
+function pdfPageHeadings(headings: readonly TocEntry[]): PdfPageHeading[] {
+  return headings.flatMap((heading) => {
+    const location = parsePdfLocation(heading.provenance.location);
+    return location === undefined ? [] : [{ heading, ...location }];
+  });
+}
+
+function createPdfToc(
+  raw: RawPdfDocument,
+  blocks: readonly BlockNode[],
+  headings: readonly TocEntry[],
+  pageHeadings: readonly PdfPageHeading[],
+  options: ResolvedPdfTocOptions,
+  warnings: ConversionWarning[],
+): TocEntry[] {
+  const outlineEntries = flattenOutline(raw.outline).flatMap(
+    ({ item, level }) => {
+      if (item.page === undefined) return [];
+      const onPage = pageHeadings.filter(({ page }) => page === item.page);
+      const nearest = nearestPdfPageHeading(
+        item.page,
+        item.position?.top,
+        onPage.length > 0 ? onPage : pageHeadings,
+      );
+      const target =
+        onPage.length > 0
+          ? nearest?.heading.target
+          : pageAnchorTarget(blocks, item.page);
+      if (!target) return [];
+      return [
+        {
+          label: item.title,
+          target,
+          level,
+          provenance: {
+            source: 'pdf-outline',
+            location: `pdf-page:${item.page}${item.position?.top === undefined ? '' : `:top:${item.position.top.toFixed(4)}`}`,
+            method: 'extracted' as const,
+            confidence:
+              onPage.length === 0
+                ? ('medium' as const)
+                : nearest?.page === item.page
+                  ? item.position?.top === undefined ||
+                    nearest?.top === undefined ||
+                    Math.abs(nearest.top - item.position.top) < 0.1
+                    ? ('high' as const)
+                    : ('medium' as const)
+                  : ('medium' as const),
+            reason:
+              onPage.length > 0
+                ? 'Resolved an embedded PDF bookmark to the nearest heading.'
+                : 'Resolved an embedded PDF bookmark to a generated spine-position anchor.',
+          },
+          confidence:
+            onPage.length === 0
+              ? 'medium'
+              : nearest?.page === item.page
+                ? item.position?.top === undefined ||
+                  nearest?.top === undefined ||
+                  Math.abs(nearest.top - item.position.top) < 0.1
+                  ? ('high' as const)
+                  : ('medium' as const)
+                : ('medium' as const),
+        },
+      ];
+    },
+  );
+  let selected: TocEntry[];
+  let reason: string;
+  const embeddedPreferred =
+    options.source === 'automatic' || options.source === 'embedded';
+  if (options.source === 'off') {
+    selected = [];
+    reason = 'TOC generation was explicitly disabled.';
+  } else if (embeddedPreferred && outlineEntries.length > 0) {
+    selected = outlineEntries;
+    reason =
+      'The embedded PDF outline takes precedence over generated headings.';
+  } else {
+    selected = [...headings];
+    reason =
+      options.source === 'embedded'
+        ? 'No resolvable embedded PDF outline was found; semantic headings were used.'
+        : 'No preferred embedded PDF outline was selected; semantic headings were used.';
+    if (options.source === 'embedded')
+      warnings.push({
+        code: 'pdf-toc-embedded-unavailable',
+        severity: 'warning',
+        message:
+          'The requested embedded PDF TOC was unavailable; generated headings were used.',
+      });
+  }
+  const chapterCount = countChapters(blocks, 2);
+  if (
+    options.source !== 'off' &&
+    (options.useAutoToc || chapterCount < options.threshold)
+  ) {
+    const links = linkTocEntries(blocks, options.maxLinks, pageHeadings);
+    if (options.useAutoToc && links.length > 0) {
+      selected = links;
+      reason = 'The explicit automatic-TOC override selected internal links.';
+    } else if (links.length > 0) {
+      const labels = new Set(
+        selected.map(({ label }) => normalizedTocLabel(label)),
+      );
+      const targets = new Set<string>();
+      const additions = links.filter(({ label, target }) => {
+        const duplicateLabel = labels.has(normalizedTocLabel(label));
+        if (targets.has(target)) return false;
+        if (duplicateLabel && !options.duplicateLinks) return false;
+        labels.add(normalizedTocLabel(label));
+        targets.add(target);
+        return true;
+      });
+      selected = [...selected, ...additions].slice(0, options.maxLinks);
+      reason = `Only ${chapterCount} chapters were detected; internal links supplemented the TOC.`;
+    }
+  }
+  if (options.source === 'off') selected = [];
+  warnings.push({
+    code: 'pdf-toc-source',
+    severity: 'info',
+    message: selected.length
+      ? `Using ${reason}`
+      : 'No table-of-contents entries were selected.',
+    details: {
+      source: selected.some(
+        ({ provenance }) => provenance.source === 'pdf-outline',
+      )
+        ? 'embedded'
+        : selected.length
+          ? 'generated'
+          : 'off',
+      entries: selected.length,
+      chapters: chapterCount,
+    },
+  });
+  if (options.filter && selected.length > 0) {
+    const filtered = filterTocEntries(selected, options.filter);
+    if (filtered.removed > 0)
+      warnings.push({
+        code: 'pdf-toc-filtered',
+        severity: 'info',
+        message: `Removed ${filtered.removed} TOC entr${filtered.removed === 1 ? 'y' : 'ies'} matching the configured filter.`,
+        details: { removed: filtered.removed },
+      });
+    if (filtered.entries.length === 0) {
+      warnings.push({
+        code: 'pdf-toc-filter-empty',
+        severity: 'warning',
+        message:
+          'The TOC filter would remove every entry; the unfiltered TOC was retained.',
+        details: { entries: selected.length },
+      });
+    } else selected = filtered.entries;
+  }
+  return selected.slice(0, 500);
+}
+
+function flattenOutline(
+  outline: readonly RawPdfOutlineItem[],
+): Array<{ item: RawPdfOutlineItem; level: number }> {
+  const entries: Array<{ item: RawPdfOutlineItem; level: number }> = [];
+  const visited = new Set<RawPdfOutlineItem>();
+  const visit = (items: readonly RawPdfOutlineItem[], level: number): void => {
+    if (level > 6) return;
+    for (const item of items) {
+      if (entries.length >= 500) return;
+      if (visited.has(item)) continue;
+      visited.add(item);
+      const title = item.title.trim().slice(0, 512);
+      if (!title) continue;
+      entries.push({
+        item: title === item.title ? item : { ...item, title },
+        level: Math.min(level, 6),
+      });
+      visit(item.children, level + 1);
+    }
+  };
+  visit(outline, 1);
+  return entries;
+}
+
+function parsePdfLocation(
+  location: string | undefined,
+): { page: number; top?: number } | undefined {
+  const match = /^pdf-page:(\d+)(?::top:(0(?:\.\d+)?|1(?:\.0+)?))?$/.exec(
+    location ?? '',
+  );
+  return match?.[1]
+    ? {
+        page: Number(match[1]),
+        ...(match[2] === undefined ? {} : { top: Number(match[2]) }),
+      }
+    : undefined;
+}
+
+function pdfOutlineDistance(
+  heading: PdfPageHeading,
+  item: { page?: number; position?: { top?: number } },
+): number {
+  const pageDistance = Math.abs(heading.page - (item.page ?? heading.page));
+  const positionDistance =
+    heading.page === item.page &&
+    heading.top !== undefined &&
+    item.position?.top !== undefined
+      ? Math.abs(heading.top - item.position.top)
+      : 0;
+  return pageDistance * 2 + positionDistance;
+}
+
+function nearestPdfPageHeading(
+  page: number,
+  top: number | undefined,
+  pageHeadings: readonly PdfPageHeading[],
+): PdfPageHeading | undefined {
+  if (pageHeadings.length === 0) return undefined;
+  const destination = {
+    page,
+    ...(top === undefined ? {} : { position: { top } }),
+  };
+  return pageHeadings.reduce<PdfPageHeading | undefined>(
+    (best, current) =>
+      !best ||
+      pdfOutlineDistance(current, destination) <
+        pdfOutlineDistance(best, destination)
+        ? current
+        : best,
+    undefined,
+  );
+}
+
+function resolvePdfPageLinks(
+  blocks: readonly BlockNode[],
+  pageHeadings: readonly PdfPageHeading[],
+): void {
+  const visitInline = (nodes: readonly InlineNode[]): void => {
+    for (const node of nodes) {
+      if (node.type !== 'link') continue;
+      const target = parsePdfPageTarget(node.href);
+      if (target) {
+        const pageHeadingsOnPage = pageHeadings.filter(
+          ({ page }) => page === target.page,
+        );
+        const heading = nearestPdfPageHeading(
+          target.page,
+          target.top,
+          pageHeadingsOnPage.length > 0 ? pageHeadingsOnPage : pageHeadings,
+        );
+        const targetId =
+          heading?.heading.target ?? pageAnchorTarget(blocks, target.page);
+        if (targetId) node.href = `#${targetId}`;
+      }
+      visitInline(node.children);
+    }
+  };
+  const visit = (nodes: readonly BlockNode[]): void => {
+    for (const block of nodes) {
+      if (block.type === 'paragraph' || block.type === 'heading')
+        visitInline(block.children);
+      else if (block.type === 'list')
+        for (const item of block.items) visit(item.blocks);
+      else if (block.type === 'table')
+        for (const row of block.rows)
+          for (const cell of row.cells) visit(cell.blocks);
+      else if (block.type === 'blockquote') visit(block.blocks);
+    }
+  };
+  visit(blocks);
+}
+
+function pageAnchorTarget(
+  blocks: readonly BlockNode[],
+  page: number,
+): string | undefined {
+  const id = `pdf-page-${page}`;
+  const visit = (nodes: readonly BlockNode[]): boolean => {
+    for (const block of nodes) {
+      if (
+        (block.type === 'paragraph' || block.type === 'heading') &&
+        block.id === id
+      )
+        return true;
+      if (block.type === 'list') {
+        for (const item of block.items) if (visit(item.blocks)) return true;
+      } else if (block.type === 'table') {
+        for (const row of block.rows)
+          for (const cell of row.cells) if (visit(cell.blocks)) return true;
+      } else if (block.type === 'blockquote' && visit(block.blocks))
+        return true;
+    }
+    return false;
+  };
+  return visit(blocks) ? id : undefined;
+}
+
+function parsePdfPageTarget(
+  href: string,
+): { page: number; top?: number } | undefined {
+  const match = /^#pdf-page-(\d+)(?:-top-(0(?:\.\d+)?|1(?:\.0+)?))?$/.exec(
+    href,
+  );
+  if (!match?.[1]) return undefined;
+  return {
+    page: Number(match[1]),
+    ...(match[2] === undefined ? {} : { top: Number(match[2]) }),
+  };
+}
+
+function linkTocEntries(
+  blocks: readonly BlockNode[],
+  maximum: number,
+  pageHeadings: readonly PdfPageHeading[],
+): TocEntry[] {
+  if (maximum === 0) return [];
+  const entries: TocEntry[] = [];
+  const targets = new Set<string>();
+  const visitInline = (nodes: readonly InlineNode[]): void => {
+    for (const node of nodes) {
+      if (node.type !== 'link') continue;
+      const href = node.href.trim();
+      const pageTarget = parsePdfPageTarget(href);
+      const target = pageTarget
+        ? nearestPdfPageHeading(pageTarget.page, pageTarget.top, pageHeadings)
+            ?.heading.target
+        : /^#([A-Za-z0-9_.:-]{1,128})$/.exec(href)?.[1];
+      const label = inlineText(node.children).trim();
+      if (!target || targets.has(target) || !label || label.length > 512)
+        continue;
+      targets.add(target);
+      entries.push({
+        label,
+        target,
+        level: 1,
+        provenance: {
+          source: 'internal-link',
+          method: 'extracted',
+          confidence: 'medium',
+        },
+        confidence: 'medium',
+      });
+      if (entries.length >= maximum) return;
+    }
+  };
+  for (const block of blocks) {
+    if (block.type === 'heading' || block.type === 'paragraph')
+      visitInline(block.children);
+    if (entries.length >= maximum) break;
+  }
+  return entries;
+}
+
+function filterTocEntries(
+  entries: readonly TocEntry[],
+  filter: RegExp,
+): { entries: TocEntry[]; removed: number } {
+  const output: TocEntry[] = [];
+  const removedLevels: number[] = [];
+  let removed = 0;
+  for (const entry of entries) {
+    while (
+      removedLevels.length > 0 &&
+      (removedLevels.at(-1) ?? 0) >= entry.level
+    )
+      removedLevels.pop();
+    if (removedLevels.length > 0) {
+      removed++;
+      continue;
+    }
+    if (filter.test(entry.label)) {
+      removed++;
+      removedLevels.push(entry.level);
+    } else output.push(entry);
+  }
+  return { entries: output, removed };
+}
+
+function normalizedTocLabel(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 }
 
 function densePageWarnings(pages: readonly RawPdfPage[]): ConversionWarning[] {
@@ -1683,9 +2204,11 @@ function detectChapterOpeners(
       type: 'heading' as const,
       level: candidate.level,
       children: block.children,
+      ...(block.id ? { id: block.id } : {}),
       ...(block.styleId ? { styleId: block.styleId } : {}),
       provenance: {
         source: 'pdf-chapter-detection',
+        location: `pdf-page:${candidate.line.page}:top:${candidate.line.top.toFixed(4)}`,
         method: 'inferred' as const,
         confidence: 'high' as const,
         reason:
@@ -1856,14 +2379,56 @@ function styleId(line: PdfLine): string {
 
 interface PdfTocEntry {
   label: string;
+  strong: boolean;
 }
 
 function normalizePdfToc(blocks: readonly BlockNode[]): BlockNode[] {
+  const headingLabels = new Set(
+    blocks
+      .filter(
+        (block): block is Extract<BlockNode, { type: 'heading' }> =>
+          block.type === 'heading',
+      )
+      .map((block) => normalizeHeadingLabel(inlineText(block.children))),
+  );
+  const parsed = blocks.map((block) =>
+    block.type === 'paragraph' || block.type === 'heading'
+      ? parsePdfTocEntries(inlineText(block.children))
+      : [],
+  );
   const tocBlocks = new Map<BlockNode, PdfTocEntry[]>();
-  for (const block of blocks) {
-    if (block.type !== 'paragraph' && block.type !== 'heading') continue;
-    const entries = parsePdfTocEntries(inlineText(block.children));
-    if (entries.length > 0) tocBlocks.set(block, entries);
+  for (let index = 0; index < blocks.length; index++) {
+    const entries = parsed[index] ?? [];
+    if (entries.length === 0) continue;
+    if (entries.some(({ strong }) => strong)) {
+      tocBlocks.set(blocks[index]!, entries);
+      continue;
+    }
+    let start = index;
+    while (
+      start > 0 &&
+      parsed[start - 1]?.length === 1 &&
+      !parsed[start - 1]?.[0]?.strong
+    )
+      start--;
+    let end = index;
+    while (
+      end + 1 < parsed.length &&
+      parsed[end + 1]?.length === 1 &&
+      !parsed[end + 1]?.[0]?.strong
+    )
+      end++;
+    if (
+      end - start + 1 < 2 ||
+      Array.from({ length: end - start + 1 }, (_, offset) =>
+        parsed[start + offset]?.every(({ label }) =>
+          headingLabels.has(normalizeHeadingLabel(label)),
+        ),
+      ).some((matches) => !matches)
+    )
+      continue;
+    for (let candidate = start; candidate <= end; candidate++)
+      tocBlocks.set(blocks[candidate]!, parsed[candidate]!);
   }
   if (tocBlocks.size === 0) return [...blocks];
 
@@ -1905,16 +2470,36 @@ function normalizePdfToc(blocks: readonly BlockNode[]): BlockNode[] {
 }
 
 function parsePdfTocEntries(value: string): PdfTocEntry[] {
-  const pattern =
-    /(\d+(?:\.\d+)*\.)\s+(.+?)\s*\.{2,}\s*(\d+)(?=\s+\d+(?:\.\d+)*\.\s+|$)/gu;
+  const lines = value
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0 || lines.length > 100) return [];
   const entries: PdfTocEntry[] = [];
-  let cursor = 0;
-  for (const match of value.matchAll(pattern)) {
-    if (value.slice(cursor, match.index).trim()) return [];
-    entries.push({ label: `${match[1]} ${match[2]!.trim()}` });
-    cursor = match.index + match[0].length;
+  for (const line of lines) {
+    const pattern =
+      /(?:(\d+(?:\.\d+)*\.?)\s+)?(.+?)(\s*\.{2,}\s*|\t+|\s{1,})(\d{1,4})(?=\s+\d+(?:\.\d+)*\.?\s+|\s*$)/gu;
+    let cursor = 0;
+    let lineEntries = 0;
+    for (const match of line.matchAll(pattern)) {
+      const start = match.index ?? 0;
+      if (line.slice(cursor, start).trim()) return [];
+      const prefix = match[1]?.trim();
+      const title = match[2]?.trim();
+      const separator = match[3] ?? '';
+      if (!title || title.length > 256 || !/\p{L}/u.test(title)) return [];
+      const strong = /(?:\.{2,}|\t)/u.test(separator);
+      if (!strong && !/^\p{Lu}/u.test(title)) return [];
+      entries.push({
+        label: `${prefix ? `${prefix} ` : ''}${title}`,
+        strong,
+      });
+      cursor = start + match[0].length;
+      lineEntries++;
+    }
+    if (lineEntries === 0 || line.slice(cursor).trim()) return [];
   }
-  return entries.length > 0 && !value.slice(cursor).trim() ? entries : [];
+  return entries;
 }
 
 function inlineText(nodes: readonly InlineNode[]): string {
@@ -2228,6 +2813,7 @@ async function linesToBlocks(
   styles: readonly AnalysedStyle[],
   pages: readonly RawPdfPage[],
   options: PdfAnalysisOptions,
+  outlinePages: ReadonlySet<number>,
   formulaCandidates: readonly PdfFormulaCandidate[] = [],
   unwrapFactor = DEFAULT_PDF_UNWRAP_FACTOR,
   wordEvidence?: WordEvidence,
@@ -2445,7 +3031,15 @@ async function linesToBlocks(
       gridUnresolvedReason !== undefined
     )
       unresolvedTablePages.push(page.number);
-    if (pageLines.length === 0 && page.images.length === 0) continue;
+    if (pageLines.length === 0 && page.images.length === 0) {
+      if (outlinePages.has(page.number))
+        blocks.push({
+          type: 'paragraph',
+          children: [],
+          id: `pdf-page-${page.number}`,
+        });
+      continue;
+    }
     const previousBlock = blocks.at(-1);
     const firstLine = pageLines[0];
     const continuesPreviousParagraph =
@@ -2453,6 +3047,7 @@ async function linesToBlocks(
       previousLine !== undefined &&
       firstLine !== undefined &&
       previousBlock?.type === 'paragraph' &&
+      !outlinePages.has(page.number) &&
       !placements.has(0) &&
       (mapping.get(styleId(firstLine)) ?? 'body') === 'body' &&
       taggedRoleForLine(rolesByMarkedContentId, firstLine) === undefined &&
@@ -2468,6 +3063,7 @@ async function linesToBlocks(
       }
       blocks.push({ type: 'pageBreak' });
     }
+    const pageStartIndex = blocks.length;
     const previousPageLine = previousLine;
     previousLine = undefined;
     const paragraphCandidates: Array<{
@@ -2781,10 +3377,29 @@ async function linesToBlocks(
             level: headingLevel,
             children,
             styleId: id,
+            provenance: {
+              source: 'pdf-text',
+              location: `pdf-page:${line.page}:top:${line.top.toFixed(4)}`,
+              method: 'extracted',
+              confidence: 'high',
+            },
           });
         }
       }
       previousLine = line;
+    }
+    if (outlinePages.has(page.number)) {
+      const pageBlocks = blocks.slice(pageStartIndex);
+      if (!containsHeading(pageBlocks)) {
+        const paragraph = firstParagraph(pageBlocks);
+        if (paragraph) paragraph.id = `pdf-page-${page.number}`;
+        else
+          blocks.push({
+            type: 'paragraph',
+            children: [],
+            id: `pdf-page-${page.number}`,
+          });
+      }
     }
   }
   const normalizedIndentParagraphs = normalizeParagraphIndentation(
@@ -2801,6 +3416,55 @@ async function linesToBlocks(
     lineDehyphenation,
     normalizedIndentParagraphs,
   };
+}
+
+function containsHeading(blocks: readonly BlockNode[]): boolean {
+  for (const block of blocks) {
+    if (block.type === 'heading') return true;
+    if (block.type === 'list') {
+      if (
+        block.items.some(({ blocks: itemBlocks }) =>
+          containsHeading(itemBlocks),
+        )
+      )
+        return true;
+    } else if (block.type === 'table') {
+      if (
+        block.rows.some((row) =>
+          row.cells.some(({ blocks: cellBlocks }) =>
+            containsHeading(cellBlocks),
+          ),
+        )
+      )
+        return true;
+    } else if (block.type === 'blockquote' && containsHeading(block.blocks))
+      return true;
+  }
+  return false;
+}
+
+function firstParagraph(
+  blocks: readonly BlockNode[],
+): Extract<BlockNode, { type: 'paragraph' }> | undefined {
+  for (const block of blocks) {
+    if (block.type === 'paragraph') return block;
+    if (block.type === 'list') {
+      for (const item of block.items) {
+        const paragraph = firstParagraph(item.blocks);
+        if (paragraph) return paragraph;
+      }
+    } else if (block.type === 'table') {
+      for (const row of block.rows)
+        for (const cell of row.cells) {
+          const paragraph = firstParagraph(cell.blocks);
+          if (paragraph) return paragraph;
+        }
+    } else if (block.type === 'blockquote') {
+      const paragraph = firstParagraph(block.blocks);
+      if (paragraph) return paragraph;
+    }
+  }
+  return undefined;
 }
 
 function normalizeParagraphIndentation(

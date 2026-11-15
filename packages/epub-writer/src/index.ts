@@ -1,4 +1,8 @@
-import { isChapterMark } from '@wordconvert/document-model';
+import {
+  createTocFromHeadings,
+  isChapterMark,
+  nestTocEntries,
+} from '@wordconvert/document-model';
 import type {
   BlockNode,
   ConversionWarning,
@@ -9,6 +13,7 @@ import type {
   WriterOptions,
   ChapterMark,
   ChapterHeadingLevel,
+  TocEntry,
 } from '@wordconvert/document-model';
 import { strToU8, zipSync, type Zippable } from 'fflate';
 import {
@@ -44,6 +49,12 @@ export interface EpubWriterOptions extends WriterOptions {
   chapterSplitLevel?: ChapterHeadingLevel;
   /** Explicit visual marker at chapter file boundaries. Defaults to none. */
   chapterMark?: ChapterMark;
+  /** Emit an additional visible contents document in the spine. */
+  inlineToc?: boolean;
+  /** Place the visible contents document after the book chapters. */
+  tocAtEnd?: boolean;
+  /** Visible contents heading. Defaults to Contents. */
+  tocTitle?: string;
   onWarning?: (warning: ConversionWarning) => void;
 }
 
@@ -120,6 +131,11 @@ interface HeadingEntry {
   id: string;
   label: string;
   path: string;
+  level: number;
+}
+
+interface TocRenderEntry extends HeadingEntry {
+  children: TocRenderEntry[];
 }
 
 interface AssetEntry {
@@ -234,6 +250,8 @@ export async function writeEpub(
       'EPUB chapter mark must be pagebreak, rule, none, or both.',
     );
   model = await shrinkAssets(model, options);
+  const generatedToc = createTocFromHeadings(model.blocks);
+  const toc = model.toc ?? generatedToc;
   const metadata = resolveMetadata(model, options);
   const chapters = options.sourceXhtml
     ? [
@@ -259,6 +277,12 @@ export async function writeEpub(
     assets.map(({ asset, path }) => [asset.id, path.replace('EPUB/', '')]),
   );
   const headings = options.sourceXhtml ? [] : collectHeadings(chapters);
+  const navigation = options.sourceXhtml
+    ? []
+    : createTocRenderEntries(toc, [
+        ...headings,
+        ...collectPageAnchors(chapters),
+      ]);
   const coverPath = options.coverPng
     ? 'cover.png'
     : options.cover
@@ -275,9 +299,13 @@ export async function writeEpub(
       assets,
       coverPath,
       options.sourceXhtml?.includes('<math') === true,
+      options.inlineToc ? 'contents.xhtml' : undefined,
+      options.tocAtEnd ?? false,
     ),
   );
-  files['EPUB/nav.xhtml'] = strToU8(navXhtml(metadata, headings));
+  files['EPUB/nav.xhtml'] = strToU8(
+    navXhtml(metadata, navigation, options.tocTitle ?? 'Contents'),
+  );
   files['EPUB/styles.css'] = strToU8(
     `${options.formulaMode === 'katex' ? KATEX_STYLES : ''}${STYLES}${options.sourceXhtml ? SOURCE_HTML_STYLES + SOURCE_HTML_EQUATION_LAYOUT_STYLES + SOURCE_HTML_PARAGRAPH_TITLE_STYLES : ''}${options.sourceCss ?? ''}`,
   );
@@ -288,6 +316,10 @@ export async function writeEpub(
     files['EPUB/cover.xhtml'] = strToU8(coverXhtml(metadata, coverPath));
   }
   files['EPUB/title.xhtml'] = strToU8(titleXhtml(metadata, model));
+  if (options.inlineToc)
+    files['EPUB/contents.xhtml'] = strToU8(
+      contentsXhtml(metadata, navigation, options.tocTitle ?? 'Contents'),
+    );
   for (const chapter of chapters) {
     files[`EPUB/${chapter.path}`] = strToU8(
       options.sourceXhtml
@@ -470,20 +502,17 @@ function createAssetRegistry(model: DocumentModel): AssetEntry[] {
 }
 
 function collectHeadings(chapters: Chapter[]): HeadingEntry[] {
-  const counts = new Map<string, number>();
   const output: HeadingEntry[] = [];
   const visit = (blocks: BlockNode[], path: string): void => {
     for (const block of blocks) {
       if (block.type === 'heading') {
         const text = plainText(block.children);
         const label = block.numbering ? `${block.numbering} ${text}` : text;
-        const base = slug(block.id ?? text);
-        const count = (counts.get(base) ?? 0) + 1;
-        counts.set(base, count);
         output.push({
-          id: count === 1 ? base : `${base}-${count}`,
+          id: block.id ?? slug(text),
           label: label || 'Untitled section',
           path,
+          level: block.level,
         });
       } else if (block.type === 'list') {
         for (const item of block.items) visit(item.blocks, path);
@@ -497,6 +526,45 @@ function collectHeadings(chapters: Chapter[]): HeadingEntry[] {
   return output;
 }
 
+function collectPageAnchors(chapters: Chapter[]): HeadingEntry[] {
+  const output: HeadingEntry[] = [];
+  const visit = (blocks: BlockNode[], path: string): void => {
+    for (const block of blocks) {
+      if (block.type === 'paragraph' && block.id)
+        output.push({ id: block.id, label: '', path, level: 6 });
+      else if (block.type === 'list') {
+        for (const item of block.items) visit(item.blocks, path);
+      } else if (block.type === 'table') {
+        for (const row of block.rows)
+          for (const cell of row.cells) visit(cell.blocks, path);
+      } else if (block.type === 'blockquote') visit(block.blocks, path);
+    }
+  };
+  for (const chapter of chapters) visit(chapter.blocks, chapter.path);
+  return output;
+}
+
+function createTocRenderEntries(
+  entries: readonly TocEntry[],
+  headings: readonly HeadingEntry[],
+): TocRenderEntry[] {
+  const headingById = new Map(headings.map((heading) => [heading.id, heading]));
+  const visit = (nodes: ReturnType<typeof nestTocEntries>): TocRenderEntry[] =>
+    nodes.flatMap((node) => {
+      const heading = headingById.get(node.target);
+      if (!heading) return [];
+      return [
+        {
+          ...heading,
+          label: node.label,
+          level: node.level,
+          children: visit(node.children),
+        },
+      ];
+    });
+  return visit(nestTocEntries(entries));
+}
+
 function containerXml(): string {
   return `<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`;
 }
@@ -508,6 +576,8 @@ function packageXml(
   assets: AssetEntry[],
   coverPath: 'cover.png' | 'cover.svg' | undefined,
   hasSourceMathml: boolean,
+  inlineTocPath: string | undefined,
+  tocAtEnd: boolean,
 ): string {
   const creators = model.metadata.authors
     .map(({ value }) => `<dc:creator>${escapeXml(value.name)}</dc:creator>`)
@@ -519,6 +589,9 @@ function packageXml(
         `<item id="${id}" href="${path}" media-type="application/xhtml+xml"${chapterProperties}/>`,
     )
     .join('');
+  const inlineTocItem = inlineTocPath
+    ? `<item id="inline-toc" href="${inlineTocPath}" media-type="application/xhtml+xml"/>`
+    : '';
   const assetItems = assets
     .map(
       ({ id, path, mediaType }) =>
@@ -526,11 +599,15 @@ function packageXml(
     )
     .join('');
   const spine = chapters.map(({ id }) => `<itemref idref="${id}"/>`).join('');
+  const inlineTocSpine = inlineTocPath ? `<itemref idref="inline-toc"/>` : '';
+  const contentsSpine = tocAtEnd
+    ? `${spine}${inlineTocSpine}`
+    : `${inlineTocSpine}${spine}`;
   const coverItems = coverPath
     ? `<item id="cover-image" href="${coverPath}" media-type="${coverPath === 'cover.png' ? 'image/png' : 'image/svg+xml'}" properties="cover-image"/><item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>`
     : '';
   const coverSpine = coverPath ? '<itemref idref="cover-page"/>' : '';
-  return `<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${escapeAttribute(metadata.language)}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${escapeXml(metadata.identifier)}</dc:identifier><dc:title>${escapeXml(metadata.title)}</dc:title><dc:language>${escapeXml(metadata.language)}</dc:language>${creators}<meta property="dcterms:modified">${metadata.modified}</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="styles" href="styles.css" media-type="text/css"/>${coverItems}<item id="title-page" href="title.xhtml" media-type="application/xhtml+xml"/>${chapterItems}${assetItems}</manifest><spine>${coverSpine}<itemref idref="title-page"/>${spine}</spine></package>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="${escapeAttribute(metadata.language)}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="pub-id">${escapeXml(metadata.identifier)}</dc:identifier><dc:title>${escapeXml(metadata.title)}</dc:title><dc:language>${escapeXml(metadata.language)}</dc:language>${creators}<meta property="dcterms:modified">${metadata.modified}</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="styles" href="styles.css" media-type="text/css"/>${coverItems}<item id="title-page" href="title.xhtml" media-type="application/xhtml+xml"/>${inlineTocItem}${chapterItems}${assetItems}</manifest><spine>${coverSpine}<itemref idref="title-page"/>${contentsSpine}</spine></package>`;
 }
 
 function coverXhtml(
@@ -547,22 +624,42 @@ function coverXhtml(
 
 function navXhtml(
   metadata: PublicationMetadata,
-  headings: HeadingEntry[],
+  headings: TocRenderEntry[],
+  title: string,
 ): string {
   const items = headings.length
-    ? headings
-        .map(
-          ({ path, id, label }) =>
-            `<li><a href="${path}#${escapeAttribute(id)}">${escapeXml(label)}</a></li>`,
-        )
-        .join('')
+    ? renderTocEntries(headings)
     : '<li><a href="chapter-001.xhtml">Document</a></li>';
   return xhtmlDocument(
     metadata,
-    'Contents',
-    `<nav epub:type="toc" id="toc"><h1>Contents</h1><ol>${items}</ol></nav>`,
+    title,
+    `<nav epub:type="toc" id="toc"><h1>${escapeXml(title)}</h1><ol>${items}</ol></nav>`,
     ' xmlns:epub="http://www.idpf.org/2007/ops"',
   );
+}
+
+function contentsXhtml(
+  metadata: PublicationMetadata,
+  headings: TocRenderEntry[],
+  title: string,
+): string {
+  const list = headings.length
+    ? `<ol>${renderTocEntries(headings)}</ol>`
+    : '<p>No contents available.</p>';
+  return xhtmlDocument(
+    metadata,
+    title,
+    `<section class="inline-toc"><h1>${escapeXml(title)}</h1>${list}</section>`,
+  );
+}
+
+function renderTocEntries(entries: readonly TocRenderEntry[]): string {
+  return entries
+    .map(
+      ({ path, id, label, children }) =>
+        `<li><a href="${path}#${escapeAttribute(id)}">${escapeXml(label)}</a>${children.length ? `<ol>${renderTocEntries(children)}</ol>` : ''}</li>`,
+    )
+    .join('');
 }
 
 function titleXhtml(
@@ -634,7 +731,8 @@ function renderBlock(block: BlockNode, context: RenderContext): string {
   switch (block.type) {
     case 'paragraph': {
       const classes = paragraphIndentClasses(block.indent);
-      return `<p${classes ? ` class="${classes}"` : ''}>${renderInlines(block.children, context)}</p>`;
+      const id = block.id ? ` id="${escapeAttribute(block.id)}"` : '';
+      return `<p${id}${classes ? ` class="${classes}"` : ''}>${renderInlines(block.children, context)}</p>`;
     }
     case 'heading': {
       const heading = context.headings[context.headingIndex++];

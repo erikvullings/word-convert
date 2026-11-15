@@ -3,9 +3,11 @@ import {
   DOCUMENT_MODEL_SCHEMA,
   DOCUMENT_MODEL_VERSION,
   DEFAULT_CHAPTER_DETECTION,
+  createTocFromHeadings,
   deserializeDocumentModel,
   isConversionError,
   mergeHeadingRuns,
+  nestTocEntries,
   serializeDocumentModel,
   toJsonValue,
   validateChapterDetection,
@@ -147,6 +149,45 @@ describe('DocumentModel contracts', () => {
         children: [{ type: 'text', text: 'A subtitle' }],
       },
     ]);
+  });
+
+  it('creates stable model TOC targets and nests entries by heading level', () => {
+    const blocks: DocumentModel['blocks'] = [
+      { type: 'heading', level: 1, children: [{ type: 'text', text: 'Part' }] },
+      {
+        type: 'heading',
+        level: 3,
+        children: [{ type: 'text', text: 'Section' }],
+      },
+      {
+        type: 'heading',
+        level: 3,
+        children: [{ type: 'text', text: 'Section' }],
+      },
+    ];
+
+    const toc = createTocFromHeadings(blocks);
+    expect(toc.map(({ target }) => target)).toEqual([
+      'part',
+      'section',
+      'section-2',
+    ]);
+    expect(nestTocEntries(toc)).toMatchObject([
+      {
+        label: 'Part',
+        children: [
+          { label: 'Section', children: [] },
+          { label: 'Section', children: [] },
+        ],
+      },
+    ]);
+    expect(validateDocumentModel({ ...model, toc }).valid).toBe(true);
+    expect(
+      validateDocumentModel({
+        ...model,
+        toc: [{ ...toc[0]!, target: 'https://example.test' }],
+      }).valid,
+    ).toBe(false);
   });
 
   it('validates serializable chapter detection options', () => {

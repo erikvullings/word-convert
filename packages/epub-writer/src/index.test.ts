@@ -124,6 +124,83 @@ describe('writeEpub image shrinking', () => {
 });
 
 describe('writeEpub', () => {
+  it('renders navigation links to paragraph spine-position anchors', async () => {
+    const input = model([
+      {
+        type: 'paragraph',
+        id: 'pdf-page-1',
+        children: [{ type: 'text', text: 'Body text' }],
+      },
+    ]);
+    input.toc = [
+      {
+        label: 'Introduction',
+        target: 'pdf-page-1',
+        level: 1,
+        provenance: {
+          source: 'pdf-outline',
+          method: 'extracted',
+          confidence: 'medium',
+        },
+        confidence: 'medium',
+      },
+    ];
+    const files = unzipSync(
+      await writeEpub(input, {
+        identifier: 'book-id',
+        title: 'Book',
+        language: 'en',
+        conversionDate: '2026-07-15',
+      }),
+    );
+
+    expect(strFromU8(files['EPUB/nav.xhtml']!)).toContain(
+      '<a href="chapter-001.xhtml#pdf-page-1">Introduction</a>',
+    );
+    expect(strFromU8(files['EPUB/chapter-001.xhtml']!)).toContain(
+      '<p id="pdf-page-1">Body text</p>',
+    );
+  });
+
+  it('renders nested navigation and an optional contents spine document', async () => {
+    const input = model([
+      {
+        type: 'heading',
+        level: 1,
+        children: [{ type: 'text', text: 'Part' }],
+      },
+      {
+        type: 'heading',
+        level: 2,
+        children: [{ type: 'text', text: 'Chapter' }],
+      },
+    ]);
+    const files = unzipSync(
+      await writeEpub(input, {
+        identifier: 'book-id',
+        title: 'Book',
+        language: 'en',
+        conversionDate: '2026-07-15',
+        inlineToc: true,
+        tocAtEnd: true,
+        tocTitle: 'Index',
+      }),
+    );
+    const nav = strFromU8(files['EPUB/nav.xhtml']!);
+    const contents = strFromU8(files['EPUB/contents.xhtml']!);
+    const opf = strFromU8(files['EPUB/package.opf']!);
+
+    expect(nav).toContain(
+      '<li><a href="chapter-001.xhtml#part">Part</a><ol><li><a href="chapter-001.xhtml#chapter">Chapter</a>',
+    );
+    expect(contents).toContain(
+      '<h1>Index</h1><ol><li><a href="chapter-001.xhtml#part">Part</a><ol><li>',
+    );
+    expect(opf.indexOf('<itemref idref="chapter-001"/>')).toBeLessThan(
+      opf.indexOf('<itemref idref="inline-toc"/>'),
+    );
+  });
+
   it('renders normalized paragraph indentation with generated stylesheet classes', async () => {
     const files = unzipSync(
       await writeEpub(

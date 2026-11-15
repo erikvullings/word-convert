@@ -19,6 +19,7 @@ import type {
   PdfPipelineStageEvent,
   PdfReaderOptions,
   PdfTableOptions,
+  PdfTocOptions,
 } from '@wordconvert/pdf-reader';
 import type { PipelineDebugSink } from '@wordconvert/document-model';
 
@@ -38,6 +39,7 @@ export interface CliPdfOptions extends ConversionOptions {
   dehyphenate?: boolean;
   chapterDetection?: ChapterDetectionOptions;
   chapterSplitLevel?: ChapterHeadingLevel;
+  toc?: PdfTocOptions;
   runtimeDir?: string;
   executionProvider?: ProviderSelection;
   onDiagnostic?: (message: string) => void;
@@ -149,6 +151,7 @@ export async function readPdf(
       ...(options.chapterSplitLevel !== undefined
         ? { chapterSplitLevel: options.chapterSplitLevel }
         : {}),
+      ...(options.toc ? { toc: options.toc } : {}),
       ...(adapters ? { figureRasterizer: adapters.figureRasterizer } : {}),
       ...(adapters?.layoutDetector
         ? { layoutDetector: adapters.layoutDetector }
@@ -189,6 +192,13 @@ export async function readPdf(
       ...(options.dehyphenate !== undefined
         ? { dehyphenate: options.dehyphenate }
         : {}),
+      ...(options.chapterDetection
+        ? { chapterDetection: options.chapterDetection }
+        : {}),
+      ...(options.chapterSplitLevel !== undefined
+        ? { chapterSplitLevel: options.chapterSplitLevel }
+        : {}),
+      ...(options.toc ? { toc: options.toc } : {}),
     });
     const { model, analysis } = result;
     if (options.extractImages === false) {
