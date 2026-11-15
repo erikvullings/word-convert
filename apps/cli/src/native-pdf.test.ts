@@ -8,12 +8,76 @@ import { loadNativeRuntime } from './native-runtime.ts';
 import { createNativePdfAdapters } from './native-pdf.ts';
 import { readPdf } from './pdf.ts';
 import { isExecutionProvider } from './inference-options.ts';
+import {
+  analysePdf,
+  pdfJsReader,
+  type PdfLayoutDetector,
+} from '@wordconvert/pdf-reader';
 
 const provider = process.env.WORDCONVERT_CLI_EXECUTION_PROVIDER ?? 'cpu';
 if (!isExecutionProvider(provider))
   throw new Error('Invalid test execution provider.');
 
 afterEach(() => vi.restoreAllMocks());
+
+it.each(['ruled-table.pdf', 'tagged-table.pdf'])(
+  'keeps a structured table over a learned picture proposal in %s',
+  async (filename) => {
+    const runtime = loadNativeRuntime();
+    const adapters = await createNativePdfAdapters(runtime, {});
+    try {
+      const region =
+        filename === 'ruled-table.pdf'
+          ? {
+              label: 'table' as const,
+              confidence: 0.93,
+              x: 0.1,
+              top: 0.25,
+              width: 0.8,
+              height: 0.45,
+            }
+          : {
+              label: 'table' as const,
+              confidence: 0.93,
+              x: 0.09,
+              top: 0.1,
+              width: 0.5,
+              height: 0.1,
+            };
+      const layoutDetector: PdfLayoutDetector = {
+        inputSize: 64,
+        detect: async () => [region],
+      };
+      const bytes = await readFile(
+        fileURLToPath(
+          new URL(`../../../tests/fixtures/pdf/${filename}`, import.meta.url),
+        ),
+      );
+      const raw = await pdfJsReader.readRaw(bytes, {
+        conversionDate: '2026-08-29',
+        figureRasterizer: adapters.figureRasterizer,
+        layoutDetector,
+      });
+      const result = await analysePdf(raw, {
+        conversionDate: '2026-08-29',
+      });
+
+      expect(
+        raw.pages[0]?.images.some(({ source }) => source === 'rendered-figure'),
+      ).toBe(false);
+      expect(result.model.blocks.some(({ type }) => type === 'table')).toBe(
+        true,
+      );
+      expect(
+        result.analysis.tables?.some(({ source }) =>
+          ['ruled', 'tagged'].includes(source),
+        ),
+      ).toBe(true);
+    } finally {
+      await adapters.dispose();
+    }
+  },
+);
 
 it.each(['auto', 'webgpu'] as const)(
   'only retries GPU initialization on CPU when selection is %s',
@@ -77,7 +141,7 @@ it.each(['auto', 'webgpu'] as const)(
         onDiagnostic: diagnostic,
       });
       if (selection === 'auto') {
-        expect((await operation).blocks.length).toBeGreaterThan(0);
+        expect((await operation).model.blocks.length).toBeGreaterThan(0);
         expect(create).toHaveBeenCalledTimes(2);
         expect(create.mock.calls[1]?.[1]).toMatchObject({
           executionProviders: ['cpu'],
@@ -180,7 +244,7 @@ it('renders PDF vectors through local native canvas without models', async () =>
       ),
     ),
   );
-  const model = await readPdf(bytes, 'article.pdf', {
+  const { model } = await readPdf(bytes, 'article.pdf', {
     conversionDate: '2026-01-02',
     rasterize: true,
   });

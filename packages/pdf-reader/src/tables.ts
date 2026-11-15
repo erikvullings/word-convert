@@ -7,9 +7,7 @@
  * grid of spans; the reader owns inline and style creation so table cells share
  * the formatting path of every other block.
  *
- * Ruled-line detection lives in this module too (see below); borderless
- * alignment detection is still open in
- * TASKS/0045-detect-pdf-tables-and-emit-table-node.md.
+ * Ruled-line and opt-in borderless alignment detection live in this module too.
  */
 
 export interface TaggedStructureNode {
@@ -446,12 +444,9 @@ export function buildTaggedTable(
 /**
  * Ruled-line table detection.
  *
- * A ruled table states its grid geometrically: stroked lines that close every
- * cell. This module turns a page's straight strokes into boundaries, and only
- * accepts a lattice whose every cell is closed on all four sides, so a single
- * underline, a boxed quote, or a decorative frame cannot become a table.
- * Merged ruled cells are out of scope for this slice: a span that straddles an
- * interior rule rejects the grid rather than being guessed into one cell.
+ * A ruled table states its grid geometrically. The outer boundary must close;
+ * a missing interior rule merges cells only when a text span crosses it.
+ * Partial rules and unsupported gaps stay on the paragraph path.
  */
 
 /** A straight stroked line in page-relative coordinates. */
@@ -479,6 +474,8 @@ export interface GridTableCell {
   readonly key: string;
   readonly rowIndex: number;
   readonly columnIndex: number;
+  readonly rowSpan?: number;
+  readonly colSpan?: number;
   readonly spanIds: readonly string[];
 }
 
@@ -757,8 +754,8 @@ function toLattice(
   return {
     xs,
     ys,
-    horizontal: clusterRules(group.horizontal, limits),
-    vertical: clusterRules(group.vertical, limits),
+    horizontal: group.horizontal,
+    vertical: group.vertical,
   };
 }
 
@@ -770,73 +767,271 @@ function coverage(
   to: number,
   limits: RuledTableLimits,
 ): number {
-  let covered = 0;
+  const intervals: Array<[number, number]> = [];
   for (const rule of rules) {
     if (
       Math.abs(rule.position - position) >
       Math.max(limits.tolerance, rule.thickness)
     )
       continue;
-    covered += Math.max(0, Math.min(rule.end, to) - Math.max(rule.start, from));
+    const start = Math.max(rule.start, from);
+    const end = Math.min(rule.end, to);
+    if (end > start) intervals.push([start, end]);
   }
-  return Math.min(covered, to - from);
+  intervals.sort(([left], [right]) => left - right);
+  let covered = 0;
+  let start: number | undefined;
+  let end = 0;
+  for (const [nextStart, nextEnd] of intervals) {
+    if (start === undefined) {
+      start = nextStart;
+      end = nextEnd;
+    } else if (nextStart <= end) end = Math.max(end, nextEnd);
+    else {
+      covered += end - start;
+      start = nextStart;
+      end = nextEnd;
+    }
+  }
+  if (start !== undefined) covered += end - start;
+  return covered;
 }
 
-function closesAt(
+type EdgeState = 'closed' | 'open' | 'partial';
+
+function edgeState(
   rules: readonly Rule[],
   position: number,
   from: number,
   to: number,
   limits: RuledTableLimits,
+): EdgeState {
+  const covered = coverage(rules, position, from, to, limits);
+  if (covered >= to - from - limits.maxEdgeGap) return 'closed';
+  return covered <= limits.tolerance ? 'open' : 'partial';
+}
+
+function crossesVerticalEdge(
+  span: GridSpanBox,
+  position: number,
+  top: number,
+  bottom: number,
+  tolerance: number,
 ): boolean {
   return (
-    coverage(rules, position, from, to, limits) >= to - from - limits.maxEdgeGap
+    span.x < position - tolerance &&
+    span.x + span.width > position + tolerance &&
+    Math.min(span.top + span.height, bottom) - Math.max(span.top, top) >
+      tolerance
   );
 }
 
-/** Every cell must be closed on all four sides, or the grid is not a grid. */
-function isClosedGrid(lattice: Lattice, limits: RuledTableLimits): boolean {
-  for (let row = 0; row < lattice.ys.length - 1; row++)
-    for (let column = 0; column < lattice.xs.length - 1; column++) {
-      const left = lattice.xs[column]!;
-      const right = lattice.xs[column + 1]!;
-      const top = lattice.ys[row]!;
-      const bottom = lattice.ys[row + 1]!;
-      if (
-        right - left < limits.minCellSize ||
-        bottom - top < limits.minCellSize
-      )
-        return false;
-      if (
-        !closesAt(lattice.horizontal, top, left, right, limits) ||
-        !closesAt(lattice.horizontal, bottom, left, right, limits) ||
-        !closesAt(lattice.vertical, left, top, bottom, limits) ||
-        !closesAt(lattice.vertical, right, top, bottom, limits)
-      )
-        return false;
-    }
-  return true;
+function crossesHorizontalEdge(
+  span: GridSpanBox,
+  position: number,
+  left: number,
+  right: number,
+  tolerance: number,
+): boolean {
+  return (
+    span.top < position - tolerance &&
+    span.top + span.height > position + tolerance &&
+    Math.min(span.x + span.width, right) - Math.max(span.x, left) > tolerance
+  );
+}
+
+interface CellRegion {
+  readonly root: number;
+  readonly rowIndex: number;
+  readonly columnIndex: number;
+  readonly rowSpan: number;
+  readonly colSpan: number;
+  readonly cellCount: number;
 }
 
 /**
- * Give each text span to the single cell it lies in. A span that overlaps two
- * cells straddles a rule, which is a merged cell this slice does not read, so
- * the whole grid is refused instead of silently dropping half the text.
+ * Close the outer grid and merge adjacent cells only where a text span crosses
+ * the missing interior rule. A partial rule or unsupported gap is not enough
+ * evidence to infer a span.
  */
-function assignSpans(
+function buildRuledCells(
   spans: readonly GridSpanBox[],
   lattice: Lattice,
   limits: RuledTableLimits,
-): Map<string, string[]> | undefined {
-  const cells = new Map<string, string[]>();
-  let filled = 0;
-  for (let row = 0; row < lattice.ys.length - 1; row++)
-    for (let column = 0; column < lattice.xs.length - 1; column++)
-      cells.set(`${row}:${column}`, []);
+): GridTableCell[] | undefined {
+  const rowCount = lattice.ys.length - 1;
+  const columnCount = lattice.xs.length - 1;
+  const parents = Array.from(
+    { length: rowCount * columnCount },
+    (_, index) => index,
+  );
+  const find = (value: number): number => {
+    let root = value;
+    while (parents[root] !== root) root = parents[root]!;
+    while (parents[value] !== value) {
+      const next = parents[value]!;
+      parents[value] = root;
+      value = next;
+    }
+    return root;
+  };
+  const union = (left: number, right: number) => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot !== rightRoot) parents[rightRoot] = leftRoot;
+  };
+  const cellIndex = (row: number, column: number) => row * columnCount + column;
+  const horizontal = lattice.ys.map((position) =>
+    lattice.horizontal.filter(
+      (rule) =>
+        Math.abs(rule.position - position) <=
+        Math.max(limits.tolerance, rule.thickness),
+    ),
+  );
+  const vertical = lattice.xs.map((position) =>
+    lattice.vertical.filter(
+      (rule) =>
+        Math.abs(rule.position - position) <=
+        Math.max(limits.tolerance, rule.thickness),
+    ),
+  );
+
+  for (let column = 0; column < columnCount; column++)
+    if (
+      edgeState(
+        horizontal[0]!,
+        lattice.ys[0]!,
+        lattice.xs[column]!,
+        lattice.xs[column + 1]!,
+        limits,
+      ) !== 'closed' ||
+      edgeState(
+        horizontal[rowCount]!,
+        lattice.ys[rowCount]!,
+        lattice.xs[column]!,
+        lattice.xs[column + 1]!,
+        limits,
+      ) !== 'closed'
+    )
+      return undefined;
+  for (let row = 0; row < rowCount; row++)
+    if (
+      edgeState(
+        vertical[0]!,
+        lattice.xs[0]!,
+        lattice.ys[row]!,
+        lattice.ys[row + 1]!,
+        limits,
+      ) !== 'closed' ||
+      edgeState(
+        vertical[columnCount]!,
+        lattice.xs[columnCount]!,
+        lattice.ys[row]!,
+        lattice.ys[row + 1]!,
+        limits,
+      ) !== 'closed'
+    )
+      return undefined;
+
+  for (let row = 0; row < rowCount; row++)
+    for (let boundary = 1; boundary < columnCount; boundary++) {
+      const state = edgeState(
+        vertical[boundary]!,
+        lattice.xs[boundary]!,
+        lattice.ys[row]!,
+        lattice.ys[row + 1]!,
+        limits,
+      );
+      if (state === 'closed') continue;
+      if (
+        state !== 'open' ||
+        !spans.some((span) =>
+          crossesVerticalEdge(
+            span,
+            lattice.xs[boundary]!,
+            lattice.ys[row]!,
+            lattice.ys[row + 1]!,
+            limits.tolerance,
+          ),
+        )
+      )
+        return undefined;
+      union(cellIndex(row, boundary - 1), cellIndex(row, boundary));
+    }
+  for (let boundary = 1; boundary < rowCount; boundary++)
+    for (let column = 0; column < columnCount; column++) {
+      const state = edgeState(
+        horizontal[boundary]!,
+        lattice.ys[boundary]!,
+        lattice.xs[column]!,
+        lattice.xs[column + 1]!,
+        limits,
+      );
+      if (state === 'closed') continue;
+      if (
+        state !== 'open' ||
+        !spans.some((span) =>
+          crossesHorizontalEdge(
+            span,
+            lattice.ys[boundary]!,
+            lattice.xs[column]!,
+            lattice.xs[column + 1]!,
+            limits.tolerance,
+          ),
+        )
+      )
+        return undefined;
+      union(cellIndex(boundary - 1, column), cellIndex(boundary, column));
+    }
+
+  const bounds = new Map<
+    number,
+    {
+      minRow: number;
+      maxRow: number;
+      minColumn: number;
+      maxColumn: number;
+      cellCount: number;
+    }
+  >();
+  for (let row = 0; row < rowCount; row++)
+    for (let column = 0; column < columnCount; column++) {
+      const root = find(cellIndex(row, column));
+      const region = bounds.get(root);
+      if (region) {
+        region.minRow = Math.min(region.minRow, row);
+        region.maxRow = Math.max(region.maxRow, row);
+        region.minColumn = Math.min(region.minColumn, column);
+        region.maxColumn = Math.max(region.maxColumn, column);
+        region.cellCount += 1;
+      } else
+        bounds.set(root, {
+          minRow: row,
+          maxRow: row,
+          minColumn: column,
+          maxColumn: column,
+          cellCount: 1,
+        });
+    }
+  const regions: CellRegion[] = [];
+  for (const [root, region] of bounds) {
+    const rowSpan = region.maxRow - region.minRow + 1;
+    const colSpan = region.maxColumn - region.minColumn + 1;
+    if (region.cellCount !== rowSpan * colSpan) return undefined;
+    regions.push({
+      root,
+      rowIndex: region.minRow,
+      columnIndex: region.minColumn,
+      rowSpan,
+      colSpan,
+      cellCount: region.cellCount,
+    });
+  }
+  const cells = new Map(regions.map(({ root }) => [root, [] as string[]]));
   for (const box of spans) {
-    const overlaps: string[] = [];
-    for (let row = 0; row < lattice.ys.length - 1; row++)
-      for (let column = 0; column < lattice.xs.length - 1; column++) {
+    const overlaps = new Set<number>();
+    for (let row = 0; row < rowCount; row++)
+      for (let column = 0; column < columnCount; column++) {
         const horizontal =
           Math.min(box.x + box.width, lattice.xs[column + 1]!) -
           Math.max(box.x, lattice.xs[column]!);
@@ -844,19 +1039,31 @@ function assignSpans(
           Math.min(box.top + box.height, lattice.ys[row + 1]!) -
           Math.max(box.top, lattice.ys[row]!);
         if (horizontal > limits.tolerance && vertical > limits.tolerance)
-          overlaps.push(`${row}:${column}`);
+          overlaps.add(find(cellIndex(row, column)));
       }
-    if (overlaps.length === 0) continue; // caption, running head, other prose
-    if (overlaps.length > 1) return undefined;
-    const [key] = overlaps;
-    const bucket = cells.get(key!);
+    if (overlaps.size === 0) continue; // caption, running head, other prose
+    if (overlaps.size > 1) return undefined;
+    const [root] = overlaps;
+    const bucket = cells.get(root!);
     if (!bucket) return undefined;
-    if (bucket.length === 0) filled += 1;
     bucket.push(box.id);
   }
-  const total = (lattice.ys.length - 1) * (lattice.xs.length - 1);
-  if (total === 0 || filled / total < limits.minTextCoverage) return undefined;
-  return cells;
+  const filled = [...cells.values()].filter((ids) => ids.length > 0).length;
+  if (cells.size === 0 || filled / cells.size < limits.minTextCoverage)
+    return undefined;
+  return regions
+    .map((region) => ({
+      key: `${region.rowIndex}:${region.columnIndex}`,
+      rowIndex: region.rowIndex,
+      columnIndex: region.columnIndex,
+      ...(region.rowSpan > 1 ? { rowSpan: region.rowSpan } : {}),
+      ...(region.colSpan > 1 ? { colSpan: region.colSpan } : {}),
+      spanIds: cells.get(region.root)!,
+    }))
+    .sort(
+      (left, right) =>
+        left.rowIndex - right.rowIndex || left.columnIndex - right.columnIndex,
+    );
 }
 
 /**
@@ -881,30 +1088,26 @@ export function detectRuledTables(
   const { groups, truncated } = groupRules(strokes, limits);
   interface Candidate {
     readonly lattice: Lattice;
-    readonly assignment: Map<string, string[]>;
+    readonly cells: GridTableCell[];
   }
   const candidates: Candidate[] = [];
   for (const group of groups) {
     const lattice = toLattice(group, limits);
     if (!lattice) continue; // ordinary rules, not a table-shaped rule set
-    if (!isClosedGrid(lattice, limits)) {
+    const cells = buildRuledCells(usable, lattice, limits);
+    if (!cells) {
       unresolved += 1;
       continue;
     }
-    const assignment = assignSpans(usable, lattice, limits);
-    if (!assignment) {
-      unresolved += 1;
-      continue;
-    }
-    candidates.push({ lattice, assignment });
+    candidates.push({ lattice, cells });
   }
   // Two grids that both contain one span are pathological; refusing them both
   // keeps every word on the paragraph path instead of printing it twice.
   const owners = new Map<string, number>();
   const shared = new Set<number>();
   candidates.forEach((candidate, index) => {
-    for (const ids of candidate.assignment.values())
-      for (const id of ids) {
+    for (const cell of candidate.cells)
+      for (const id of cell.spanIds) {
         const previous = owners.get(id);
         if (previous === undefined) owners.set(id, index);
         else if (previous !== index) shared.add(previous).add(index);
@@ -917,17 +1120,6 @@ export function detectRuledTables(
       return;
     }
     const { lattice } = candidate;
-    const cells: GridTableCell[] = [];
-    for (let row = 0; row < lattice.ys.length - 1; row++)
-      for (let column = 0; column < lattice.xs.length - 1; column++) {
-        const key = `${row}:${column}`;
-        cells.push({
-          key,
-          rowIndex: row,
-          columnIndex: column,
-          spanIds: candidate.assignment.get(key) ?? [],
-        });
-      }
     const top = lattice.ys[0]!;
     const left = lattice.xs[0]!;
     tables.push({
@@ -939,7 +1131,7 @@ export function detectRuledTables(
       top,
       width: lattice.xs.at(-1)! - left,
       height: lattice.ys.at(-1)! - top,
-      cells,
+      cells: candidate.cells,
     });
   });
   return { tables, unresolved, truncated };

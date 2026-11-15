@@ -1,6 +1,6 @@
 # 0033 Add median-length driven PDF line unwrapping with a tunable factor
 
-Status: open
+Status: done
 Priority: high
 Owner: unassigned
 Agent: pi
@@ -103,3 +103,4 @@ WordConvert's non-OCR merging (`canMergeLines()` in
   already implements the good rules, so this is largely lifting them to the shared
   path and adding the median-length signal.
 - 2026-11-13 pi: Verified this task against the calibre v9.18.0 source tree (kovidgoyal/calibre, tag v9.18.0) rather than only the CLI help and online manual; Implementation Notes now cite the implementing file for each adopted behaviour, and the notes above record where the source contradicts calibre's own documentation.
+- 2026-11-13 pi: Implemented bounded line profiles, short-line paragraph boundaries, configurable unwrap factor, and review-only column-order diagnostics in `packages/pdf-reader/src/index.ts`; added generated verse, glossary, and loose-leading fixtures and CLI controls/documentation. Calibre 9.18.0's `calibre` and `pdftohtml` engines disagree on verse/glossary grouping, so WordConvert keeps short stacked entries distinct and uses an explicitly lowered factor for loose-leading joins. Compared default CLI output with factor `0` across all 11 pre-existing valid PDF fixtures; after keeping expanded gap tolerance opt-in, all outputs are identical. Focused reader and CLI regression tests pass.

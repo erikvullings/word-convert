@@ -1,6 +1,6 @@
 # 0031 Adopt calibre-inspired PDF to EPUB conversion stages
 
-Status: open
+Status: done
 Priority: medium
 Owner: unassigned
 Agent: pi
@@ -54,8 +54,8 @@ Subtask order: 0033 → 0034 and 0036 → 0037 are the only required sequences; 
 other subtask can start independently. Recommended first slices are 0044 (diagnostics
 make every later change measurable), then 0032/0033, then 0036/0037. 0045 (PDF tables)
 was added later at the user's request and shares no sequence with the rest. All subtasks
-list this task in `Depends on:`, so it must be accepted and set to `done` before any of
-them starts.
+list this task in `Depends on:`, so absent a direct user request for a specific subtask,
+this record must be accepted and set to `done` before dependent work starts.
 
 ## Acceptance Criteria
 
@@ -187,3 +187,10 @@ them starts.
   `npm run dev` is `pnpm --filter @wordconvert/web dev`). Subtasks 0032–0044 say "the SPA"
   without a path, so they are unaffected, but an agent following `AGENTS.md` literally will
   look for directories that do not exist.
+- 2026-11-15 pi: Resumed at user request. 0033/0034 and the user-requested 0045 table
+  work are implemented; 0047 resolves the default-layout precedence issue. The remaining
+  gap-map items are still planned or open. This task's acceptance criterion requires the
+  adopt/reject map itself to be explicitly accepted, so the task is blocked pending that
+  sign-off rather than treating "continue" as approval of every remaining proposal.
+- 2026-11-15 pi: User explicitly accepted the current adopt/reject map and subtask plan.
+  Decision record closed; implementation status remains tracked in the individual tasks.

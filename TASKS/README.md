@@ -65,18 +65,17 @@ These improvements are intentionally outside the initial production path.
 ## calibre-inspired PDF to EPUB conversion
 
 Adopting the useful parts of calibre's `ebook-convert` transform stage. 0031 holds the
-option-by-option gap map, the adopted features, and the deliberately rejected ones; it is
-the decision record (completable on its own) and every subtask lists it in `Depends on:`,
-so accept it and set it `done` before starting any subtask. The only other hard sequences
-are 0033 → 0034 and 0036 → 0037. 0044 is the recommended first slice because the
-heuristic tasks need stage-level before/after evidence, and calibre (GPLv3) stays an
+option-by-option gap map, accepted features, and deliberate rejections; the decision record
+is closed, while implementation status remains tracked in the individual tasks. The other
+hard sequences are 0033 → 0034 and 0036 → 0037. 0044 is the recommended first slice because
+the heuristic tasks need stage-level before/after evidence, and calibre (GPLv3) stays an
 offline comparison command only. 0045 (PDF tables) was added later at the user's request
 and reverses one of 0031's rejections; it shares no sequence with the other subtasks.
 
-- [ ] 0031 Adopt calibre-inspired PDF to EPUB conversion stages *(epic)*
+- [x] 0031 Adopt calibre-inspired PDF to EPUB conversion stages *(epic)*
 - [ ] 0032 Expose PDF crop furniture and image options in the CLI
-- [ ] 0033 Add median-length driven PDF line unwrapping with a tunable factor
-- [ ] 0034 Add document-wide PDF de-hyphenation *(needs 0033)*
+- [x] 0033 Add median-length driven PDF line unwrapping with a tunable factor
+- [x] 0034 Add document-wide PDF de-hyphenation *(needs 0033)*
 - [ ] 0035 Normalize PDF indents and remove fake page margins
 - [ ] 0036 Add configurable chapter detection marking and heading-run merging *(needs 0033)*
 - [ ] 0037 Build hierarchical filtered tables of contents for PDF books *(needs 0036)*
@@ -87,9 +86,9 @@ and reverses one of 0031's rejections; it shares no sequence with the other subt
 - [ ] 0042 Add EPUB styling cover and navigation landmark output options *(cover: source needs 0043)*
 - [ ] 0043 Extract PDF image alt text captions and cover candidates
 - [ ] 0044 Add conversion pipeline stage dumps and verbosity levels
-- [ ] 0045 Detect PDF tables and emit TableNode *(added on request; not a calibre feature)*
-- [ ] 0047 Keep structured PDF tables over learned picture regions *(found while
-  testing 0045 through the CLI; blocks ruled tables in the default CLI configuration)*
+- [x] 0045 Detect PDF tables and emit TableNode *(added on request; not a calibre feature)*
+- [x] 0047 Keep structured PDF tables over learned picture regions *(preserves
+  tables with default CLI layout analysis enabled)*
 
 ## Test reliability
 

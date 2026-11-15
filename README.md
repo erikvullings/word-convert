@@ -40,6 +40,16 @@ default, even if already below the dimension limit; transparent images retain
 lossless PNG. Only smaller encodings are used. Override with
 `--image-format preserve` or `--image-quality <1-100>` (EPUB only).
 Pixel dimensions, not DPI metadata, determine the reading resolution.
+Use `--cover <image>` to embed a local JPEG, PNG, WebP, or sanitized SVG cover
+image in EPUB output. For PDF input whose first page is the cover,
+`--frontpage-cover` renders it as the cover and omits that page's images from
+the body. Front-page cover rendering requires the native runtime, including
+when PDF layout analysis is disabled.
+
+```sh
+wordconvert book.pdf --cover downloaded-cover.jpg -o book.epub
+wordconvert scan.pdf --frontpage-cover -o scan.epub
+```
 
 Existing EPUBs can also be shrunk without rebuilding their chapters, navigation,
 styles, or metadata:
@@ -69,6 +79,11 @@ cell borders close into a grid (`ruled`). `--pdf-tables` selects which of those
 signals the reader may act on, accepts `none` to keep tables as paragraphs, and
 can opt into `borderless`, which infers a table from aligned columns alone and
 stays off by default. A table that cannot be resolved stays paragraphs.
+
+PDF text reflow also exposes `--unwrap-factor <0..1>` (default `0.45`) for
+short-line handling and opt-in `--dehyphenate on` for evidence-based word joins.
+The reader reports suspicious multi-column ordering for review rather than
+treating the PDF text layer as authoritative. See [the CLI guide](documentation/cli.md#pdf-text-reflow).
 
 With [Bun 1.3.11](https://bun.sh/) installed for development:
 
@@ -192,7 +207,7 @@ Required identifier, title, language, and EPUB modification time can come from t
 
 `@wordconvert/cover-generator` creates deterministic, browser-independent SVG compositions for image-only, overlay, title-panel, separate-title-page, and generated typographic covers. It accepts bounded JPEG, PNG, WebP, and sanitized SVG inputs, uses only system-safe font families, and exposes rasterization through an injected adapter for browser-only compatibility paths.
 
-The EPUB editor can omit a cover, upload an image, choose a supported extracted document image, or generate a typographic cover. Its live preview exposes crop, alignment, title and author positions and sizes, text colour, contrast panel and opacity, image opacity, safe margins, and aspect ratio. A conservative filename heuristic explains when an image may already contain title text. Generated EPUBs declare the cover image and cover page while always retaining a separate semantic XHTML title page.
+The EPUB editor can omit a cover, upload an image, choose a supported extracted document image, or generate a typographic cover. The CLI accepts a local image with `--cover`, or can use a PDF's first page with `--frontpage-cover` and omit that page's image from the body. The editor's live preview exposes crop, alignment, title and author positions and sizes, text colour, contrast panel and opacity, image opacity, safe margins, and aspect ratio. A conservative filename heuristic explains when an image may already contain title text. Generated EPUBs declare the cover image and cover page while always retaining a separate semantic XHTML title page.
 
 ## Formula output
 

@@ -10,6 +10,18 @@
       "covers": ["two-column reading order", "footer"]
     },
     {
+      "file": "reflow-verse.pdf",
+      "covers": ["short stacked verse lines", "hard line breaks"]
+    },
+    {
+      "file": "reflow-loose-leading.pdf",
+      "covers": ["loose leading", "long prose continuation"]
+    },
+    {
+      "file": "reflow-glossary.pdf",
+      "covers": ["short glossary entries", "paragraph boundaries"]
+    },
+    {
       "file": "tagged-article.pdf",
       "covers": ["tagged structure", "marked content"]
     },
@@ -37,6 +49,14 @@
     {
       "file": "ruled-table.pdf",
       "covers": ["ruled table", "stroked cell borders", "table caption"]
+    },
+    {
+      "file": "ruled-table-spans.pdf",
+      "covers": [
+        "ruled table column span",
+        "ruled table row span",
+        "crossing text evidence"
+      ]
     },
     {
       "file": "borderless-table.pdf",

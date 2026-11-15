@@ -24,6 +24,23 @@ const fixture = fileURLToPath(
 const pdf = fileURLToPath(
   new URL('../../../tests/fixtures/pdf/one-column-book.pdf', import.meta.url),
 );
+const existingPdfFixtures = [
+  'one-column-book.pdf',
+  'two-column-article.pdf',
+  'tagged-article.pdf',
+  'tagged-table.pdf',
+  'tagged-table-spans.pdf',
+  'scanned-page.pdf',
+  'ruled-table.pdf',
+  'borderless-table.pdf',
+  'ruled-non-tables.pdf',
+  'formula-layouts.pdf',
+  'formula-false-positives.pdf',
+].map((name) =>
+  fileURLToPath(
+    new URL(`../../../tests/fixtures/pdf/${name}`, import.meta.url),
+  ),
+);
 const directories: string[] = [];
 const fixedDate = ['--conversion-date', '2026-01-02'];
 
@@ -111,6 +128,8 @@ describe('CLI arguments and output', () => {
     expect((await invoke(['--help'])).output[0]).toContain(
       'Usage: wordconvert',
     );
+    expect((await invoke(['--help'])).output[0]).toContain('--unwrap-factor');
+    expect((await invoke(['--help'])).output[0]).toContain('--dehyphenate');
     expect((await invoke(['--version'])).output[0]).toBe(`${version}\n`);
   });
 
@@ -129,6 +148,10 @@ describe('CLI arguments and output', () => {
     [fixture, '--image-quality', '80.5'],
     [fixture, '--image-quality', 'NaN'],
     [fixture, '--image-quality', '80', '--format', 'markdown'],
+    [fixture, '--cover', 'cover.png', '--format', 'html'],
+    [fixture, '--frontpage-cover'],
+    [pdf, '--frontpage-cover', '--format', 'html'],
+    [pdf, '--cover', 'cover.png', '--frontpage-cover'],
     [fixture, '--conversion-date', '2026-02-30'],
     [fixture, '--conversion-date', '2026-01-01T24:00:00Z'],
     [fixture, '--language', 'not a language'],
@@ -149,6 +172,11 @@ describe('CLI arguments and output', () => {
     [pdf, '--pdf-tables', 'none,ruled'],
     [pdf, '--pdf-tables', ''],
     [fixture, '--pdf-tables', 'none'],
+    [pdf, '--unwrap-factor', '1.1'],
+    [pdf, '--unwrap-factor', 'NaN'],
+    [pdf, '--dehyphenate', 'sometimes'],
+    [fixture, '--dehyphenate', 'on'],
+    [fixture, '--unwrap-factor', '0.5'],
   ])('rejects invalid arguments %j', async (...args) => {
     const result = await invoke(args);
     expect(result.code).toBe(2);
@@ -203,6 +231,46 @@ describe('CLI arguments and output', () => {
     expect(result.output[0]).not.toMatch(/Page \d+ of 6/);
     expect(result.errors).toContain('pdf-repeated-page-furniture');
     expect(result.errors).toContain('cli-pdf-geometry-only');
+  });
+
+  it('accepts PDF reflow options without enabling model downloads', async () => {
+    const result = await invoke([
+      pdf,
+      '--no-layout',
+      '--unwrap-factor',
+      '0.4',
+      '--dehyphenate',
+      'on',
+      '-f',
+      'markdown',
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+
+    expect(result.code).toBe(0);
+    expect(result.errors).toContain('pdf-dehyphenation-summary');
+    expect(result.output[0]).toContain('A Practical Book');
+  });
+
+  it('keeps existing PDF corpus output byte-identical by default', async () => {
+    for (const input of existingPdfFixtures) {
+      const base = [
+        input,
+        '--no-layout',
+        '-f',
+        'markdown',
+        '-o',
+        '-',
+        ...fixedDate,
+      ];
+      const defaultOutput = await invoke(base);
+      const geometryOutput = await invoke([...base, '--unwrap-factor', '0']);
+
+      expect(defaultOutput.code).toBe(0);
+      expect(geometryOutput.code).toBe(0);
+      expect(defaultOutput.output, input).toEqual(geometryOutput.output);
+    }
   });
 
   it('defaults missing PDF language to English for EPUB without an override', async () => {
@@ -292,6 +360,38 @@ describe('CLI arguments and output', () => {
     expect(result.output[0]).not.toContain('Standard heading');
   });
 
+  it('embeds a supplied image as the EPUB cover', async () => {
+    const cover = join(await directory(), 'cover.png');
+    await writeFile(
+      cover,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+        'base64',
+      ),
+    );
+    const result = await invoke([
+      fixture,
+      '--cover',
+      cover,
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+
+    expect(result.code, result.errors).toBe(0);
+    const output = result.output[0];
+    if (!(output instanceof Uint8Array))
+      throw new Error('Expected EPUB bytes.');
+    const files = unzipSync(output);
+    const opf = new TextDecoder().decode(files['EPUB/package.opf']);
+    const coverSvg = new TextDecoder().decode(files['EPUB/cover.svg']);
+    expect(opf).toContain(
+      'href="cover.svg" media-type="image/svg+xml" properties="cover-image"',
+    );
+    expect(files['EPUB/cover.xhtml']).toBeDefined();
+    expect(coverSvg).toContain('data:image/png;base64,');
+  });
+
   it.each([
     '{"schema":"wordconvert.style-preset","version":2,"mappings":{}}',
     '{"schema":"wordconvert.style-preset","version":1,"mappings":{"x":"script"}}',
@@ -358,9 +458,7 @@ describe('CLI PDF table signals', () => {
     fileURLToPath(
       new URL(`../../../tests/fixtures/pdf/${name}`, import.meta.url),
     );
-  // Layout analysis is left off here: this covers what `--pdf-tables` selects,
-  // and a learned picture/table proposal currently wins over a ruled grid
-  // (TASKS/0047), which would hide the signal being tested.
+  // Avoid model downloads here; layout precedence has a separate CLI regression.
   const html = async (args: string[]) => {
     const result = await invoke([
       ...args,

@@ -1,6 +1,6 @@
 # 0045 Detect PDF tables and emit TableNode
 
-Status: in-progress
+Status: done
 Priority: medium
 Owner: unassigned
 Agent: pi
@@ -340,3 +340,13 @@ Three signals are available at very different cost and precision:
   heading so the guarantee (a table is never cut across chapters) is measured on
   a document that really splits. Also relevant to 0041: the size splitter has to
   respect the same minimum, not just the table rule.
+- 2026-11-15 pi: Completed borderless inference behind `--pdf-tables
+  borderless` and added conservative ruled-span handling in `tables.ts`: a
+  missing interior rule creates `rowSpan`/`colSpan` only when retained text
+  crosses it; partial or unsupported gaps remain on the paragraph path. Added
+  generated `ruled-table-spans.pdf` coverage for real PDF.js extraction, cell
+  placement, and text preservation; the existing EPUB split regression confirms
+  tables remain whole across chapter boundaries. Updated the PDF requirements
+  and hardening matrix. Full `pnpm test`, `pnpm typecheck`, `pnpm lint`, and
+  `pnpm format:check` pass. The 0041 size-based splitter is still planned and
+  must preserve this block-level invariant when implemented.

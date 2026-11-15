@@ -33,6 +33,12 @@ import {
   createFormulaCandidates,
   createManualFormulaCandidate,
 } from './formula/index.ts';
+import {
+  detectRuledTables,
+  detectTaggedTables,
+  layoutTaggedTables,
+  type GridSpanBox,
+} from './tables.ts';
 import type {
   PdfBounds,
   PdfFormulaCandidate,
@@ -97,6 +103,7 @@ export interface PdfExtractionOptions {
   formulaRecognizer?: PdfFormulaRecognizer;
   formulaLimits?: PdfFormulaLimits;
   manualFormulaRegions?: readonly PdfManualFormulaRegion[];
+  tableSignals?: { tagged: boolean; ruled: boolean };
   densePageMode?: PdfDensePageMode;
   /** Asked once, at the first dense page, when `densePageMode` is not set. */
   resolveDensePageMode?: PdfDensePageResolver;
@@ -473,6 +480,8 @@ export async function readGuardedPage(
             options.manualFormulaRegions,
             budgets.formula,
             loadedOperators,
+            !dense && !context.guard.timedOut,
+            options.tableSignals,
           ),
     );
     const densePage = dense ? { dense: true } : {};
@@ -1125,6 +1134,11 @@ async function readPage(
     recognized: 0,
   },
   preloadedOperators?: PdfOperatorList,
+  protectStructuredTables = true,
+  tableSignals: { tagged: boolean; ruled: boolean } = {
+    tagged: true,
+    ruled: true,
+  },
 ): Promise<RawPdfPage> {
   const viewport = page.getViewport({ scale: 1 });
   const [text, annotations, structure, operators] = await Promise.all([
@@ -1157,6 +1171,24 @@ async function readPage(
         )
       : [];
   let imageBacked = false;
+  const collectedStrokes = collectStrokeSegments(
+    operators,
+    viewport,
+    limits.maxStrokeSegmentsPerPage ?? DEFAULT_MAX_STROKE_SEGMENTS_PER_PAGE,
+  );
+  const taggedStructure = structure ? readStructure(structure) : undefined;
+  const protectedTableRegions = protectStructuredTables
+    ? detectStructuredTableRegions(
+        spans,
+        collectedStrokes.segments,
+        collectedStrokes.truncated,
+        taggedStructure,
+        {
+          tagged: tableSignals.tagged,
+          ruled: tableSignals.ruled,
+        },
+      )
+    : [];
   const images = includeImages
     ? await readImages(
         page,
@@ -1169,6 +1201,7 @@ async function readPage(
         layoutRegions,
         {
           operators,
+          protectedTableRegions,
           onPageBackdrop: () => {
             imageBacked = true;
           },
@@ -1217,11 +1250,6 @@ async function readPage(
       );
     formulaBudget.candidates += retained;
   }
-  const collectedStrokes = collectStrokeSegments(
-    operators,
-    viewport,
-    limits.maxStrokeSegmentsPerPage ?? DEFAULT_MAX_STROKE_SEGMENTS_PER_PAGE,
-  );
   return {
     number: pageNumber,
     width: viewport.width,
@@ -1234,7 +1262,7 @@ async function readPage(
     links,
     images,
     ...(formulaCandidates.length > 0 ? { formulaCandidates } : {}),
-    ...(structure ? { taggedStructure: readStructure(structure) } : {}),
+    ...(taggedStructure ? { taggedStructure } : {}),
     ...(collectedStrokes.segments.length > 0
       ? { strokes: collectedStrokes.segments }
       : {}),
@@ -1415,6 +1443,7 @@ export async function readImages(
   scan: {
     operators?: PdfOperatorList;
     onPageBackdrop?: () => void;
+    protectedTableRegions?: readonly NormalizedBounds[];
   } = {},
 ): Promise<RawPdfImage[]> {
   const operators = scan.operators ?? (await page.getOperatorList());
@@ -1422,6 +1451,7 @@ export async function readImages(
   const images: RawPdfImage[] = [];
   const stack: Matrix[] = [];
   const vectorBounds: NormalizedBounds[] = [];
+  let imageBacked = false;
   let transform: Matrix = [1, 0, 0, 1, 0, 0];
   for (let index = 0; index < operators.fnArray.length; index++) {
     if (index % 100 === 0) {
@@ -1456,6 +1486,7 @@ export async function readImages(
       typeof args?.[0] === 'string'
     ) {
       if (isPageBackdropPaint(page, transform, viewportTransform)) {
+        imageBacked = true;
         scan.onPageBackdrop?.();
         if (figureRasterizer) continue;
       }
@@ -1476,6 +1507,7 @@ export async function readImages(
       isPdfJsImage(args?.[0])
     ) {
       if (isPageBackdropPaint(page, transform, viewportTransform)) {
+        imageBacked = true;
         scan.onPageBackdrop?.();
         if (figureRasterizer) continue;
       }
@@ -1556,6 +1588,7 @@ export async function readImages(
     images,
     spans,
     layoutRegions,
+    imageBacked ? [] : (scan.protectedTableRegions ?? []),
   ).filter(
     (region) =>
       !equations.some(
@@ -1624,6 +1657,7 @@ function figureRegions(
   images: readonly RawPdfImage[] = [],
   spans: readonly RawPdfTextSpan[] = [],
   layoutRegions: readonly PdfLayoutRegion[] = [],
+  protectedTableRegions: readonly NormalizedBounds[] = [],
 ): NormalizedBounds[] {
   const groups = [
     ...bounds
@@ -1683,7 +1717,13 @@ function figureRegions(
         region.height >= 0.06 &&
         region.width * region.height <= 0.7,
     )
-    .map(({ region, learnedSeed }) => ({ region, learnedSeed }));
+    .map(({ region, learnedSeed }) => ({ region, learnedSeed }))
+    .filter(
+      ({ region }) =>
+        !protectedTableRegions.some(
+          (table) => intersectionCoverage(table, region) >= 0.8,
+        ),
+    );
   const learnedRegions = candidateRegions.filter(
     ({ learnedSeed }) => learnedSeed,
   );
@@ -1729,6 +1769,55 @@ function visualLayoutRegions(
         accepted.push(candidate);
       return accepted;
     }, []);
+}
+
+function detectStructuredTableRegions(
+  spans: readonly RawPdfTextSpan[],
+  strokes: readonly RawPdfStrokeSegment[],
+  strokesTruncated: boolean,
+  structure: RawPdfStructureNode | undefined,
+  signals: { tagged: boolean; ruled: boolean },
+): NormalizedBounds[] {
+  const regions: NormalizedBounds[] = [];
+  if (signals.ruled && !strokesTruncated && strokes.length > 0) {
+    const gridSpans: GridSpanBox[] = spans.map(
+      ({ id, text, x, top, width, height }) => ({
+        id,
+        text,
+        x,
+        top,
+        width,
+        height,
+      }),
+    );
+    regions.push(
+      ...detectRuledTables(gridSpans, strokes).tables.map(
+        ({ x, top, width, height }) => ({ x, top, width, height }),
+      ),
+    );
+  }
+  if (signals.tagged && structure) {
+    const tables = detectTaggedTables(structure).tables;
+    const layout = layoutTaggedTables(
+      tables,
+      new Set(
+        spans
+          .map(({ markedContentId }) => markedContentId)
+          .filter((mark): mark is string => mark !== undefined),
+      ),
+    );
+    for (const table of tables) {
+      const cells = layout.complete.get(table.id);
+      if (!cells) continue;
+      const marks = new Set([...cells.values()].flat());
+      const tableSpans = spans.filter(
+        ({ markedContentId }) =>
+          markedContentId !== undefined && marks.has(markedContentId),
+      );
+      if (tableSpans.length > 0) regions.push(spanUnion(tableSpans));
+    }
+  }
+  return regions;
 }
 
 function enclosesFlowingProse(

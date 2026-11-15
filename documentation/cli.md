@@ -113,6 +113,24 @@ wordconvert article.html --image-format preserve -o lossless-png.epub
 only to EPUB. `--max-image-size 0` disables all image optimization, including
 format changes. Original source documents and their images are never modified.
 
+## EPUB covers
+
+Use `--cover <path>` to add a local JPEG, PNG, WebP, or SVG image as an EPUB
+cover. Raster files are checked against their signatures and pixel limits; SVG
+is sanitized before embedding. Cover files are limited to 10 MiB. This makes an
+image-only cover without changing the document body:
+
+```sh
+wordconvert book.pdf --cover downloaded-cover.jpg -o book.epub
+```
+
+For a PDF whose first page is the cover, use `--frontpage-cover` instead. It
+renders that page as the EPUB cover and removes the page's extracted images from
+the body, so the cover image is not repeated; first-page text remains available
+to the document. This option requires PDF input, EPUB output, and the native
+runtime even when `--no-layout` is set. The two cover options cannot be combined,
+and existing EPUB input remains optimization-only.
+
 ## Shrink an existing EPUB
 
 ```sh
@@ -429,6 +447,27 @@ runs a real CPU inference pass. Copy this model wherever convenient on the
 destination machine and pass its path with `--layout-model`. This avoids the
 default download. `--no-layout` disables layout analysis entirely.
 
+### PDF text reflow
+
+The PDF reader preserves short lines when its geometry indicates verse or
+list-like content and reports how many lines it joined versus kept as paragraph
+boundaries. Tune the threshold with `--unwrap-factor <0..1>` (default `0.45`);
+`0` disables length-based unwrapping, while lower values permit more joins.
+The reader applies the threshold only when line endings show a dominant hard
+break pattern, unless the factor is explicitly lowered below the default.
+Pages whose inferred order crosses between multiple columns receive an
+informational review warning; the PDF text layer is not treated as ground truth.
+
+Word dehyphenation is opt-in. `--dehyphenate on` uses body-text evidence from
+the whole document to repair line-end and in-line hyphenation, preserves
+ambiguous or unsupported words, strips soft hyphens, and reports joined and
+kept counts. It avoids code, links, URLs, and non-Latin word fragments; the
+evidence scan is bounded. Use `--dehyphenate off` to disable it.
+
+```sh
+wordconvert book.pdf --unwrap-factor 0.4 --dehyphenate on --format epub
+```
+
 ### PDF tables
 
 Tables are converted when the source states them or the geometry closes.
@@ -456,9 +495,9 @@ input.
 Detection never loses text and never emits a partial table: cells and captions
 carry exactly the text the paragraph path would have produced, and a table that
 cannot be resolved stays paragraphs with a `pdf-table-structure-unresolved` note
-on stderr. Learned picture and table proposals from Heron layout analysis
-currently win over a ruled or borderless grid, so pass `--no-layout` when such a
-table must be converted as a table.
+on stderr. Complete tagged and ruled tables take precedence over overlapping
+learned picture/table proposals when page geometry is trustworthy. Image-only
+table artwork and pages with untrustworthy geometry retain the layout figure path.
 
 ### TexTeller formula OCR
 

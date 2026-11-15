@@ -1,6 +1,6 @@
 # 0047 Keep structured PDF tables over learned picture regions
 
-Status: open
+Status: done
 Priority: medium
 Owner: unassigned
 Agent: pi
@@ -70,3 +70,7 @@ that already guard ruled and borderless inference; a page whose geometry is not
 trustworthy should stay on the layout-model path.
 
 ## Agent Notes
+
+Completed: ruled and complete tagged table regions now take precedence over
+overlapping figure candidates. Regressions cover both real fixtures, a CLI run
+with layout enabled, and the existing table-artwork figure path.

@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { unzipSync } from 'fflate';
 import { runCli } from './cli.ts';
+import { loadCanvas } from './native-runtime.ts';
 
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
@@ -91,6 +92,65 @@ it.each(['md', 'markdown', 'html', 'htm', 'xhtml'])(
     }
   },
 );
+
+it('keeps images larger than 330 kB in EPUB output', async () => {
+  const canvasModule = loadCanvas();
+  const canvas = canvasModule.createCanvas(800, 600);
+  const context = canvas.getContext('2d');
+  const pixels = context.createImageData(800, 600);
+  let seed = 42;
+  for (let i = 0; i < pixels.data.length; i += 4) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    pixels.data[i] = seed & 0xff;
+    pixels.data[i + 1] = (seed >>> 8) & 0xff;
+    pixels.data[i + 2] = (seed >>> 16) & 0xff;
+    pixels.data[i + 3] = 255;
+  }
+  context.putImageData(pixels, 0, 0);
+  const sourceImage = canvas.toBuffer('image/png');
+  expect(sourceImage.byteLength).toBeGreaterThan(330_000);
+
+  const directory = await mkdtemp(join(tmpdir(), 'wordconvert-large-image-'));
+  try {
+    const input = join(directory, 'book.md');
+    const output = join(directory, 'book.epub');
+    await writeFile(join(directory, 'large.png'), sourceImage);
+    await writeFile(input, '# Book\n\n![Large image](large.png)');
+    const errors: string[] = [];
+    expect(
+      await runCli([input, '--conversion-date', '2026-01-02'], {
+        stdout: async () => undefined,
+        stderr: (message) => errors.push(message),
+      }),
+      errors.join(''),
+    ).toBe(0);
+
+    const files = unzipSync(await readFile(output));
+    const imagePath = Object.keys(files).find((path) =>
+      /^EPUB\/images\/image-\d+\.(?:jpg|png|webp)$/.test(path),
+    );
+    expect(imagePath).toBeDefined();
+    if (!imagePath) throw new Error('EPUB image asset was omitted.');
+
+    const href = imagePath.slice('EPUB/'.length);
+    const mediaType = href.endsWith('.jpg')
+      ? 'image/jpeg'
+      : href.endsWith('.png')
+        ? 'image/png'
+        : 'image/webp';
+    const opf = new TextDecoder().decode(files['EPUB/package.opf']);
+    const chapter = new TextDecoder().decode(files['EPUB/chapter-001.xhtml']);
+    expect(opf).toContain(`href="${href}" media-type="${mediaType}"`);
+    expect(chapter).toContain(`src="${href}"`);
+    const outputImage = files[imagePath];
+    expect(outputImage).toBeDefined();
+    if (!outputImage) throw new Error('EPUB image asset is empty.');
+    const decoded = await canvasModule.loadImage(Buffer.from(outputImage));
+    expect([decoded.width, decoded.height]).toEqual([800, 600]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 it('does not embed images outside the input directory, including symlink escapes', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'wordconvert-image-boundary-'));

@@ -41,6 +41,15 @@ import {
   type PdfLayoutDetector,
   type PdfReaderLimits,
 } from './pdfjs.ts';
+import {
+  collectWordEvidence,
+  dehyphenateBodyBlocks,
+  MAX_PDF_WORD_EVIDENCE,
+  removeTextSuffix,
+  resolveLineHyphenation,
+  type DehyphenationSummary,
+  type WordEvidence,
+} from './text-normalization.ts';
 export { configurePdfJsWorker, PDF_DENSE_PAGE_MODES } from './pdfjs.ts';
 export type {
   PdfDensePage,
@@ -200,6 +209,10 @@ export interface PdfCropOptions {
 
 export interface PdfAnalysisOptions extends ConversionOptions {
   filename?: string;
+  /** Short-line threshold used when PDF line endings show hard breaks. */
+  unwrapFactor?: number;
+  /** Use document-wide evidence to remove discretionary word hyphens. */
+  dehyphenate?: boolean;
   /** Which table signals the reader may act on. */
   pdfTables?: PdfTableOptions;
   crop?: Partial<PdfCropOptions>;
@@ -237,6 +250,7 @@ export interface PdfAnalysisSummary {
   pageCount: number;
   analysedPages: number[];
   crop: PdfCropOptions;
+  reflowIssues?: PdfReflowIssue[];
   candidates: PdfFurnitureCandidate[];
   scannedPages: number[];
   imageBackedPages?: number[];
@@ -245,6 +259,12 @@ export interface PdfAnalysisSummary {
   formulaCandidates?: PdfFormulaCandidate[];
   formulaImageRegions?: PdfFormulaImageRegion[];
   tables?: PdfDetectedTable[];
+}
+
+export interface PdfReflowIssue {
+  page: number;
+  columns: number;
+  reorderedLines: number;
 }
 
 export interface PdfAnalysisResult {
@@ -337,6 +357,7 @@ export const pdfJsReader: PdfReader = {
       ...(options.manualFormulaRegions
         ? { manualFormulaRegions: options.manualFormulaRegions }
         : {}),
+      tableSignals: resolveTableSignals(options),
       ...(options.densePageMode
         ? { densePageMode: options.densePageMode }
         : {}),
@@ -422,14 +443,28 @@ interface PdfLine {
   italic: boolean;
 }
 
+interface LineMergeProfile {
+  hardBreaks: boolean;
+  shortLineThreshold: number;
+  maxGap?: number;
+}
+
 const DEFAULT_CROP: PdfCropOptions = { top: 0, bottom: 0 };
 const FURNITURE_BAND = 0.15;
+export const DEFAULT_PDF_UNWRAP_FACTOR = 0.45;
 
 export async function analysePdf(
   raw: RawPdfDocument,
   options: PdfAnalysisOptions,
 ): Promise<PdfAnalysisResult> {
   const crop = validateCrop(options.crop);
+  const unwrapFactor = options.unwrapFactor ?? DEFAULT_PDF_UNWRAP_FACTOR;
+  if (!Number.isFinite(unwrapFactor) || unwrapFactor < 0 || unwrapFactor > 1)
+    throw new PdfReadError(
+      'invalid-input',
+      'PDF unwrap factor must be a number from 0 to 1.',
+      { phase: 'analyse' },
+    );
   const linesByPage = new Map<number, PdfLine[]>();
   const analysisSteps = raw.pages.length * 2 + 4;
   for (const [index, page] of raw.pages.entries()) {
@@ -518,6 +553,7 @@ export async function analysePdf(
     });
 
   const lines: PdfLine[] = [];
+  const reflowIssues: PdfReflowIssue[] = [];
   for (const [index, page] of retainedPages.entries()) {
     options.onProgress?.({
       phase: 'analyse',
@@ -526,17 +562,31 @@ export async function analysePdf(
       message: `Ordering PDF page ${page.number}.`,
     });
     await analysisCheckpoint(options);
-    lines.push(
-      ...(await readingOrder(
-        page,
-        retainGroupedLines(
-          linesByPage.get(page.number) ?? [],
-          new Set(page.spans.map(({ id }) => id)),
-        ),
-        options,
-      )),
+    const ordered = await readingOrder(
+      page,
+      retainGroupedLines(
+        linesByPage.get(page.number) ?? [],
+        new Set(page.spans.map(({ id }) => id)),
+      ),
+      options,
     );
+    reflowIssues.push(...detectColumnOrderIssues(ordered));
+    lines.push(...ordered);
   }
+  if (reflowIssues.length > 0)
+    warnings.push({
+      code: 'pdf-multicolumn-order-review',
+      severity: 'info',
+      message:
+        'The inferred reading order crosses between multiple text columns; review the affected PDF pages.',
+      details: {
+        pages: new Set(reflowIssues.map(({ page }) => page)).size,
+        reorderedLines: reflowIssues.reduce(
+          (total, issue) => total + issue.reorderedLines,
+          0,
+        ),
+      },
+    });
   options.onProgress?.({
     phase: 'analyse',
     completed: raw.pages.length * 2 + 2,
@@ -553,6 +603,14 @@ export async function analysePdf(
     options.styleMappings,
     imageBackedPages,
     options,
+  );
+  const styleMapping = new Map(
+    styles.map(({ id, proposedMapping }) => [id, proposedMapping]),
+  );
+  const bodyStyleIds = new Set(
+    styles
+      .filter(({ proposedMapping }) => proposedMapping === 'body')
+      .map(({ id }) => id),
   );
   const formulaLimits = {
     ...DEFAULT_PDF_FORMULA_LIMITS,
@@ -601,6 +659,15 @@ export async function analysePdf(
         'Some formula candidates exceeded the configured analysis limit and were retained as text.',
       details: { candidates: formulaCandidates.length },
     });
+  const formulaSpanIds = new Set(
+    formulaCandidates.flatMap(({ spanIds }) => spanIds),
+  );
+  const wordEvidence = options.dehyphenate
+    ? await collectWordEvidence(
+        bodyEvidenceTexts(lines, styleMapping, formulaSpanIds),
+        () => analysisCheckpoint(options),
+      )
+    : undefined;
   const semanticCandidates: PdfFormulaCandidate[] = [];
   const equations: DocumentModel['equations'] = {};
   for (const candidate of formulaCandidates) {
@@ -687,13 +754,57 @@ export async function analysePdf(
     unresolvedTablePages,
     truncatedGeometryPages,
     tables,
+    lineMerging,
+    lineDehyphenation,
   } = await linesToBlocks(
     lines,
     styles,
     retainedPages,
     options,
     semanticCandidates,
+    unwrapFactor,
+    wordEvidence,
   );
+  const inlineDehyphenation = wordEvidence
+    ? await dehyphenateBodyBlocks(
+        tabledBlocks,
+        bodyStyleIds,
+        wordEvidence,
+        () => analysisCheckpoint(options),
+      )
+    : undefined;
+  const dehyphenation = inlineDehyphenation
+    ? {
+        joined: inlineDehyphenation.joined + lineDehyphenation.joined,
+        kept: inlineDehyphenation.kept + lineDehyphenation.kept,
+        limitExceeded: inlineDehyphenation.limitExceeded,
+      }
+    : undefined;
+  if (dehyphenation)
+    warnings.push({
+      code: 'pdf-dehyphenation-summary',
+      severity: 'info',
+      message: `PDF dehyphenation joined ${dehyphenation.joined} words and kept ${dehyphenation.kept} hyphens.`,
+      details: {
+        joined: dehyphenation.joined,
+        kept: dehyphenation.kept,
+        limitExceeded: dehyphenation.limitExceeded,
+      },
+    });
+  if (dehyphenation?.limitExceeded)
+    warnings.push({
+      code: 'pdf-dehyphenation-limit-exceeded',
+      severity: 'warning',
+      message:
+        'PDF dehyphenation stopped because the document exceeded the word-evidence limit; ambiguous hyphens were preserved.',
+      details: { words: MAX_PDF_WORD_EVIDENCE },
+    });
+  warnings.push({
+    code: 'pdf-line-reflow-summary',
+    severity: 'info',
+    message: `PDF line reflow joined ${lineMerging.joined} lines and kept ${lineMerging.kept} paragraph boundaries.`,
+    details: lineMerging,
+  });
   const blocks = normalizePdfLists(normalizePdfToc(tabledBlocks));
   if (truncatedGeometryPages.length > 0)
     warnings.push({
@@ -764,6 +875,7 @@ export async function analysePdf(
       pageCount: raw.pageCount,
       analysedPages: raw.pages.map(({ number }) => number),
       crop,
+      ...(reflowIssues.length > 0 ? { reflowIssues } : {}),
       candidates,
       scannedPages,
       imageBackedPages: retainedPages
@@ -917,6 +1029,102 @@ async function readingOrder(
   }
   flush();
   return taggedReadingOrder(ordered, page.taggedStructure);
+}
+
+function detectColumnOrderIssues(lines: readonly PdfLine[]): PdfReflowIssue[] {
+  const issues: PdfReflowIssue[] = [];
+  let section: PdfLine[] = [];
+  const inspect = (): void => {
+    if (section.length < 6) return;
+    const clusters: PdfLine[][] = [];
+    for (const line of [...section].sort((left, right) => left.x - right.x)) {
+      const cluster = clusters.at(-1);
+      const center = line.x + line.width / 2;
+      const first = cluster?.[0];
+      const clusterCenter = first ? first.x + first.width / 2 : undefined;
+      if (
+        cluster &&
+        clusterCenter !== undefined &&
+        center - clusterCenter <= 0.12
+      )
+        cluster.push(line);
+      else clusters.push([line]);
+    }
+    if (
+      clusters.length < 2 ||
+      clusters.length > 3 ||
+      clusters.some((cluster) => cluster.length < 3)
+    ) {
+      section = [];
+      return;
+    }
+    const bounds = clusters
+      .map((cluster) =>
+        cluster.reduce(
+          (bound, line) => {
+            const center = line.x + line.width / 2;
+            return {
+              left: Math.min(bound.left, line.x),
+              right: Math.max(bound.right, line.x + line.width),
+              centerTotal: bound.centerTotal + center,
+              count: bound.count + 1,
+            };
+          },
+          {
+            left: Number.POSITIVE_INFINITY,
+            right: Number.NEGATIVE_INFINITY,
+            centerTotal: 0,
+            count: 0,
+          },
+        ),
+      )
+      .map(({ left, right, centerTotal, count }) => ({
+        left,
+        right,
+        center: centerTotal / count,
+      }));
+    if (
+      bounds.some(
+        (bound, index) => index > 0 && bounds[index - 1]!.right >= bound.left,
+      )
+    ) {
+      section = [];
+      return;
+    }
+    const ordered = [...section].sort(byTop);
+    const columnIndexes = ordered.map((line) => {
+      const center = line.x + line.width / 2;
+      return bounds.reduce(
+        (closest, bound, index) =>
+          Math.abs(bound.center - center) <
+          Math.abs(bounds[closest]!.center - center)
+            ? index
+            : closest,
+        0,
+      );
+    });
+    let highestColumn = -1;
+    let reorderedLines = 0;
+    for (const column of columnIndexes) {
+      if (column < highestColumn) reorderedLines++;
+      highestColumn = Math.max(highestColumn, column);
+    }
+    if (reorderedLines > 0)
+      issues.push({
+        page: section[0]!.page,
+        columns: clusters.length,
+        reorderedLines,
+      });
+    section = [];
+  };
+  for (const line of lines) {
+    if (line.width >= 0.65) {
+      inspect();
+      section = [];
+    } else section.push(line);
+  }
+  inspect();
+  return issues;
 }
 
 function taggedReadingOrder(
@@ -1479,17 +1687,146 @@ function trimInlineWhitespace(nodes: InlineNode[]): InlineNode[] {
   return output;
 }
 
+function* bodyEvidenceTexts(
+  lines: readonly PdfLine[],
+  mapping: ReadonlyMap<string, StyleMapping>,
+  formulaSpanIds: ReadonlySet<string>,
+): Iterable<string> {
+  for (const line of lines) {
+    if (
+      (mapping.get(styleId(line)) ?? 'body') !== 'body' ||
+      semanticHeadingLevel(line) !== undefined
+    )
+      continue;
+    for (const span of line.spans)
+      if (span.linkId === undefined && !formulaSpanIds.has(span.id))
+        yield span.text;
+  }
+}
+
+function buildLineMergeProfiles(
+  lines: readonly PdfLine[],
+  mapping: ReadonlyMap<string, StyleMapping>,
+  unwrapFactor: number,
+): Map<string, LineMergeProfile> {
+  const grouped = new Map<string, PdfLine[]>();
+  const bodyWidths = lines
+    .filter(
+      (line) =>
+        (mapping.get(styleId(line)) ?? 'body') === 'body' && line.width < 0.65,
+    )
+    .map(({ width }) => width);
+  const documentMedianWidth = median(bodyWidths);
+  for (const line of lines) {
+    if ((mapping.get(styleId(line)) ?? 'body') !== 'body' || line.width >= 0.65)
+      continue;
+    const column = line.x + line.width / 2 < 0.5 ? 0 : 1;
+    const key = `${line.page}:${column}`;
+    const group = grouped.get(key) ?? [];
+    group.push(line);
+    grouped.set(key, group);
+  }
+  const profiles = new Map<string, LineMergeProfile>();
+  for (const [key, columnLines] of grouped) {
+    const widths = columnLines.map(({ width }) => width);
+    const rightEdges = columnLines.map(({ x, width }) => x + width);
+    const leftEdge = columnLines.reduce(
+      (minimum, { x }) => Math.min(minimum, x),
+      Number.POSITIVE_INFINITY,
+    );
+    const measuredMedianWidth = median(widths);
+    const medianWidth =
+      (columnLines.length < 4 ? documentMedianWidth : undefined) ??
+      measuredMedianWidth ??
+      0;
+    const medianRightEdge = median(rightEdges) ?? leftEdge;
+    const alignedEnds = rightEdges.filter(
+      (right) => Math.abs(right - medianRightEdge) <= 0.035,
+    ).length;
+    const hardBreaks =
+      columnLines.length >= 4 && alignedEnds / columnLines.length >= 0.5;
+    const ordered = [...columnLines].sort(byTop);
+    const gaps = ordered.slice(1).flatMap((line, index) => {
+      const previous = ordered[index]!;
+      const gap = line.top - (previous.top + previous.height);
+      return gap > 0 ? [gap] : [];
+    });
+    const medianGap = median(gaps);
+    const maxGlyphGap =
+      columnLines.reduce(
+        (maximum, { height }) => Math.max(maximum, height),
+        0,
+      ) * 0.8;
+    const maxGap =
+      unwrapFactor > 0 &&
+      unwrapFactor < DEFAULT_PDF_UNWRAP_FACTOR &&
+      medianGap !== undefined
+        ? Math.max(maxGlyphGap, medianGap * 1.35)
+        : undefined;
+    const column = Number(key.slice(key.lastIndexOf(':') + 1));
+    const expectedRight = column === 0 ? 0.48 : 0.95;
+    const columnWidth = Math.max(
+      medianWidth,
+      medianRightEdge - leftEdge,
+      expectedRight - leftEdge,
+    );
+    profiles.set(key, {
+      hardBreaks,
+      shortLineThreshold:
+        Math.max(columnWidth, medianWidth * 1.4) * unwrapFactor,
+      ...(maxGap !== undefined ? { maxGap } : {}),
+    });
+  }
+  return profiles;
+}
+
+function lineMergeProfile(
+  profiles: ReadonlyMap<string, LineMergeProfile>,
+  line: PdfLine,
+): LineMergeProfile | undefined {
+  const column = line.x + line.width / 2 < 0.5 ? 0 : 1;
+  return profiles.get(`${line.page}:${column}`);
+}
+
+function shouldKeepShortLineBoundary(
+  previous: PdfLine,
+  current: PdfLine,
+  profile: LineMergeProfile | undefined,
+  unwrapFactor: number,
+): boolean {
+  if (
+    !profile ||
+    unwrapFactor === 0 ||
+    (!profile.hardBreaks && unwrapFactor >= DEFAULT_PDF_UNWRAP_FACTOR) ||
+    previous.width >= profile.shortLineThreshold
+  )
+    return false;
+  const sentenceEnded = /[.!?][”’"')\]]?$/u.test(previous.text.trimEnd());
+  const startsNewThought = /^\p{Lu}/u.test(current.text.trimStart());
+  const indented = current.x - previous.x >= 0.035;
+  const adjacentQuotes =
+    /[“”‘’"']$/u.test(previous.text.trimEnd()) &&
+    /^[“”‘’"']/u.test(current.text.trimStart());
+  if (adjacentQuotes) return true;
+  if (sentenceEnded && (startsNewThought || indented)) return true;
+  return current.width < profile.shortLineThreshold;
+}
+
 async function linesToBlocks(
   lines: readonly PdfLine[],
   styles: readonly AnalysedStyle[],
   pages: readonly RawPdfPage[],
   options: PdfAnalysisOptions,
   formulaCandidates: readonly PdfFormulaCandidate[] = [],
+  unwrapFactor = DEFAULT_PDF_UNWRAP_FACTOR,
+  wordEvidence?: WordEvidence,
 ): Promise<{
   blocks: BlockNode[];
   unresolvedTablePages: number[];
   truncatedGeometryPages: number[];
   tables: PdfDetectedTable[];
+  lineMerging: { joined: number; kept: number };
+  lineDehyphenation: Pick<DehyphenationSummary, 'joined' | 'kept'>;
 }> {
   const mapping = new Map(
     styles.map(({ id, proposedMapping }) => [id, proposedMapping]),
@@ -1499,6 +1836,7 @@ async function linesToBlocks(
       .filter(({ provenance }) => provenance.method === 'user')
       .map(({ id }) => id),
   );
+  const mergeProfiles = buildLineMergeProfiles(lines, mapping, unwrapFactor);
   const blocks: BlockNode[] = [];
   const unresolvedTablePages: number[] = [];
   const truncatedGeometryPages: number[] = [];
@@ -1508,6 +1846,8 @@ async function linesToBlocks(
   let previousLine: PdfLine | undefined;
   let contentPages = 0;
   let processed = 0;
+  const lineMerging = { joined: 0, kept: 0 };
+  const lineDehyphenation = { joined: 0, kept: 0 };
   for (const page of pages) {
     await analysisCheckpoint(options);
     const rolesByMarkedContentId = taggedRoles(page.taggedStructure);
@@ -1811,21 +2151,15 @@ async function linesToBlocks(
           : undefined;
       if (gridTable !== undefined) {
         if (!emittedTables.has(gridTable.id)) {
-          const rows: TableNode['rows'] = [];
-          for (let rowIndex = 0; rowIndex < gridTable.rowCount; rowIndex++) {
-            const cells: TableNode['rows'][number]['cells'] = [];
-            for (
-              let columnIndex = 0;
-              columnIndex < gridTable.columnCount;
-              columnIndex++
-            )
-              cells.push({
-                blocks: cellBlocks(
-                  gridCellLines(gridTable.id, `${rowIndex}:${columnIndex}`),
-                ),
-              });
-            rows.push({ cells });
-          }
+          const rows = Array.from({ length: gridTable.rowCount }, () => ({
+            cells: [] as TableNode['rows'][number]['cells'],
+          }));
+          for (const cell of gridTable.cells)
+            rows[cell.rowIndex]?.cells.push({
+              blocks: cellBlocks(gridCellLines(gridTable.id, cell.key)),
+              ...(cell.rowSpan ? { rowSpan: cell.rowSpan } : {}),
+              ...(cell.colSpan ? { colSpan: cell.colSpan } : {}),
+            });
           blocks.push({ type: 'table', rows });
           tables.push({
             page: page.number,
@@ -1928,35 +2262,90 @@ async function linesToBlocks(
         } else if (headingLevel === undefined || isContactLine(line.text)) {
           const candidate = paragraphCandidates.findLast(
             ({ block, lastLine }) =>
+              !line.spans.some(({ linkId }) => linkId !== undefined) &&
               (page.imageBacked
                 ? compatibleOcrBodyLines(lastLine, line, mapping)
                 : block.styleId === id) &&
-              ((page.imageBacked
-                ? canMergeOcrLines(lastLine, line)
-                : canMergeLines(lastLine, line)) ||
+              (canMergeBodyLines(
+                lastLine,
+                line,
+                page.imageBacked === true,
+                lineMergeProfile(mergeProfiles, line),
+              ) ||
                 (continuesPreviousParagraph &&
                   index === 0 &&
                   lastLine === previousPageLine)),
           );
-          if (candidate) {
-            if (page.imageBacked)
+          const continuesAcrossPage =
+            continuesPreviousParagraph &&
+            index === 0 &&
+            candidate?.lastLine === previousPageLine;
+          const keepBoundary =
+            candidate !== undefined &&
+            mapped === 'body' &&
+            !continuesAcrossPage &&
+            shouldKeepShortLineBoundary(
+              candidate.lastLine,
+              line,
+              lineMergeProfile(mergeProfiles, line),
+              unwrapFactor,
+            );
+          if (keepBoundary) lineMerging.kept++;
+          if (candidate && !keepBoundary) {
+            lineMerging.joined++;
+            if (page.imageBacked && wordEvidence)
+              appendOcrLine(
+                candidate.block.children,
+                children,
+                candidate.lastLine,
+                line,
+                wordEvidence,
+                lineDehyphenation,
+              );
+            else if (page.imageBacked)
               appendOcrLine(
                 candidate.block.children,
                 children,
                 candidate.lastLine,
                 line,
               );
-            else
-              candidate.block.children.push(
-                continuesPreviousParagraph &&
-                  index === 0 &&
-                  candidate.lastLine === previousPageLine
-                  ? { type: 'text', text: ' ' }
-                  : lineContinuesAtTextEdge(candidate.lastLine, line, pageLines)
+            else {
+              const boundary =
+                wordEvidence &&
+                !candidate.lastLine.spans.some(
+                  ({ linkId }) => linkId !== undefined,
+                ) &&
+                !line.spans.some(({ linkId }) => linkId !== undefined)
+                  ? resolveLineHyphenation(
+                      candidate.lastLine.text,
+                      line.text,
+                      wordEvidence,
+                    )
+                  : undefined;
+              if (boundary) {
+                if (boundary === 'joined') {
+                  const suffixLength = lineHyphenSuffixLength(
+                    candidate.lastLine.text,
+                  );
+                  if (suffixLength)
+                    removeTextSuffix(candidate.block.children, suffixLength);
+                  lineDehyphenation.joined++;
+                } else lineDehyphenation.kept++;
+                candidate.block.children.push(...children);
+              } else
+                candidate.block.children.push(
+                  continuesAcrossPage
                     ? { type: 'text', text: ' ' }
-                    : { type: 'lineBreak' },
-                ...children,
-              );
+                    : lineContinuesAtTextEdge(
+                          candidate.lastLine,
+                          line,
+                          pageLines,
+                        )
+                      ? { type: 'text', text: ' ' }
+                      : { type: 'lineBreak' },
+                  ...children,
+                );
+            }
             candidate.lastLine = line;
           } else {
             const paragraph: Extract<BlockNode, { type: 'paragraph' }> = {
@@ -1979,7 +2368,14 @@ async function linesToBlocks(
       previousLine = line;
     }
   }
-  return { blocks, unresolvedTablePages, truncatedGeometryPages, tables };
+  return {
+    blocks,
+    unresolvedTablePages,
+    truncatedGeometryPages,
+    tables,
+    lineMerging,
+    lineDehyphenation,
+  };
 }
 
 function coversRenderedEquation(
@@ -2186,7 +2582,27 @@ function canMergeLines(previous: PdfLine, current: PdfLine): boolean {
   );
 }
 
-function canMergeOcrLines(previous: PdfLine, current: PdfLine): boolean {
+function canMergeBodyLines(
+  previous: PdfLine,
+  current: PdfLine,
+  imageBacked: boolean,
+  profile: LineMergeProfile | undefined,
+): boolean {
+  if (imageBacked) return canMergeOcrLines(previous, current, profile?.maxGap);
+  if (previous.page !== current.page || Math.abs(previous.x - current.x) > 0.04)
+    return false;
+  const gap = current.top - (previous.top + previous.height);
+  return (
+    gap >= -0.002 &&
+    gap <= (profile?.maxGap ?? Math.max(previous.height, current.height) * 0.8)
+  );
+}
+
+function canMergeOcrLines(
+  previous: PdfLine,
+  current: PdfLine,
+  maxGap?: number,
+): boolean {
   if (previous.page !== current.page) return false;
   const hyphenContinuation = isSoftOcrHyphenContinuation(previous, current);
   if (!hyphenContinuation && startsIndentedOcrParagraph(previous, current))
@@ -2201,8 +2617,9 @@ function canMergeOcrLines(previous: PdfLine, current: PdfLine): boolean {
   return (
     gap >= -0.002 &&
     gap <=
-      Math.max(previous.height, current.height) *
-        (hyphenContinuation ? 1.25 : 0.8)
+      (maxGap ??
+        Math.max(previous.height, current.height) *
+          (hyphenContinuation ? 1.25 : 0.8))
   );
 }
 
@@ -2255,7 +2672,34 @@ function appendOcrLine(
   line: InlineNode[],
   previousLine: PdfLine,
   currentLine: PdfLine,
+  evidence?: WordEvidence,
+  summary?: Pick<DehyphenationSummary, 'joined' | 'kept'>,
 ): void {
+  if (
+    evidence &&
+    !previousLine.spans.some(({ linkId }) => linkId !== undefined) &&
+    !currentLine.spans.some(({ linkId }) => linkId !== undefined)
+  ) {
+    const boundary = resolveLineHyphenation(
+      previousLine.text,
+      currentLine.text,
+      evidence,
+    );
+    if (boundary) {
+      if (boundary === 'joined') {
+        const suffixLength = lineHyphenSuffixLength(previousLine.text);
+        if (suffixLength) removeTextSuffix(target, suffixLength);
+        if (summary) summary.joined++;
+      } else if (summary) summary.kept++;
+      target.push(...line);
+      return;
+    }
+    if (/[-\u00ad]\s*[—–]?\s*$/u.test(previousLine.text)) {
+      if (summary) summary.kept++;
+      target.push(...line);
+      return;
+    }
+  }
   const first = line.find((node) => node.type === 'text');
   if (first?.type === 'text' && /^\p{Ll}/u.test(first.text)) {
     const text = target
@@ -2274,6 +2718,11 @@ function appendOcrLine(
       : { type: 'text', text: ' ' },
     ...line,
   );
+}
+
+function lineHyphenSuffixLength(text: string): number {
+  const match = /([\p{L}\p{M}]+)[\u00ad-]\s*[—–]?\s*$/u.exec(text);
+  return match ? match[0].length - match[1]!.length : 0;
 }
 
 function isOcrVerseLineContinuation(

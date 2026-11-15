@@ -115,12 +115,14 @@ Infer a table from ruled lines only where the geometry closes. A set of straight
 
 - rules that touch each other form the grid, so rules belonging to two separate tables never merge into one;
 - the grid has at least two rows and two columns of cells, each cell being at least a minimum size, so a separator rule, a bordered quotation box, or chart axes cannot become a table;
-- every cell is closed on all four sides by those rules, so a grid with one open cell stays paragraphs and is reported in the warnings panel;
-- each text span lies in exactly one cell: a span straddling an interior rule, or claimed by two grids, refuses the grid instead of guessing a merged cell;
+- the outer boundary is closed, and every interior edge either has a rule or is crossed by a retained text span that proves a merged cell; partial rules and unsupported gaps refuse the grid;
+- each text span belongs to exactly one resulting cell: a span crossing independent cells, or claimed by two grids, refuses the grid instead of guessing;
 - most cells hold text, so ruled-off prose is not turned into a table;
 - text outside the grid, such as a caption above it, keeps its place on the paragraph path, and no word is lost or repeated.
 
 A ruled table is reported with the ruled signal and medium confidence. Curved and filled paths are never rules, and pages that were rasterized, were classified as dense illustrations, or exceeded the stroke budget are excluded from ruled inference.
+
+When a complete tagged or ruled table overlaps a learned picture/table proposal, preserve the structured table and do not rasterize that region, provided page geometry is trustworthy. Incomplete grids, image-backed pages, dense pages, page fallbacks, and truncated stroke sets keep the existing layout/figure behavior; image-only table artwork without a complete text grid must not lose its figure.
 
 Infer a table from aligned columns only on request. Column alignment is the weakest of the three signals, so it stays off until the caller asks for it, and even then a block of rows becomes a table only when:
 

@@ -22,10 +22,14 @@ await mkdir(outputDirectory, { recursive: true });
 
 await save('one-column-book.pdf', await oneColumnBook());
 await save('two-column-article.pdf', await twoColumnArticle());
+await save('reflow-verse.pdf', await reflowVerse());
+await save('reflow-loose-leading.pdf', await reflowLooseLeading());
+await save('reflow-glossary.pdf', await reflowGlossary());
 await save('tagged-article.pdf', await taggedArticle());
 await save('tagged-table.pdf', await taggedTable());
 await save('tagged-table-spans.pdf', await taggedTableSpans());
 await save('ruled-table.pdf', await ruledTable());
+await save('ruled-table-spans.pdf', await ruledTableSpans());
 await save('borderless-table.pdf', await borderlessTable());
 await save('ruled-non-tables.pdf', await ruledNonTables());
 await save('scanned-page.pdf', await scannedPage());
@@ -63,6 +67,18 @@ await writeFile(
           covers: ['two-column reading order', 'footer'],
         },
         {
+          file: 'reflow-verse.pdf',
+          covers: ['short stacked verse lines', 'hard line breaks'],
+        },
+        {
+          file: 'reflow-loose-leading.pdf',
+          covers: ['loose leading', 'long prose continuation'],
+        },
+        {
+          file: 'reflow-glossary.pdf',
+          covers: ['short glossary entries', 'paragraph boundaries'],
+        },
+        {
           file: 'tagged-article.pdf',
           covers: ['tagged structure', 'marked content'],
         },
@@ -90,6 +106,14 @@ await writeFile(
         {
           file: 'ruled-table.pdf',
           covers: ['ruled table', 'stroked cell borders', 'table caption'],
+        },
+        {
+          file: 'ruled-table-spans.pdf',
+          covers: [
+            'ruled table column span',
+            'ruled table row span',
+            'crossing text evidence',
+          ],
         },
         {
           file: 'borderless-table.pdf',
@@ -259,6 +283,63 @@ async function twoColumnArticle() {
       font: body,
     });
   }
+  return document;
+}
+
+async function reflowVerse() {
+  const document = await baseDocument('Verse Reflow');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const page = document.addPage([600, 800]);
+  for (const [index, text] of [
+    'a quiet stanza begins',
+    'the river bends',
+    'and evening falls',
+    'the night is still',
+  ].entries())
+    page.drawText(text, {
+      x: 60,
+      y: 680 - index * 24,
+      size: 12,
+      font: body,
+    });
+  return document;
+}
+
+async function reflowLooseLeading() {
+  const document = await baseDocument('Loose Leading Reflow');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const page = document.addPage([600, 800]);
+  for (const [index, text] of [
+    'A paragraph line continues across a generous leading interval',
+    'and the next line keeps the same paragraph moving forward',
+    'another long sentence occupies the same text column',
+    'before a final line closes the paragraph.',
+  ].entries())
+    page.drawText(text, {
+      x: 60,
+      y: 680 - index * 34,
+      size: 12,
+      font: body,
+    });
+  return document;
+}
+
+async function reflowGlossary() {
+  const document = await baseDocument('Glossary Reflow');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const page = document.addPage([600, 800]);
+  for (const [index, text] of [
+    'Alpha: first entry',
+    'Bravo: second item',
+    'Charlie: third term',
+    'Delta: fourth word',
+  ].entries())
+    page.drawText(text, {
+      x: 60,
+      y: 680 - index * 24,
+      size: 12,
+      font: body,
+    });
   return document;
 }
 
@@ -566,6 +647,41 @@ async function ruledTable() {
     ),
   );
   page.drawText('Quarterly revenue', { x: left, y: 262, size: 11, font: body });
+  return document;
+}
+
+async function ruledTableSpans() {
+  const document = await baseDocument('Ruled Table Spans');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const page = document.addPage([400, 320]);
+  const columns = [40, 160, 280, 360];
+  const rows = [260, 220, 180, 140];
+  const rule = (x1, y1, x2, y2) =>
+    page.pushOperators(moveTo(x1, y1), lineTo(x2, y2), stroke());
+  page.pushOperators(setLineWidth(1), setStrokingGrayscaleColor(0));
+  for (const x of [columns[0], columns[1], columns[3]])
+    rule(x, rows.at(-1), x, rows[0]);
+  rule(columns[2], rows.at(-1), columns[2], rows[1]);
+  for (const y of [rows[0], rows[2], rows[3]])
+    rule(columns[0], y, columns.at(-1), y);
+  rule(columns[1], rows[1], columns.at(-1), rows[1]);
+
+  const cells = [
+    { text: 'Metric', x: 60, y: 214 },
+    { text: 'Total revenue', x: 230, y: 240 },
+    { text: 'Q1', x: 172, y: 200 },
+    { text: '100', x: 292, y: 200 },
+    { text: 'Q2', x: 52, y: 160 },
+    { text: '120', x: 172, y: 160 },
+    { text: '140', x: 292, y: 160 },
+  ];
+  for (const cell of cells)
+    page.drawText(cell.text, {
+      x: cell.x,
+      y: cell.y,
+      size: 11,
+      font: body,
+    });
   return document;
 }
 

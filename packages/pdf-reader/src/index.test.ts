@@ -1650,7 +1650,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
         imageBacked: true,
         images: ['pdf-image-1-0'],
         imageBackedPages: [1],
-        warning: ['pdf-ocr-not-supported'],
+        warning: ['pdf-ocr-not-supported', 'pdf-line-reflow-summary'],
       });
     });
 
@@ -5742,6 +5742,75 @@ describe('PDF ruled table extraction', () => {
     );
   });
 
+  it('represents a ruled cell that spans columns when its text crosses the missing rule', async () => {
+    const strokes = [
+      rule(xs[0]!, ys[0]!, xs[0]!, ys.at(-1)!),
+      rule(xs[1]!, ys[1]!, xs[1]!, ys.at(-1)!),
+      rule(xs[2]!, ys[0]!, xs[2]!, ys.at(-1)!),
+      ...ys.map((y) => rule(xs[0]!, y, xs.at(-1)!, y)),
+    ];
+    const result = await analysePdf(
+      rawDocument([
+        pageOf(
+          [
+            span('Total revenue', xs[0]! + 0.02, ys[0]! + 0.02, {
+              width: xs[2]! - xs[0]! - 0.04,
+              height: ys[1]! - ys[0]! - 0.04,
+            }),
+            cellText('Q1', 1, 0),
+            cellText('100', 1, 1),
+          ],
+          strokes,
+        ),
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+    const [table] = result.model.blocks.filter(({ type }) => type === 'table');
+    expect(table?.type).toBe('table');
+    if (table?.type !== 'table') return;
+    expect(
+      table.rows.map(({ cells }) => cells.map((cell) => cell.colSpan ?? 1)),
+    ).toEqual([[2], [1, 1]]);
+    expect(textOf(result.model.blocks)).toEqual([
+      'Total',
+      'revenue',
+      'Q1',
+      '100',
+    ]);
+  });
+
+  it('represents a ruled cell that spans rows when its text crosses the missing rule', async () => {
+    const strokes = [
+      ...xs.map((x) => rule(x, ys[0]!, x, ys.at(-1)!)),
+      rule(xs[0]!, ys[0]!, xs[2]!, ys[0]!),
+      rule(xs[1]!, ys[1]!, xs[2]!, ys[1]!),
+      rule(xs[0]!, ys[2]!, xs[2]!, ys[2]!),
+    ];
+    const result = await analysePdf(
+      rawDocument([
+        pageOf(
+          [
+            span('Metric', xs[0]! + 0.02, ys[0]! + 0.02, {
+              width: xs[1]! - xs[0]! - 0.04,
+              height: ys[2]! - ys[0]! - 0.04,
+            }),
+            cellText('Q1', 0, 1),
+            cellText('Q2', 1, 1),
+          ],
+          strokes,
+        ),
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+    const [table] = result.model.blocks.filter(({ type }) => type === 'table');
+    expect(table?.type).toBe('table');
+    if (table?.type !== 'table') return;
+    expect(
+      table.rows.map(({ cells }) => cells.map((cell) => cell.rowSpan ?? 1)),
+    ).toEqual([[2, 1], [1]]);
+    expect(textOf(result.model.blocks)).toEqual(['Metric', 'Q1', 'Q2']);
+  });
+
   it('keeps every word as prose when the rules do not close a grid', async () => {
     // Three boundaries each way, but the middle horizontal stops short, so the
     // right-hand cells are open: grid-shaped, and refused.
@@ -5868,6 +5937,50 @@ describe('PDF ruled table extraction', () => {
     ]);
   });
 
+  it('reads ruled row and column spans from a real PDF', async () => {
+    const result = await pdfJsReader.read(
+      await fixture('ruled-table-spans.pdf'),
+      { conversionDate: '2026-08-29' },
+    );
+    const [table] = result.model.blocks.filter(({ type }) => type === 'table');
+    expect(table?.type).toBe('table');
+    if (table?.type !== 'table') return;
+    expect(result.analysis.tables).toEqual([
+      { page: 1, rows: 3, columns: 3, source: 'ruled', confidence: 'medium' },
+    ]);
+    expect(
+      table.rows.map((row) =>
+        row.cells.map((cell) => [cell.rowSpan ?? 1, cell.colSpan ?? 1]),
+      ),
+    ).toEqual([
+      [
+        [2, 1],
+        [1, 2],
+      ],
+      [
+        [1, 1],
+        [1, 1],
+      ],
+      [
+        [1, 1],
+        [1, 1],
+        [1, 1],
+      ],
+    ]);
+    expect(
+      table.rows.map((row) =>
+        row.cells.map((cell) => textOf(cell.blocks).join(' ')),
+      ),
+    ).toEqual([
+      ['Metric', 'Total revenue'],
+      ['Q1', '100'],
+      ['Q2', '120', '140'],
+    ]);
+    expect(textOf(result.model.blocks).sort()).toEqual(
+      ['Metric', 'Total', 'revenue', 'Q1', '100', 'Q2', '120', '140'].sort(),
+    );
+  });
+
   it('refuses separators, boxes, chart axes and an open grid', async () => {
     const result = await pdfJsReader.read(
       await fixture('ruled-non-tables.pdf'),
@@ -5921,6 +6034,7 @@ describe('PDF corpus table guard', () => {
     }
     expect(found).toEqual({
       'ruled-table.pdf': 'ruled:3x2',
+      'ruled-table-spans.pdf': 'ruled:3x3',
       'tagged-table.pdf': 'tagged:3x2',
       'tagged-table-spans.pdf': 'tagged:3x2',
     });
@@ -5957,6 +6071,7 @@ describe('PDF corpus table guard', () => {
       'borderless-table.pdf': 'borderless:4x3',
       'formula-false-positives.pdf': 'borderless:3x4',
       'ruled-table.pdf': 'ruled:3x2',
+      'ruled-table-spans.pdf': 'ruled:3x3',
       'tagged-table.pdf': 'tagged:3x2',
       'tagged-table-spans.pdf': 'tagged:3x2',
     });
@@ -6284,5 +6399,155 @@ describe('PDF table signals', () => {
     expect(text).toContain('Distribution');
     expect(text).toContain('figures are unaudited');
     expect(text).toContain('44%');
+  });
+
+  it('reports suspicious column interleaving for review', async () => {
+    const spans = [0.1, 0.4, 0.7].flatMap((x, column) =>
+      [0.2, 0.24, 0.28].map((top, row) =>
+        span(`column ${column} row ${row}`, x, top, { width: 0.2 }),
+      ),
+    );
+    const result = await analysePdf(
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans,
+          links: [],
+          images: [],
+        },
+      ]),
+      { conversionDate: '2026-08-29' },
+    );
+
+    expect(result.analysis.reflowIssues).toEqual([
+      { page: 1, columns: 3, reorderedLines: 4 },
+    ]);
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({ code: 'pdf-multicolumn-order-review' }),
+    );
+  });
+
+  it('keeps stacked short glossary lines separate unless unwrapping is disabled', async () => {
+    const makeDocument = () =>
+      rawDocument([
+        {
+          number: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          spans: [
+            'Alpha: first definition',
+            'Beta: second definition',
+            'Gamma: third definition',
+            'Delta: fourth definition',
+          ].map((text, index) =>
+            span(text, 0.1, 0.2 + index * 0.025, {
+              width: 0.12,
+            }),
+          ),
+          links: [],
+          images: [],
+        },
+      ]);
+    const separated = await analysePdf(makeDocument(), {
+      conversionDate: '2026-08-29',
+    });
+    const unwrapped = await analysePdf(makeDocument(), {
+      conversionDate: '2026-08-29',
+      unwrapFactor: 0,
+    });
+    const strict = await analysePdf(makeDocument(), {
+      conversionDate: '2026-08-29',
+      unwrapFactor: 1,
+    });
+
+    expect(
+      separated.model.blocks.filter((block) => block.type === 'paragraph'),
+    ).toHaveLength(4);
+    expect(
+      unwrapped.model.blocks.filter((block) => block.type === 'paragraph'),
+    ).toHaveLength(1);
+    expect(
+      strict.model.blocks.filter((block) => block.type === 'paragraph'),
+    ).toHaveLength(4);
+    expect(separated.model.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'pdf-line-reflow-summary',
+        details: { joined: 0, kept: 3 },
+      }),
+    );
+  });
+
+  it('dehyphenates a line-end word only when body text provides evidence', async () => {
+    const document = rawDocument([
+      {
+        number: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        spans: [
+          span('The inter-', 0.1, 0.2, { width: 0.7 }),
+          span('national market is changing.', 0.1, 0.225, { width: 0.7 }),
+          span('International trade continues.', 0.1, 0.25, { width: 0.7 }),
+        ],
+        links: [],
+        images: [],
+      },
+    ]);
+    const unchanged = await analysePdf(document, {
+      conversionDate: '2026-08-29',
+    });
+    const corrected = await analysePdf(document, {
+      conversionDate: '2026-08-29',
+      dehyphenate: true,
+    });
+    const correctedParagraph = corrected.model.blocks.find(
+      (block) => block.type === 'paragraph',
+    );
+
+    expect(JSON.stringify(unchanged.model.blocks)).toContain('inter-');
+    expect(correctedParagraph?.type).toBe('paragraph');
+    if (correctedParagraph?.type === 'paragraph')
+      expect(
+        correctedParagraph.children
+          .filter((node) => node.type === 'text')
+          .map((node) => (node.type === 'text' ? node.text : ''))
+          .join(''),
+      ).toContain('The international market');
+    expect(corrected.model.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'pdf-dehyphenation-summary',
+        details: { joined: 1, kept: 0, limitExceeded: false },
+      }),
+    );
+  });
+
+  it('covers verse, glossary, and loose leading in generated PDFs', async () => {
+    const options = { conversionDate: '2026-08-29' };
+    const verse = await pdfJsReader.read(
+      await fixture('reflow-verse.pdf'),
+      options,
+    );
+    const glossary = await pdfJsReader.read(
+      await fixture('reflow-glossary.pdf'),
+      options,
+    );
+    const looseLeading = await pdfJsReader.read(
+      await fixture('reflow-loose-leading.pdf'),
+      { ...options, unwrapFactor: 0.4 },
+    );
+
+    expect(
+      verse.model.blocks.filter((block) => block.type === 'paragraph'),
+    ).toHaveLength(4);
+    expect(
+      glossary.model.blocks.filter((block) => block.type === 'paragraph'),
+    ).toHaveLength(4);
+    expect(
+      looseLeading.model.blocks.filter((block) => block.type === 'paragraph'),
+    ).toHaveLength(1);
   });
 });

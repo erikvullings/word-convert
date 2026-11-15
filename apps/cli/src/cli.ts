@@ -24,6 +24,7 @@ import {
   DEFAULT_EPUB_IMAGE_QUALITY,
   DEFAULT_EPUB_MAX_IMAGE_DIMENSION,
   writeEpub,
+  type EpubWriterOptions,
 } from '@wordconvert/epub-writer';
 import type { MathOutputMode } from '@wordconvert/math-converter';
 import { version } from '../package.json';
@@ -51,6 +52,7 @@ const EXTENSIONS: Record<Format, string> = {
   epub: '.epub',
 };
 const MAX_INPUT_BYTES = 50 * 1024 * 1024;
+const MAX_COVER_BYTES = 10 * 1024 * 1024;
 const HELP = `WordConvert ${version} - local document conversion and EPUB shrinking
 
 Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [options]
@@ -65,6 +67,9 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --style-preset <path>    Version 1 JSON preset exported by the SPA (DOCX only)
       --title <text>           Override inferred title
       --author <name>          Override authors (repeat for multiple authors)
+      --cover <path>           Use a JPEG, PNG, WebP, or SVG EPUB cover image
+      --frontpage-cover        Use the first PDF page as the EPUB cover and omit
+                               its images from the body
       --language <tag>         Override language; missing/invalid document tag defaults to en
       --identifier <text>      Override publication identifier
       --formula-mode <mode>   source, mathml, katex, disabled
@@ -82,6 +87,9 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --pdf-tables <list>     PDF table signals: tagged, ruled, borderless (comma
                               separated), or none. Default tagged,ruled; borderless
                               infers tables from aligned columns alone
+      --unwrap-factor <0..1>  Keep short PDF lines separate; default 0.45
+      --dehyphenate <on|off>  Use document-wide evidence to remove PDF word-break
+                              hyphens; default off
       --formula-ocr           Enable TexTeller OCR, downloading missing models once
       --formula-model-dir <dir> Enable TexTeller (encoder.onnx, decoder.onnx,
                               tokenizer.json); overrides cached formula models
@@ -230,6 +238,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         'Formula mode must be source, mathml, katex, or disabled.',
       );
     const pdfTables = parsePdfTableSignals(values['pdf-tables']);
+    const unwrapFactor = parseUnwrapFactor(values['unwrap-factor']);
+    const dehyphenate = parseDehyphenate(values.dehyphenate);
     const maxImageSize = parseMaxImageSize(values['max-image-size']);
     const imageFormat = values['image-format'] ?? 'jpeg';
     if (imageFormat !== 'jpeg' && imageFormat !== 'preserve')
@@ -251,6 +261,12 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       format !== 'epub'
     )
       throw new UsageError('Image encoding options apply only to EPUB output.');
+    if (values.cover !== undefined && format !== 'epub')
+      throw new UsageError('--cover applies only to EPUB output.');
+    if (values['frontpage-cover'] && format !== 'epub')
+      throw new UsageError('--frontpage-cover applies only to EPUB output.');
+    if (values.cover && values['frontpage-cover'])
+      throw new UsageError('--cover and --frontpage-cover cannot be combined.');
     const conversionDate =
       values['conversion-date'] ?? new Date().toISOString();
     if (!isIsoDate(conversionDate))
@@ -296,13 +312,23 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         values['formula-model-dir'] ||
         values['formula-ocr'] ||
         values['no-layout'] ||
-        values['execution-provider'])
+        values['execution-provider'] ||
+        values['unwrap-factor'] !== undefined ||
+        values.dehyphenate !== undefined)
     )
       throw new UsageError(
         'PDF rendering and model options require PDF input.',
       );
+    if (values['frontpage-cover'] && extension !== '.pdf')
+      throw new UsageError('--frontpage-cover requires PDF input.');
     if (values['pdf-tables'] && extension !== '.pdf')
       throw new UsageError('--pdf-tables requires PDF input.');
+    if (
+      (values['unwrap-factor'] !== undefined ||
+        values.dehyphenate !== undefined) &&
+      extension !== '.pdf'
+    )
+      throw new UsageError('PDF text-reflow options require PDF input.');
     if (presetPath && extension !== '.docx')
       throw new UsageError('Style presets apply only to DOCX input.');
     const output =
@@ -314,6 +340,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     if (output !== '-') {
       await protectSource(input, output);
       if (presetPath) await protectSource(presetPath, output);
+      if (values.cover) await protectSource(values.cover, output);
       if (values['layout-model'])
         await protectSource(values['layout-model'], output);
       if (values['formula-model-dir'])
@@ -365,7 +392,12 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     if (extension === '.pdf') {
       const needsLayout = !values['no-layout'];
       const needsFormula = values['formula-ocr'] || Boolean(formulaModelDir);
-      if (needsLayout || needsFormula || values.rasterize) {
+      if (
+        needsLayout ||
+        needsFormula ||
+        values.rasterize ||
+        values['frontpage-cover']
+      ) {
         // Resolve native libraries before downloading any model assets.
         (await import('./native-runtime.ts')).loadNativeRuntime(
           values['runtime-dir'],
@@ -399,41 +431,45 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     }
     const options = { conversionDate };
     const filename = basename(input);
-    const model =
-      extension === '.docx'
-        ? await secureDocxReader.read(bytes, {
-            ...options,
-            filename,
-            ...(stylePreset ? { stylePreset } : {}),
-          })
-        : extension !== '.pdf'
-          ? await (
-              await import('./text.ts')
-            ).readLocalText(
-              bytes,
-              input,
-              ['.md', '.markdown'].includes(extension) ? 'markdown' : 'html',
-              conversionDate,
-              output === '-'
-                ? undefined
-                : (path) => protectSource(path, output),
-              values['include-external-images'] ?? false,
-              io.stderr,
-            )
-          : await (
-              await import('./pdf.ts')
-            ).readPdf(bytes, filename, {
-              ...options,
-              executionProvider: provider,
-              onDiagnostic: io.stderr,
-              ...(values.rasterize ? { rasterize: true } : {}),
-              ...(pdfTables ? { pdfTables } : {}),
-              ...(layoutModel ? { layoutModel } : {}),
-              ...(formulaModelDir ? { formulaModelDir } : {}),
-              ...(values['runtime-dir']
-                ? { runtimeDir: values['runtime-dir'] }
-                : {}),
-            });
+    let model: DocumentModel;
+    let coverPng: Uint8Array | undefined;
+    if (extension === '.docx')
+      model = await secureDocxReader.read(bytes, {
+        ...options,
+        filename,
+        ...(stylePreset ? { stylePreset } : {}),
+      });
+    else if (extension !== '.pdf')
+      model = await (
+        await import('./text.ts')
+      ).readLocalText(
+        bytes,
+        input,
+        ['.md', '.markdown'].includes(extension) ? 'markdown' : 'html',
+        conversionDate,
+        output === '-' ? undefined : (path) => protectSource(path, output),
+        values['include-external-images'] ?? false,
+        io.stderr,
+      );
+    else {
+      const pdfResult = await (
+        await import('./pdf.ts')
+      ).readPdf(bytes, filename, {
+        ...options,
+        executionProvider: provider,
+        onDiagnostic: io.stderr,
+        ...(values.rasterize ? { rasterize: true } : {}),
+        ...(values['frontpage-cover'] ? { frontPageCover: true } : {}),
+        ...(pdfTables ? { pdfTables } : {}),
+        ...(unwrapFactor !== undefined ? { unwrapFactor } : {}),
+        ...(dehyphenate !== undefined ? { dehyphenate } : {}),
+        ...(layoutModel ? { layoutModel } : {}),
+        ...(formulaModelDir ? { formulaModelDir } : {}),
+        ...(values['runtime-dir'] ? { runtimeDir: values['runtime-dir'] } : {}),
+      });
+      model = pdfResult.model;
+      coverPng = pdfResult.coverPng;
+    }
     if (values.title !== undefined)
       model.metadata.title = userValue(values.title);
     if (values.language !== undefined)
@@ -462,12 +498,17 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       model.metadata.identifier = userValue(values.identifier);
     if (values.author !== undefined)
       model.metadata.authors = values.author.map((name) => userValue({ name }));
+    const cover = values.cover
+      ? await readCover(values.cover, model)
+      : undefined;
     const data = await render(model, format, conversionDate, formulaMode, {
       maxImageSize,
       imageFormat,
       imageQuality,
       runtimeDir: values['runtime-dir'],
       warn: io.stderr,
+      ...(cover ? { cover } : {}),
+      ...(coverPng ? { coverPng } : {}),
     });
     for (const warning of model.warnings)
       io.stderr(`${warning.severity} [${warning.code}]: ${warning.message}\n`);
@@ -507,6 +548,10 @@ function parseArguments(argv: string[]) {
         'style-preset': { type: 'string' },
         title: { type: 'string' },
         author: { type: 'string', multiple: true },
+        cover: { type: 'string' },
+        'frontpage-cover': { type: 'boolean' },
+        'unwrap-factor': { type: 'string' },
+        dehyphenate: { type: 'string' },
         language: { type: 'string' },
         identifier: { type: 'string' },
         'formula-mode': { type: 'string' },
@@ -564,6 +609,24 @@ const PDF_TABLE_SIGNALS = ['tagged', 'ruled', 'borderless'] as const;
  * `none`. Signals not named are turned off, so the option can narrow as well
  * as widen what the reader is allowed to infer.
  */
+function parseUnwrapFactor(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) {
+    throw new UsageError('--unwrap-factor must be a number from 0 to 1.');
+  }
+  const factor = Number(value);
+  if (!Number.isFinite(factor) || factor < 0 || factor > 1)
+    throw new UsageError('--unwrap-factor must be a number from 0 to 1.');
+  return factor;
+}
+
+function parseDehyphenate(value: string | undefined): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'on') return true;
+  if (value === 'off') return false;
+  throw new UsageError('--dehyphenate must be on or off.');
+}
+
 function parsePdfTableSignals(value: string | undefined) {
   if (value === undefined) return undefined;
   const requested = value
@@ -634,6 +697,53 @@ async function readBounded(path: string, limit: number): Promise<Uint8Array> {
   }
 }
 
+async function readCover(
+  path: string,
+  model: DocumentModel,
+): Promise<NonNullable<EpubWriterOptions['cover']>> {
+  const mediaTypeByExtension: Record<
+    string,
+    'image/jpeg' | 'image/png' | 'image/webp' | 'image/svg+xml'
+  > = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+  };
+  const mediaType = mediaTypeByExtension[extname(path).toLowerCase()];
+  if (!mediaType)
+    throw new UsageError('--cover must be a JPEG, PNG, WebP, or SVG image.');
+  const data = await readBounded(path, MAX_COVER_BYTES);
+  let dimensions: { width?: number; height?: number } = {};
+  if (mediaType !== 'image/svg+xml') {
+    const { inspectRasterImage } = await import('./image-resizer.ts');
+    const { width, height } = inspectRasterImage(data, mediaType);
+    if (!width || !height)
+      throw new Error('Cover image dimensions could not be read.');
+    dimensions = { width, height };
+  }
+  return {
+    width: 1600,
+    height: 2560,
+    layout: 'image-only',
+    title: model.metadata.title?.value ?? '',
+    authors: model.metadata.authors?.map(({ value }) => value.name) ?? [],
+    alignment: 'center',
+    titlePosition: 18,
+    authorPosition: 86,
+    titleSize: 112,
+    authorSize: 54,
+    textColor: 'light',
+    contrastPanel: 'dark',
+    panelOpacity: 0.56,
+    imageOpacity: 1,
+    margin: 8,
+    crop: 'cover',
+    image: { mediaType, data, ...dimensions },
+  };
+}
+
 async function protectSource(source: string, output: string): Promise<void> {
   if (resolve(source) === resolve(output))
     throw new UsageError(
@@ -698,6 +808,8 @@ async function render(
     imageQuality: number;
     runtimeDir: string | undefined;
     warn: (message: string) => void;
+    cover?: EpubWriterOptions['cover'];
+    coverPng?: Uint8Array;
   },
 ): Promise<string | Uint8Array> {
   const options = { conversionDate, formulaMode };
@@ -731,6 +843,8 @@ async function render(
         maxImageDimension: images.maxImageSize,
         imageFormat: images.imageFormat,
         imageQuality: images.imageQuality,
+        ...(images.cover ? { cover: images.cover } : {}),
+        ...(images.coverPng ? { coverPng: images.coverPng } : {}),
         ...(imageResizer ? { imageResizer } : {}),
       });
     }

@@ -1,6 +1,6 @@
 # 0034 Add document-wide PDF de-hyphenation
 
-Status: open
+Status: done
 Priority: medium
 Owner: unassigned
 Agent: pi
@@ -100,3 +100,4 @@ justified academic PDFs) where a reflowable EPUB shows the artefact on every lin
   Keep default-off until the fixture corpus shows the false-positive rate is acceptable
   for both English and one hyphenation-heavy language.
 - 2026-11-13 pi: Verified this task against the calibre v9.18.0 source tree (kovidgoyal/calibre, tag v9.18.0) rather than only the CLI help and online manual; Implementation Notes now cite the implementing file for each adopted behaviour, and the notes above record where the source contradicts calibre's own documentation.
+- 2026-11-13 pi: Implemented bounded, document-wide evidence-based normalization in `packages/pdf-reader/src/text-normalization.ts`, integrated after line merging in `packages/pdf-reader/src/index.ts`, and exposed the opt-out CLI flag. Added focused coverage for hard/soft hyphens, ambiguous forms, German text, and code/URL/link/formula exclusions; the feature remains default-off. Existing PDF corpus output is unchanged, and the focused reader/CLI tests pass.
