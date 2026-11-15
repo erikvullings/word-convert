@@ -7,6 +7,20 @@ export {
   importStylePreset,
   type StylePresetImportResult,
 } from './style-preset.ts';
+export {
+  CHAPTER_MARKS,
+  DEFAULT_CHAPTER_DETECTION,
+  applyChapterMarks,
+  countChapterGroups,
+  isChapterMark,
+  mergeHeadingRuns,
+  validateChapterDetection,
+  type ChapterDetectionMode,
+  type ChapterDetectionOptions,
+  type ChapterDetectionValidationResult,
+  type ChapterHeadingLevel,
+  type ChapterMark,
+} from './chapter-detection.ts';
 
 export type Confidence = 'low' | 'medium' | 'high' | 'certain';
 
@@ -126,6 +140,7 @@ export interface HeadingNode {
   numbering?: string;
   styleId?: string;
   id?: string;
+  provenance?: Provenance;
 }
 
 export interface ListNode {

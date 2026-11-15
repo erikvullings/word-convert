@@ -6,6 +6,25 @@
       "covers": ["metadata", "running headers", "page numbers", "link"]
     },
     {
+      "file": "unstyled-chapters.pdf",
+      "covers": [
+        "repeated body-font chapter openers",
+        "chapter keywords",
+        "chapter splitting"
+      ]
+    },
+    {
+      "file": "split-heading-title.pdf",
+      "covers": ["consecutive same-style heading blocks", "split title merging"]
+    },
+    {
+      "file": "part-nesting.pdf",
+      "covers": [
+        "Part-level heading inference",
+        "nested chapter-level headings"
+      ]
+    },
+    {
       "file": "two-column-article.pdf",
       "covers": ["two-column reading order", "footer"]
     },

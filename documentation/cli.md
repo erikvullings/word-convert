@@ -297,6 +297,39 @@ occur at least twice immediately after explicit page breaks. Ambiguous numbers
 and non-repeated labels remain. This is based on embedded page-break structure,
 not inferred page geometry.
 
+### Chapter detection and marking
+
+PDF input defaults to automatic chapter detection. It considers short, standalone
+body-style lines matching chapter, book, section, prologue, epilogue, or part
+keywords, and promotes them only when they repeat with structural spacing,
+paragraph segmentation is trustworthy, and the document has at least 50 words.
+Repeated candidates must have reasonably regular intervals. Explicit style
+mappings are not overridden; uncertain candidates are reported as proposals.
+Detection is disabled for non-PDF input.
+
+```sh
+wordconvert book.pdf --chapter-detection automatic --chapter-split-level 2 \
+  --chapter-mark pagebreak -o book.epub
+wordconvert book.pdf --chapter-detection off --chapter-mark both \
+  --chapter-split-level 1 -f html -o book.html
+```
+
+`--chapter-detection` accepts `off`, `automatic` (default), or `custom`.
+`--chapter-split-level` accepts heading levels 1 through 6 and defaults to 2,
+preserving the existing EPUB split behavior. It selects EPUB file boundaries
+and the heading level used by HTML/Markdown chapter markers. Splits and marks
+occur only at top-level blocks, never within lists, tables, quotations, or
+equations. EPUB represents chapter boundaries as separate XHTML files; HTML
+uses page-break elements and thematic breaks, while Markdown uses a page-break
+comment and thematic break.
+
+`--chapter-mark` accepts `pagebreak`, `rule`, `none` (default), or `both`.
+Marks are inserted only before subsequent chapter headings after at least 50
+words of chapter content. Consecutive same-level headings are merged into one
+title before splitting, including when their block styles differ; inline
+formatting and numbering are retained, and the first heading's ID remains
+stable. Different heading levels remain separate.
+
 ## Run from source
 
 Install Node 24+, the repository's pinned pnpm, and Bun 1.3.11:

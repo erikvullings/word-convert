@@ -11,8 +11,14 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import {
+  DEFAULT_CHAPTER_DETECTION,
   importStylePreset,
   isConversionError,
+  validateChapterDetection,
+  type ChapterDetectionMode,
+  type ChapterDetectionOptions,
+  type ChapterHeadingLevel,
+  type ChapterMark,
   type DocumentModel,
   type InferredValue,
   type PipelineStageEvent,
@@ -71,6 +77,9 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
                               EPUB input: repack only, defaults to <name>.shrunk.epub
       --force                 Replace an existing output, never the input/preset
       --style-preset <path>    Version 1 JSON preset exported by the SPA (DOCX only)
+      --chapter-detection <mode> off, automatic (default), or custom (PDF input)
+      --chapter-mark <mark>    pagebreak, rule, none (default), or both
+      --chapter-split-level <1-6>  Heading level that starts chapters; default 2
       --title <text>           Override inferred title
       --author <name>          Override authors (repeat for multiple authors)
       --cover <path>           Use a JPEG, PNG, WebP, or SVG EPUB cover image
@@ -275,6 +284,22 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     const retainedCandidateIds = parseFurnitureIds(values['keep-furniture']);
     const unwrapFactor = parseUnwrapFactor(values['unwrap-factor']);
     const dehyphenate = parseDehyphenate(values.dehyphenate);
+    const chapterDetectionMode = parseChapterDetectionMode(
+      values['chapter-detection'],
+    );
+    const chapterDetection: ChapterDetectionOptions = {
+      ...DEFAULT_CHAPTER_DETECTION,
+      mode: chapterDetectionMode,
+    };
+    const chapterDetectionResult = validateChapterDetection(chapterDetection);
+    if (!chapterDetectionResult.valid)
+      throw new UsageError(
+        `Invalid chapter detection options: ${chapterDetectionResult.issues[0]?.message ?? 'unknown error'}`,
+      );
+    const chapterMark = parseChapterMark(values['chapter-mark']);
+    const chapterSplitLevel = parseChapterSplitLevel(
+      values['chapter-split-level'],
+    );
     const maxImageSize = parseMaxImageSize(values['max-image-size']);
     const imageFormat = values['image-format'] ?? 'jpeg';
     if (imageFormat !== 'jpeg' && imageFormat !== 'preserve')
@@ -379,6 +404,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       );
     if (values['frontpage-cover'] && extension !== '.pdf')
       throw new UsageError('--frontpage-cover requires PDF input.');
+    if (values['chapter-detection'] !== undefined && extension !== '.pdf')
+      throw new UsageError('--chapter-detection requires PDF input.');
     if (values['pdf-tables'] && extension !== '.pdf')
       throw new UsageError('--pdf-tables requires PDF input.');
     if (
@@ -481,6 +508,9 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
             : null,
         unwrapFactor: extension === '.pdf' ? (unwrapFactor ?? 0.45) : null,
         dehyphenate: extension === '.pdf' ? (dehyphenate ?? false) : null,
+        chapterDetection: extension === '.pdf' ? chapterDetection : null,
+        chapterMark,
+        chapterSplitLevel,
         stylePreset: presetPath ? sanitizeBasename(presetPath) : null,
         cover: values.cover ? sanitizeBasename(values.cover) : null,
         title: sanitizeRequestText(values.title),
@@ -657,6 +687,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         ...(pdfTables ? { pdfTables } : {}),
         ...(unwrapFactor !== undefined ? { unwrapFactor } : {}),
         ...(dehyphenate !== undefined ? { dehyphenate } : {}),
+        chapterDetection,
+        chapterSplitLevel,
         ...(layoutModel ? { layoutModel } : {}),
         ...(formulaModelDir ? { formulaModelDir } : {}),
         ...(values['runtime-dir'] ? { runtimeDir: values['runtime-dir'] } : {}),
@@ -734,6 +766,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       maxImageSize,
       imageFormat,
       imageQuality,
+      chapterMark,
+      chapterSplitLevel,
       runtimeDir: values['runtime-dir'],
       warn: io.stderr,
       ...(cover ? { cover } : {}),
@@ -793,6 +827,9 @@ function parseArguments(argv: string[]) {
         'no-images': { type: 'boolean' },
         'unwrap-factor': { type: 'string' },
         dehyphenate: { type: 'string' },
+        'chapter-detection': { type: 'string' },
+        'chapter-mark': { type: 'string' },
+        'chapter-split-level': { type: 'string' },
         language: { type: 'string' },
         identifier: { type: 'string' },
         'formula-mode': { type: 'string' },
@@ -1093,6 +1130,42 @@ function parseMaxImageSize(value: string | undefined): number {
   return Number(value);
 }
 
+function parseChapterDetectionMode(
+  value: string | undefined,
+): ChapterDetectionMode {
+  const mode = value ?? 'automatic';
+  if (mode !== 'off' && mode !== 'automatic' && mode !== 'custom')
+    throw new UsageError(
+      '--chapter-detection must be off, automatic, or custom.',
+    );
+  return mode;
+}
+
+function parseChapterMark(value: string | undefined): ChapterMark {
+  const mark = value ?? 'none';
+  if (
+    mark !== 'pagebreak' &&
+    mark !== 'rule' &&
+    mark !== 'none' &&
+    mark !== 'both'
+  )
+    throw new UsageError(
+      '--chapter-mark must be pagebreak, rule, none, or both.',
+    );
+  return mark;
+}
+
+function parseChapterSplitLevel(
+  value: string | undefined,
+): ChapterHeadingLevel {
+  const level = Number(value ?? 2);
+  if (!/^[1-6]$/.test(value ?? '2'))
+    throw new UsageError(
+      '--chapter-split-level must be an integer from 1 to 6.',
+    );
+  return level as ChapterHeadingLevel;
+}
+
 async function render(
   model: DocumentModel,
   format: Format,
@@ -1102,6 +1175,8 @@ async function render(
     maxImageSize: number;
     imageFormat: 'jpeg' | 'preserve';
     imageQuality: number;
+    chapterMark: ChapterMark;
+    chapterSplitLevel: ChapterHeadingLevel;
     runtimeDir: string | undefined;
     warn: (message: string) => void;
     cover?: EpubWriterOptions['cover'];
@@ -1112,18 +1187,22 @@ async function render(
   const options = {
     conversionDate,
     formulaMode,
+    chapterMark: images.chapterMark,
+    chapterSplitLevel: images.chapterSplitLevel,
     ...(images.onStage ? { onStage: images.onStage } : {}),
+  };
+  const onWarning = (warning: DocumentModel['warnings'][number]): void => {
+    model.warnings.push(warning);
   };
   const markdownOptions = {
     ...options,
-    onWarning: (warning: DocumentModel['warnings'][number]) =>
-      model.warnings.push(warning),
+    onWarning,
   };
   switch (format) {
     case 'html':
-      return writeHtml(model, { ...options, mode: 'standalone' });
+      return writeHtml(model, { ...options, mode: 'standalone', onWarning });
     case 'html-zip':
-      return writeHtmlZip(model, options);
+      return writeHtmlZip(model, { ...options, onWarning });
     case 'markdown':
       return writeMarkdown(model, markdownOptions);
     case 'markdown-zip':
@@ -1144,6 +1223,9 @@ async function render(
         maxImageDimension: images.maxImageSize,
         imageFormat: images.imageFormat,
         imageQuality: images.imageQuality,
+        chapterMark: images.chapterMark,
+        chapterSplitLevel: images.chapterSplitLevel,
+        onWarning,
         ...(images.cover ? { cover: images.cover } : {}),
         ...(images.coverPng ? { coverPng: images.coverPng } : {}),
         ...(imageResizer ? { imageResizer } : {}),

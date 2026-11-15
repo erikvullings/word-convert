@@ -1,6 +1,9 @@
 import type {
   ConversionError,
   ConversionProgress,
+  ChapterDetectionOptions,
+  ChapterHeadingLevel,
+  ChapterMark,
   ConversionWarning,
   DocumentModel,
   StyleMapping,
@@ -27,6 +30,8 @@ export interface PdfWorkerOptions {
   formulaDecisions?: Readonly<Record<string, PdfFormulaDecision>>;
   manualFormulaRegions?: readonly PdfManualFormulaRegion[];
   densePageMode?: PdfDensePageMode;
+  chapterDetection?: ChapterDetectionOptions;
+  chapterSplitLevel?: ChapterHeadingLevel;
   /** Without a `densePageMode`, ask the host through `pdf-dense-page-question`. */
   askDensePageMode?: boolean;
 }
@@ -55,6 +60,8 @@ export type WorkerRequest =
       coverPng?: Uint8Array;
       formulaMode?: MathOutputMode;
       includeInternalLinks?: boolean;
+      chapterMark?: ChapterMark;
+      chapterSplitLevel?: ChapterHeadingLevel;
       sourceHtml?: { html: string; xhtml: string; css: string };
     }
   | {

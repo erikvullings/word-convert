@@ -183,6 +183,20 @@ Do not infer headings from font size alone. Combine relative font-size rank with
 
 Display the analysis in an editable style-mapping screen before conversion.
 
+For PDF chapter detection, explicit style mappings and user-selected heading
+mappings take precedence; detection may promote only unassigned body-style lines.
+Detection options must be typed, serializable, and validated before SPA
+persistence. Automatic detection requires a document of at least 50 words,
+short standalone repeated openers with structural spacing, regular intervals,
+and sufficient paragraph-segmentation confidence. Low-confidence candidates
+remain review proposals. Bounded custom patterns must reject backreferences,
+groups, alternation, and multiple quantifiers.
+
+Merge consecutive same-level heading blocks with the same style when they form
+one split title. Preserve the first block's ID and numbering and concatenate
+inline nodes without flattening their formatting. Different heading levels
+remain separate, preserving genuine title/subtitle hierarchy.
+
 For every style, show:
 
 - proposed semantic type;
@@ -365,7 +379,12 @@ Include:
 - cover-image declarations;
 - an XHTML title page.
 
-Split chapters primarily at Heading 1 boundaries, while avoiding invalid splits inside lists, tables, quotations or other nested structures.
+Split chapters at a configurable heading level from 1 through 6, defaulting to
+Heading 2 to preserve the existing writer behavior. Never split inside lists,
+tables, quotations, equations, or other nested structures. Optional chapter
+marks are explicit writer options: EPUB uses file boundaries; HTML uses
+page-break elements and thematic breaks; Markdown uses a page-break comment
+and thematic breaks.
 
 Generate table-of-contents entries from semantic headings.
 

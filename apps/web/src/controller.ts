@@ -1,4 +1,5 @@
 import m from 'mithril';
+import { DEFAULT_CHAPTER_DETECTION } from '@wordconvert/document-model';
 import type { Person, StyleMapping } from '@wordconvert/document-model';
 
 import type { AppController } from './app.ts';
@@ -446,6 +447,8 @@ export function createBrowserController(): AppController {
       conversionDate: state.conversionDate,
       formulaMode: state.preferences.formulaMode,
       includeInternalLinks: state.preferences.markdownIncludeInternalLinks,
+      chapterMark: state.preferences.chapterMark ?? 'none',
+      chapterSplitLevel: state.preferences.chapterSplitLevel ?? 2,
       mode:
         state.preferences.outputFormat === 'html'
           ? state.preferences.htmlMode
@@ -2511,6 +2514,9 @@ function pdfWorkerOptions(
   return {
     formulaRecognitionEnabled: state.preferences.formulaRecognitionEnabled,
     layoutDetectionEnabled: state.pdfImport.enhancedFigureDetection,
+    chapterDetection:
+      state.preferences.chapterDetection ?? DEFAULT_CHAPTER_DETECTION,
+    chapterSplitLevel: state.preferences.chapterSplitLevel ?? 2,
     ...(samplePageCount !== undefined
       ? { samplePageCount }
       : state.pdfImport.densePageMode

@@ -428,6 +428,68 @@ describe('writeEpub', () => {
     ).toContain('href="chapter-002.xhtml#source-toc-detail"');
   });
 
+  it('splits at the configured heading level and marks only real chapter boundaries', async () => {
+    const body =
+      'This section has enough substantive words to qualify as a chapter boundary. ' +
+      'It continues with useful context, detail, and additional prose for readers. ';
+    const input = model([
+      {
+        type: 'heading',
+        level: 1,
+        children: [{ type: 'text', text: 'Part I' }],
+      },
+      {
+        type: 'heading',
+        level: 2,
+        children: [{ type: 'text', text: 'Chapter One' }],
+      },
+      { type: 'paragraph', children: [{ type: 'text', text: body }] },
+      {
+        type: 'heading',
+        level: 2,
+        children: [{ type: 'text', text: 'Chapter Two' }],
+      },
+      { type: 'paragraph', children: [{ type: 'text', text: body }] },
+      {
+        type: 'heading',
+        level: 1,
+        children: [{ type: 'text', text: 'Part II' }],
+      },
+      {
+        type: 'heading',
+        level: 2,
+        children: [{ type: 'text', text: 'Chapter Three' }],
+      },
+    ]);
+
+    const files = unzipSync(
+      await writeEpub(input, {
+        conversionDate: '2026-07-15',
+        identifier: 'parts',
+        title: 'Parts',
+        language: 'en',
+        chapterSplitLevel: 1,
+        chapterMark: 'both',
+      }),
+    );
+    const secondChapter = strFromU8(
+      files['EPUB/chapter-002.xhtml'] ?? new Uint8Array(),
+    );
+
+    expect(
+      Object.keys(files).filter((path) =>
+        /^EPUB\/chapter-\d+\.xhtml$/.test(path),
+      ),
+    ).toHaveLength(2);
+    expect(secondChapter.indexOf('chapter-page-break')).toBeLessThan(
+      secondChapter.indexOf('<hr class="chapter-rule"/>'),
+    );
+    expect(secondChapter).toContain('<h1 id="part-ii">Part II</h1>');
+    const nav = strFromU8(files['EPUB/nav.xhtml'] ?? new Uint8Array());
+    expect(nav).toContain('chapter-001.xhtml#chapter-one');
+    expect(nav).toContain('chapter-002.xhtml#chapter-three');
+  });
+
   it('serializes model structures, local passive assets, notes, and metadata', async () => {
     const input = model([
       {

@@ -128,6 +128,17 @@ describe('CLI arguments and output', () => {
     }
   });
 
+  it.each([
+    ['--chapter-detection', 'unknown', '--chapter-detection must be'],
+    ['--chapter-mark', 'break', '--chapter-mark must be'],
+    ['--chapter-split-level', '7', '--chapter-split-level must be'],
+  ])('rejects invalid %s values', async (option, value, message) => {
+    const result = await invoke([pdf, option, value, ...fixedDate]);
+
+    expect(result.code).toBe(2);
+    expect(result.errors).toContain(message);
+  });
+
   it('lets explicit format override an extension, and rejects ambiguous ZIP inference', async () => {
     const output = join(await directory(), 'book.zip');
     expect((await invoke([fixture, '-o', output])).code).toBe(2);
@@ -695,6 +706,46 @@ describe('CLI arguments and output', () => {
     expect(second.code, second.errors).toBe(0);
     expect(first.output).toEqual(second.output);
   }, 30_000);
+
+  it.each([
+    ['unstyled-chapters.pdf', 2],
+    ['split-heading-title.pdf', 1],
+    ['part-nesting.pdf', 2],
+    ['two-column-article.pdf', 1],
+  ])(
+    'writes valid navigation and spine chapters for %s',
+    async (name, count) => {
+      const input = fileURLToPath(
+        new URL(`../../../tests/fixtures/pdf/${name}`, import.meta.url),
+      );
+      const result = await invoke([
+        input,
+        '--no-layout',
+        '--chapter-detection',
+        'automatic',
+        '-f',
+        'epub',
+        '-o',
+        '-',
+        ...fixedDate,
+      ]);
+
+      expect(result.code, result.errors).toBe(0);
+      const output = result.output[0];
+      expect(output).toBeInstanceOf(Uint8Array);
+      if (!(output instanceof Uint8Array)) return;
+      const files = unzipSync(output);
+      const chapterFiles = Object.keys(files).filter((path) =>
+        /^EPUB\/chapter-\d+\.xhtml$/.test(path),
+      );
+      const opf = new TextDecoder().decode(files['EPUB/package.opf']);
+      const nav = new TextDecoder().decode(files['EPUB/nav.xhtml']);
+
+      expect(chapterFiles).toHaveLength(count);
+      expect(opf.match(/<itemref idref="chapter-/g)).toHaveLength(count);
+      expect(nav).toContain('chapter-001.xhtml');
+    },
+  );
 
   it('defaults missing PDF language to English for EPUB without an override', async () => {
     const result = await invoke([

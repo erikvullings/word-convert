@@ -443,4 +443,50 @@ describe('writeHtml', () => {
       ),
     ).toBe(true);
   });
+
+  it('marks top-level chapter boundaries without inserting markers in nested blocks', () => {
+    const body =
+      'This section has enough substantive words to qualify as a chapter boundary. ' +
+      'It continues with useful context, detail, and additional prose for readers. '.repeat(
+        5,
+      );
+    const html = writeHtml(
+      model([
+        {
+          type: 'heading',
+          level: 2,
+          children: [{ type: 'text', text: 'One' }],
+        },
+        { type: 'paragraph', children: [{ type: 'text', text: body }] },
+        {
+          type: 'heading',
+          level: 2,
+          children: [{ type: 'text', text: 'Two' }],
+        },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            {
+              blocks: [
+                {
+                  type: 'heading',
+                  level: 2,
+                  children: [{ type: 'text', text: 'Nested' }],
+                },
+              ],
+            },
+          ],
+        },
+      ]),
+      { conversionDate: '2026-07-15', chapterMark: 'both' },
+    );
+
+    expect(html).toContain(
+      '<div class="page-break" aria-hidden="true"></div><hr>',
+    );
+    expect(html).toContain('<h2 id="two">Two</h2>');
+    expect(html).toContain('<li><h2 id="nested">Nested</h2></li>');
+    expect(html.indexOf('<hr>')).toBeLessThan(html.indexOf('<h2 id="two">'));
+  });
 });

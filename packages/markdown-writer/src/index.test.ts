@@ -60,6 +60,11 @@ describe('writeMarkdown', () => {
     expect(markdown).toBe('Indented prose\n');
     expect(warnings).toEqual([
       expect.objectContaining({
+        code: 'markdown-chapter-count',
+        severity: 'info',
+        details: { chapters: 1, splitLevel: 2 },
+      }),
+      expect.objectContaining({
         code: 'markdown-paragraph-indent-omitted',
         severity: 'info',
         details: { paragraphs: 1 },
@@ -672,6 +677,7 @@ describe('writeMarkdown', () => {
     expect(first).not.toContain('javascript:');
     expect(first).not.toContain('image/svg+xml');
     expect(firstWarnings.map(({ code }) => code)).toEqual([
+      'markdown-chapter-count',
       'markdown-unsafe-link',
       'markdown-unsupported-style-mark',
       'markdown-missing-asset',
@@ -680,8 +686,8 @@ describe('writeMarkdown', () => {
       'markdown-table-span',
       'markdown-missing-note',
     ]);
-    expect(firstWarnings[2]?.details).toEqual({ assetId: 'missing' });
-    expect(firstWarnings[5]?.details).toEqual({ colSpan: 2, rowSpan: 3 });
+    expect(firstWarnings[3]?.details).toEqual({ assetId: 'missing' });
+    expect(firstWarnings[6]?.details).toEqual({ colSpan: 2, rowSpan: 3 });
   });
 
   it('does not warn about a character style with an explicit mapping', () => {
@@ -780,5 +786,54 @@ describe('writeMarkdown', () => {
 
     expect(markdown).toContain('`` value `inside` ``');
     expect(markdown).toContain('````md\nbefore\n```\nafter\n````');
+  });
+
+  it('uses portable chapter marks only at top-level substantive boundaries', () => {
+    const body =
+      'This section has enough substantive words to qualify as a chapter boundary. ' +
+      'It continues with useful context, detail, and additional prose for readers. '.repeat(
+        5,
+      );
+    const markdown = writeMarkdown(
+      model([
+        {
+          type: 'heading',
+          level: 2,
+          children: [{ type: 'text', text: 'One' }],
+        },
+        { type: 'paragraph', children: [{ type: 'text', text: body }] },
+        {
+          type: 'heading',
+          level: 2,
+          children: [{ type: 'text', text: 'Two' }],
+        },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            {
+              blocks: [
+                {
+                  type: 'heading',
+                  level: 2,
+                  children: [{ type: 'text', text: 'Nested' }],
+                },
+              ],
+            },
+          ],
+        },
+      ]),
+      {
+        conversionDate: '2026-07-15',
+        chapterMark: 'both',
+      },
+    );
+
+    expect(markdown.match(/<!-- markdown:page-break -->/g)).toHaveLength(1);
+    expect(markdown).toContain('---');
+    expect(markdown.indexOf('<!-- markdown:page-break -->')).toBeLessThan(
+      markdown.indexOf('## Two'),
+    );
+    expect(markdown).toContain('- ## Nested');
   });
 });

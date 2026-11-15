@@ -1,3 +1,8 @@
+import {
+  applyChapterMarks,
+  countChapterGroups,
+  isChapterMark,
+} from '@wordconvert/document-model';
 import type {
   BlockNode,
   DocumentAsset,
@@ -5,6 +10,9 @@ import type {
   InlineNode,
   TextMark,
   WriterOptions,
+  ChapterHeadingLevel,
+  ChapterMark,
+  ConversionWarning,
 } from '@wordconvert/document-model';
 import { strToU8, zipSync, type Zippable } from 'fflate';
 import {
@@ -18,6 +26,9 @@ export interface HtmlWriterOptions extends WriterOptions {
   formulaMode?: MathOutputMode;
   sourceHtml?: string;
   sourceCss?: string;
+  chapterSplitLevel?: ChapterHeadingLevel;
+  chapterMark?: ChapterMark;
+  onWarning?: (warning: ConversionWarning) => void;
 }
 
 interface HeadingEntry {
@@ -72,10 +83,37 @@ export function writeHtml(
   model: DocumentModel,
   options: HtmlWriterOptions,
 ): string {
+  const chapterSplitLevel = options.chapterSplitLevel ?? 2;
+  const chapterMark = options.chapterMark ?? 'none';
+  if (
+    !Number.isInteger(chapterSplitLevel) ||
+    chapterSplitLevel < 1 ||
+    chapterSplitLevel > 6
+  )
+    throw new TypeError(
+      'HTML chapter split level must be an integer from 1 to 6.',
+    );
+  if (!isChapterMark(chapterMark))
+    throw new TypeError(
+      'HTML chapter mark must be pagebreak, rule, none, or both.',
+    );
+  const chapterModel = {
+    ...model,
+    blocks: applyChapterMarks(model.blocks, chapterSplitLevel, chapterMark),
+  };
+  options.onWarning?.({
+    code: 'html-chapter-count',
+    severity: 'info',
+    message: `HTML output contains ${countChapterGroups(model.blocks, chapterSplitLevel)} chapter(s).`,
+    details: {
+      chapters: countChapterGroups(model.blocks, chapterSplitLevel),
+      splitLevel: chapterSplitLevel,
+    },
+  });
   const fragment = options.sourceHtml
     ? `<div class="source-html">${options.sourceHtml}</div>`
     : writeFragment(
-        model,
+        chapterModel,
         (asset) => dataUrl(asset),
         options.formulaMode ?? 'source',
       );

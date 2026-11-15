@@ -4,6 +4,8 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type {
   DocumentModel,
   ConversionOptions,
+  ChapterDetectionOptions,
+  ChapterHeadingLevel,
 } from '@wordconvert/document-model';
 import { loadNativeRuntime } from './native-runtime.ts';
 import {
@@ -34,6 +36,8 @@ export interface CliPdfOptions extends ConversionOptions {
   listFurniture?: boolean;
   unwrapFactor?: number;
   dehyphenate?: boolean;
+  chapterDetection?: ChapterDetectionOptions;
+  chapterSplitLevel?: ChapterHeadingLevel;
   runtimeDir?: string;
   executionProvider?: ProviderSelection;
   onDiagnostic?: (message: string) => void;
@@ -138,6 +142,12 @@ export async function readPdf(
         : {}),
       ...(options.dehyphenate !== undefined
         ? { dehyphenate: options.dehyphenate }
+        : {}),
+      ...(options.chapterDetection
+        ? { chapterDetection: options.chapterDetection }
+        : {}),
+      ...(options.chapterSplitLevel !== undefined
+        ? { chapterSplitLevel: options.chapterSplitLevel }
         : {}),
       ...(adapters ? { figureRasterizer: adapters.figureRasterizer } : {}),
       ...(adapters?.layoutDetector

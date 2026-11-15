@@ -47,7 +47,12 @@ export function warningDestination(
   const code = warning.code.toLowerCase();
   if (code.includes('formula') || code.includes('math')) return 'formula';
   if (code.includes('metadata')) return 'metadata';
-  if (code.includes('style') || code.includes('heading')) return 'styles';
+  if (
+    code.includes('style') ||
+    code.includes('heading') ||
+    code.includes('chapter-detection-proposal')
+  )
+    return 'styles';
   if (code.startsWith('pdf-')) return 'pdf';
   return undefined;
 }

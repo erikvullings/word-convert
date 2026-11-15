@@ -1,6 +1,6 @@
 # 0036 Add configurable chapter detection marking and heading-run merging
 
-Status: open
+Status: done
 Priority: medium
 Owner: unassigned
 Agent: pi
@@ -114,6 +114,18 @@ WordConvert has heading *style* analysis (`analyseStyles()`, `semanticHeadingLev
   parity, two blocks, one chapter) or merge into one `HeadingBlockNode` (better output,
   needs the multi-line title rules from this task). Record the decision and the fixture
   that proves it.
+
+## Implementation decision and evidence
+
+Merge consecutive same-level headings, including when their block styles differ,
+instead of demoting the second heading. The `split-heading-title.pdf` fixture verifies that `THE` / `LONG WAIT`
+becomes one heading and one EPUB chapter; model tests verify first-ID retention,
+numbering, and inline marks, while the level-difference fixture coverage keeps a
+real heading hierarchy intact. The `unstyled-chapters.pdf`, `part-nesting.pdf`,
+and `two-column-article.pdf` CLI tests verify EPUB nav/spine chapter counts for
+promoted chapter keywords, Part nesting, split titles, and a document without
+chapter headings. Focused writer, reader, CLI, SPA, and model tests pass, as does
+the workspace typecheck.
 
 ## Agent Notes
 

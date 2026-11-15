@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   DOCUMENT_MODEL_SCHEMA,
   DOCUMENT_MODEL_VERSION,
+  DEFAULT_CHAPTER_DETECTION,
   deserializeDocumentModel,
   isConversionError,
+  mergeHeadingRuns,
   serializeDocumentModel,
   toJsonValue,
+  validateChapterDetection,
   validateDocumentModel,
   type BinaryWriter,
   type ConversionError,
@@ -95,6 +98,76 @@ const model: DocumentModel = {
 };
 
 describe('DocumentModel contracts', () => {
+  it('merges same-style heading runs without losing identifiers, numbering, or marks', () => {
+    const merged = mergeHeadingRuns([
+      {
+        type: 'heading',
+        level: 2,
+        id: 'first',
+        styleId: 'chapter-title',
+        numbering: '1',
+        children: [{ type: 'text', text: 'THE', marks: [{ type: 'bold' }] }],
+      },
+      {
+        type: 'heading',
+        level: 2,
+        id: 'second',
+        styleId: 'title-fragment',
+        numbering: '2',
+        children: [
+          { type: 'text', text: 'LONG WAIT', marks: [{ type: 'italic' }] },
+        ],
+      },
+      {
+        type: 'heading',
+        level: 3,
+        styleId: 'subtitle',
+        children: [{ type: 'text', text: 'A subtitle' }],
+      },
+    ]);
+
+    expect(merged.mergedRuns).toBe(1);
+    expect(merged.blocks).toEqual([
+      {
+        type: 'heading',
+        level: 2,
+        id: 'first',
+        styleId: 'chapter-title',
+        numbering: '1',
+        children: [
+          { type: 'text', text: 'THE', marks: [{ type: 'bold' }] },
+          { type: 'text', text: '2 ' },
+          { type: 'text', text: 'LONG WAIT', marks: [{ type: 'italic' }] },
+        ],
+      },
+      {
+        type: 'heading',
+        level: 3,
+        styleId: 'subtitle',
+        children: [{ type: 'text', text: 'A subtitle' }],
+      },
+    ]);
+  });
+
+  it('validates serializable chapter detection options', () => {
+    expect(validateChapterDetection(DEFAULT_CHAPTER_DETECTION).valid).toBe(
+      true,
+    );
+    expect(
+      validateChapterDetection({
+        ...DEFAULT_CHAPTER_DETECTION,
+        patterns: ['^Chapter \\d{1,2}$'],
+      }).valid,
+    ).toBe(true);
+    expect(
+      validateChapterDetection({
+        ...DEFAULT_CHAPTER_DETECTION,
+        extra: true,
+        patterns: ['(a+)+$'],
+      }).issues.map(({ code }) => code),
+    ).toEqual(['unknown', 'pattern']);
+  });
+
   it('round-trips binary values through explicit JSON encoding', () => {
     const json = serializeDocumentModel(model);
     expect(json).toContain('"$binary":"uint8-array"');

@@ -1,10 +1,14 @@
+import { isChapterMark } from '@wordconvert/document-model';
 import type {
   BlockNode,
+  ConversionWarning,
   DocumentAsset,
   DocumentModel,
   InlineNode,
   TextMark,
   WriterOptions,
+  ChapterMark,
+  ChapterHeadingLevel,
 } from '@wordconvert/document-model';
 import { strToU8, zipSync, type Zippable } from 'fflate';
 import {
@@ -36,6 +40,11 @@ export interface EpubWriterOptions extends WriterOptions {
   imageQuality?: number;
   /** Injected raster resizer; without it images are embedded unchanged. */
   imageResizer?: EpubImageResizer;
+  /** Heading level that begins an EPUB chapter. Defaults to level 2. */
+  chapterSplitLevel?: ChapterHeadingLevel;
+  /** Explicit visual marker at chapter file boundaries. Defaults to none. */
+  chapterMark?: ChapterMark;
+  onWarning?: (warning: ConversionWarning) => void;
 }
 
 export const DEFAULT_EPUB_MAX_IMAGE_DIMENSION = 1600;
@@ -104,6 +113,7 @@ interface Chapter {
   id: string;
   path: string;
   blocks: BlockNode[];
+  markBefore: boolean;
 }
 
 interface HeadingEntry {
@@ -209,11 +219,41 @@ export async function writeEpub(
   model: DocumentModel,
   options: EpubWriterOptions,
 ): Promise<Uint8Array> {
+  const chapterSplitLevel = options.chapterSplitLevel ?? 2;
+  const chapterMark = options.chapterMark ?? 'none';
+  if (
+    !Number.isInteger(chapterSplitLevel) ||
+    chapterSplitLevel < 1 ||
+    chapterSplitLevel > 6
+  )
+    throw new TypeError(
+      'EPUB chapter split level must be an integer from 1 to 6.',
+    );
+  if (!isChapterMark(chapterMark))
+    throw new TypeError(
+      'EPUB chapter mark must be pagebreak, rule, none, or both.',
+    );
   model = await shrinkAssets(model, options);
   const metadata = resolveMetadata(model, options);
   const chapters = options.sourceXhtml
-    ? [{ id: 'chapter-001', path: 'chapter-001.xhtml', blocks: [] }]
-    : splitChapters(model.blocks);
+    ? [
+        {
+          id: 'chapter-001',
+          path: 'chapter-001.xhtml',
+          blocks: [],
+          markBefore: false,
+        },
+      ]
+    : splitChapters(model.blocks, chapterSplitLevel);
+  options.onWarning?.({
+    code: 'epub-chapter-count',
+    severity: 'info',
+    message: `EPUB output contains ${chapters.length} chapter file(s).`,
+    details: {
+      chapters: chapters.length,
+      splitLevel: chapterSplitLevel,
+    },
+  });
   const assets = createAssetRegistry(model);
   const assetPaths = new Map(
     assets.map(({ asset, path }) => [asset.id, path.replace('EPUB/', '')]),
@@ -264,6 +304,7 @@ export async function writeEpub(
             assetPaths,
             headings,
             options.formulaMode ?? 'mathml',
+            chapterMark,
           ),
     );
   }
@@ -333,16 +374,21 @@ function normalizeModified(value: string): string {
   return match?.[1] ? `${match[1]}Z` : value;
 }
 
-function splitChapters(blocks: BlockNode[]): Chapter[] {
+function splitChapters(
+  blocks: BlockNode[],
+  splitLevel: ChapterHeadingLevel,
+): Chapter[] {
   const groups: BlockNode[][] = [];
   let current: BlockNode[] = [];
   let hasChapterHeading = false;
   let wordsSinceHeading = 0;
+  const startsAtHeading: boolean[] = [false];
   for (const block of blocks) {
-    if (block.type === 'heading' && block.level === 2) {
+    if (block.type === 'heading' && block.level === splitLevel) {
       if (hasChapterHeading && wordsSinceHeading >= 50) {
         groups.push(current);
         current = [];
+        startsAtHeading.push(true);
       }
       hasChapterHeading = true;
       wordsSinceHeading = 0;
@@ -359,6 +405,7 @@ function splitChapters(blocks: BlockNode[]): Chapter[] {
       id: `chapter-${number}`,
       path: `chapter-${number}.xhtml`,
       blocks: chapterBlocks,
+      markBefore: startsAtHeading[index] ?? false,
     };
   });
 }
@@ -541,6 +588,7 @@ function chapterXhtml(
   assetPaths: ReadonlyMap<string, string>,
   headings: HeadingEntry[],
   formulaMode: MathOutputMode,
+  chapterMark: ChapterMark,
 ): string {
   const firstHeading = headings.find(({ path }) => path === chapter.path);
   const context: RenderContext = {
@@ -553,7 +601,14 @@ function chapterXhtml(
     formulaMode,
   };
   if (context.headingIndex < 0) context.headingIndex = headings.length;
-  const body = renderBlocks(chapter.blocks, context);
+  const marker =
+    chapter.markBefore &&
+    (chapterMark === 'pagebreak' ||
+      chapterMark === 'rule' ||
+      chapterMark === 'both')
+      ? `${chapterMark === 'pagebreak' || chapterMark === 'both' ? '<div class="page-break chapter-page-break" aria-hidden="true"></div>' : ''}${chapterMark === 'rule' || chapterMark === 'both' ? '<hr class="chapter-rule"/>' : ''}`
+      : '';
+  const body = `${marker}${renderBlocks(chapter.blocks, context)}`;
   return xhtmlDocument(
     metadata,
     firstHeading?.label ?? metadata.title,

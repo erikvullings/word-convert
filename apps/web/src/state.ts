@@ -4,6 +4,15 @@ import type {
   DocumentModel,
   StyleMapping,
 } from '@wordconvert/document-model';
+import {
+  DEFAULT_CHAPTER_DETECTION,
+  validateChapterDetection,
+} from '@wordconvert/document-model';
+import type {
+  ChapterDetectionOptions,
+  ChapterHeadingLevel,
+  ChapterMark,
+} from '@wordconvert/document-model';
 import { STYLE_MAPPINGS } from './editors.ts';
 import { createCoverSettings, type CoverSettings } from './cover.ts';
 import type { MathOutputMode } from '@wordconvert/math-converter';
@@ -77,6 +86,9 @@ export interface Preferences {
   markdownIncludeInternalLinks: boolean;
   assetMode: AssetOutputMode;
   epubIncludeCover: boolean;
+  chapterDetection?: ChapterDetectionOptions;
+  chapterMark?: ChapterMark;
+  chapterSplitLevel?: ChapterHeadingLevel;
   /** Dense-page choices the user asked to remember, keyed by SHA-256 of the PDF bytes. */
   densePageModes?: Record<string, PdfDensePageMode>;
 }
@@ -190,6 +202,9 @@ const DEFAULT_PREFERENCES: Preferences = {
   markdownIncludeInternalLinks: true,
   assetMode: 'embedded',
   epubIncludeCover: true,
+  chapterDetection: { ...DEFAULT_CHAPTER_DETECTION },
+  chapterMark: 'none',
+  chapterSplitLevel: 2,
 };
 
 export function createInitialState(
@@ -248,6 +263,23 @@ export function persistPreferences(
   storage: PreferenceStorage,
   preferences: Preferences,
 ): void {
+  if (
+    preferences.chapterDetection !== undefined &&
+    !validateChapterDetection(preferences.chapterDetection).valid
+  )
+    throw new TypeError('Invalid chapter detection preferences.');
+  if (
+    preferences.chapterMark !== undefined &&
+    !['pagebreak', 'rule', 'none', 'both'].includes(preferences.chapterMark)
+  )
+    throw new TypeError('Invalid chapter mark preference.');
+  if (
+    preferences.chapterSplitLevel !== undefined &&
+    (!Number.isInteger(preferences.chapterSplitLevel) ||
+      preferences.chapterSplitLevel < 1 ||
+      preferences.chapterSplitLevel > 6)
+  )
+    throw new TypeError('Invalid chapter split level preference.');
   storage.setItem(STORAGE_KEY, JSON.stringify(preferences));
 }
 
@@ -275,7 +307,17 @@ export function loadPreferences(storage: PreferenceStorage): Preferences {
       (value.assetMode !== undefined &&
         !['embedded', 'folder'].includes(value.assetMode)) ||
       (value.epubIncludeCover !== undefined &&
-        typeof value.epubIncludeCover !== 'boolean')
+        typeof value.epubIncludeCover !== 'boolean') ||
+      (value.chapterDetection !== undefined &&
+        !validateChapterDetection(value.chapterDetection).valid) ||
+      (value.chapterMark !== undefined &&
+        !['pagebreak', 'rule', 'none', 'both'].includes(
+          value.chapterMark as string,
+        )) ||
+      (value.chapterSplitLevel !== undefined &&
+        (!Number.isInteger(value.chapterSplitLevel) ||
+          Number(value.chapterSplitLevel) < 1 ||
+          Number(value.chapterSplitLevel) > 6))
     )
       return DEFAULT_PREFERENCES;
     return {
@@ -287,6 +329,15 @@ export function loadPreferences(storage: PreferenceStorage): Preferences {
       markdownIncludeInternalLinks: value.markdownIncludeInternalLinks ?? true,
       assetMode: value.assetMode ?? 'embedded',
       epubIncludeCover: value.epubIncludeCover ?? true,
+      ...(value.chapterDetection !== undefined
+        ? { chapterDetection: value.chapterDetection }
+        : {}),
+      ...(value.chapterMark !== undefined
+        ? { chapterMark: value.chapterMark }
+        : {}),
+      ...(value.chapterSplitLevel !== undefined
+        ? { chapterSplitLevel: value.chapterSplitLevel }
+        : {}),
       ...(value.densePageModes !== undefined
         ? { densePageModes: densePageModes(value.densePageModes) }
         : {}),

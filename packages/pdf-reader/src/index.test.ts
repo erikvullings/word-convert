@@ -1547,6 +1547,180 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
   });
 
   describe('PDF.js reader', () => {
+    it('promotes repeated unstyled chapter openers with confident provenance', async () => {
+      const result = await pdfJsReader.read(
+        await fixture('unstyled-chapters.pdf'),
+        { conversionDate: '2026-08-29' },
+      );
+      const headings = result.model.blocks.filter(
+        (block): block is Extract<typeof block, { type: 'heading' }> =>
+          block.type === 'heading' && block.level === 2,
+      );
+
+      expect(
+        headings.map((heading) =>
+          heading.children
+            .map((node) => (node.type === 'text' ? node.text : ''))
+            .join(''),
+        ),
+      ).toEqual(['Chapter One', 'Chapter Two']);
+      expect(headings[0]?.provenance).toMatchObject({
+        source: 'pdf-chapter-detection',
+        method: 'inferred',
+        confidence: 'high',
+      });
+      expect(result.model.warnings).toContainEqual(
+        expect.objectContaining({
+          code: 'pdf-chapters-promoted',
+          details: { headings: 2 },
+        }),
+      );
+      expect(result.model.warnings).toContainEqual(
+        expect.objectContaining({
+          code: 'chapters-detected',
+          details: { chapters: 2, splitLevel: 2 },
+        }),
+      );
+    });
+
+    it('routes low-confidence chapter candidates to their style mapping', async () => {
+      const result = await pdfJsReader.read(
+        await fixture('unstyled-chapters.pdf'),
+        {
+          conversionDate: '2026-08-29',
+          chapterDetection: {
+            mode: 'automatic',
+            headingLevels: [2],
+            keywords: ['chapter one'],
+          },
+        },
+      );
+      const proposal = result.model.warnings.find(
+        ({ code }) => code === 'pdf-chapter-detection-proposal',
+      );
+
+      expect(proposal?.details?.styleId).toBeTruthy();
+      expect(proposal?.message).toContain('Chapter One');
+      expect(
+        result.model.blocks.some(
+          (block) =>
+            block.type === 'heading' &&
+            block.provenance?.source === 'pdf-chapter-detection',
+        ),
+      ).toBe(false);
+    });
+
+    it('does not promote body lines mapped explicitly by the user', async () => {
+      const bytes = await fixture('unstyled-chapters.pdf');
+      const firstPass = await pdfJsReader.read(bytes, {
+        conversionDate: '2026-08-29',
+      });
+      const bodyStyleId = firstPass.model.styles.find(
+        ({ formatting }) => formatting.fontSizePt === 12,
+      )?.id;
+      if (!bodyStyleId) throw new Error('Missing fixture body style');
+      const result = await pdfJsReader.read(bytes, {
+        conversionDate: '2026-08-29',
+        styleMappings: { [bodyStyleId]: 'body' },
+      });
+
+      expect(
+        result.model.blocks.filter(
+          (block) =>
+            block.type === 'heading' &&
+            block.provenance?.source === 'pdf-chapter-detection',
+        ),
+      ).toHaveLength(0);
+    });
+
+    it('merges a split same-style title while preserving the original heading block', async () => {
+      const result = await pdfJsReader.read(
+        await fixture('split-heading-title.pdf'),
+        { conversionDate: '2026-08-29' },
+      );
+      const headings = result.model.blocks.filter(
+        (block): block is Extract<typeof block, { type: 'heading' }> =>
+          block.type === 'heading',
+      );
+      const title = headings.find((heading) =>
+        heading.children.some(
+          (node) => node.type === 'text' && node.text.includes('THE'),
+        ),
+      );
+
+      expect(headings).toHaveLength(1);
+      expect(
+        title?.children
+          .map((node) => (node.type === 'text' ? node.text : ''))
+          .join(''),
+      ).toBe('THE LONG WAIT');
+      expect(result.model.warnings).toContainEqual(
+        expect.objectContaining({ code: 'heading-runs-merged' }),
+      );
+    });
+
+    it('preserves Part and Chapter nesting and reports a one-file book with no chapters', async () => {
+      const nested = await pdfJsReader.read(await fixture('part-nesting.pdf'), {
+        conversionDate: '2026-08-29',
+      });
+      const nestedHeadings = nested.model.blocks.filter(
+        (block): block is Extract<typeof block, { type: 'heading' }> =>
+          block.type === 'heading',
+      );
+      const empty = await pdfJsReader.read(
+        await fixture('two-column-article.pdf'),
+        {
+          conversionDate: '2026-08-29',
+          chapterDetection: {
+            mode: 'off',
+            headingLevels: [1, 2],
+            keywords: [],
+          },
+        },
+      );
+
+      expect(
+        nestedHeadings.map((heading) => [
+          heading.level,
+          heading.children
+            .map((node) => (node.type === 'text' ? node.text : ''))
+            .join(''),
+        ]),
+      ).toEqual([
+        [1, 'Part One'],
+        [2, 'Chapter One'],
+        [1, 'Part Two'],
+        [2, 'Chapter Two'],
+      ]);
+      expect(empty.model.warnings).toContainEqual(
+        expect.objectContaining({
+          code: 'chapters-detected',
+          details: { chapters: 1, splitLevel: 2 },
+        }),
+      );
+      expect(empty.model.warnings).not.toContainEqual(
+        expect.objectContaining({ code: 'pdf-chapters-promoted' }),
+      );
+    });
+
+    it('rejects malformed chapter detection options as structured input errors', async () => {
+      await expect(
+        analysePdf(rawDocument([]), {
+          conversionDate: '2026-08-29',
+          chapterDetection: {
+            mode: 'automatic',
+            headingLevels: [2],
+            keywords: ['chapter'],
+            unknown: true,
+          } as never,
+        }),
+      ).rejects.toMatchObject({
+        code: 'invalid-input',
+        phase: 'analyse',
+        details: { path: 'unknown', issueCode: 'unknown' },
+      });
+    });
+
     it('keeps furniture candidate ids stable for the book fixture', async () => {
       const bytes = await fixture('one-column-book.pdf');
       const options = {
@@ -1680,7 +1854,11 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
         imageBacked: true,
         images: ['pdf-image-1-0'],
         imageBackedPages: [1],
-        warning: ['pdf-ocr-not-supported', 'pdf-line-reflow-summary'],
+        warning: [
+          'pdf-ocr-not-supported',
+          'pdf-line-reflow-summary',
+          'chapters-detected',
+        ],
       });
     });
 

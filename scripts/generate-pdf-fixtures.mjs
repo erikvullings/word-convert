@@ -21,6 +21,9 @@ const fixedDate = new Date('2026-08-29T12:00:00.000Z');
 await mkdir(outputDirectory, { recursive: true });
 
 await save('one-column-book.pdf', await oneColumnBook());
+await save('unstyled-chapters.pdf', await unstyledChapters());
+await save('split-heading-title.pdf', await splitHeadingTitle());
+await save('part-nesting.pdf', await partNesting());
 await save('two-column-article.pdf', await twoColumnArticle());
 await save('reflow-indented-paragraphs.pdf', await reflowIndentedParagraphs());
 await save('reflow-blockquote.pdf', await reflowBlockquote());
@@ -64,6 +67,28 @@ await writeFile(
         {
           file: 'one-column-book.pdf',
           covers: ['metadata', 'running headers', 'page numbers', 'link'],
+        },
+        {
+          file: 'unstyled-chapters.pdf',
+          covers: [
+            'repeated body-font chapter openers',
+            'chapter keywords',
+            'chapter splitting',
+          ],
+        },
+        {
+          file: 'split-heading-title.pdf',
+          covers: [
+            'consecutive same-style heading blocks',
+            'split title merging',
+          ],
+        },
+        {
+          file: 'part-nesting.pdf',
+          covers: [
+            'Part-level heading inference',
+            'nested chapter-level headings',
+          ],
         },
         {
           file: 'two-column-article.pdf',
@@ -267,6 +292,112 @@ async function oneColumnBook() {
     });
   }
   addOutline(document, 'Chapter One', document.getPage(0));
+  return document;
+}
+
+async function unstyledChapters() {
+  const document = await baseDocument('Unstyled Chapters');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const paragraphs = [
+    'The opening passage carries enough words to establish a substantial chapter.',
+    'A second body line keeps the paragraph structure clear for detection.',
+    'Readers can follow the argument without any special heading typography.',
+    'The next sentence adds more ordinary text to the chapter body.',
+    'This prose remains in the same font and size as each chapter title.',
+    'A final line gives this section enough content before the next opener.',
+  ];
+  for (const [index, title] of ['Chapter One', 'Chapter Two'].entries()) {
+    const page = document.addPage([600, 800]);
+    page.drawText(title, { x: 60, y: 740, size: 12, font: body });
+    paragraphs.forEach((text, paragraphIndex) =>
+      page.drawText(text, {
+        x: 60,
+        y: 690 - paragraphIndex * 42,
+        size: 12,
+        font: body,
+      }),
+    );
+    if (index === 0)
+      page.drawText('The title style is intentionally unchanged.', {
+        x: 60,
+        y: 400,
+        size: 12,
+        font: body,
+      });
+  }
+  return document;
+}
+
+async function splitHeadingTitle() {
+  const document = await baseDocument('Split Heading Title');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const heading = await document.embedFont(StandardFonts.TimesRomanBold);
+  const headingFragment = await document.embedFont(StandardFonts.HelveticaBold);
+  const page = document.addPage([600, 800]);
+  page.drawText('THE', { x: 60, y: 700, size: 24, font: heading });
+  page.drawText('LONG WAIT', {
+    x: 60,
+    y: 620,
+    size: 24,
+    font: headingFragment,
+  });
+  [
+    'The chapter body follows the complete title.',
+    'This paragraph keeps body text at its regular size.',
+    'A second body line makes heading style classification stable.',
+    'The rest of the text remains ordinary chapter prose.',
+    'This is enough material to validate the chapter boundary.',
+  ].forEach((text, index) =>
+    page.drawText(text, {
+      x: 60,
+      y: 560 - index * 24,
+      size: 12,
+      font: body,
+    }),
+  );
+  return document;
+}
+
+async function partNesting() {
+  const document = await baseDocument('Part Nesting');
+  const body = await document.embedFont(StandardFonts.TimesRoman);
+  const paragraphs = [
+    'The section begins with ordinary body typography and enough words to be useful.',
+    'This prose continues the chapter without changing the publisher font or size.',
+    'Readers can distinguish the hierarchy from the repeated words and position.',
+    'Additional content keeps both chapter openers separated by substantive text.',
+    'A final sentence makes the chapter boundary reliable for the output writer.',
+  ];
+  for (const [index, title] of ['One', 'Two'].entries()) {
+    const page = document.addPage([600, 800]);
+    page.drawText(`Part ${title}`, {
+      x: 60,
+      y: 740,
+      size: 12,
+      font: body,
+    });
+    page.drawText(`Chapter ${title}`, {
+      x: 60,
+      y: 690,
+      size: 12,
+      font: body,
+    });
+    paragraphs.forEach((text, paragraphIndex) =>
+      page.drawText(text, {
+        x: 60,
+        y: 640 - paragraphIndex * 42,
+        size: 12,
+        font: body,
+      }),
+    );
+    if (index === 0)
+      page.drawText('The next part follows on a new page.', {
+        x: 60,
+        y: 380,
+        size: 12,
+        font: body,
+      });
+  }
   return document;
 }
 

@@ -1,3 +1,8 @@
+import {
+  applyChapterMarks,
+  countChapterGroups,
+  isChapterMark,
+} from '@wordconvert/document-model';
 import type {
   BlockNode,
   ConversionWarning,
@@ -5,6 +10,8 @@ import type {
   InlineNode,
   TextMark,
   WriterOptions,
+  ChapterHeadingLevel,
+  ChapterMark,
 } from '@wordconvert/document-model';
 import { strToU8, zipSync, type Zippable } from 'fflate';
 import {
@@ -17,6 +24,8 @@ export interface MarkdownWriterOptions extends WriterOptions {
   formulaMode?: MathOutputMode;
   includeInternalLinks?: boolean;
   includePageBreaks?: boolean;
+  chapterSplitLevel?: ChapterHeadingLevel;
+  chapterMark?: ChapterMark;
 }
 
 interface RenderContext {
@@ -94,18 +103,45 @@ function writeWithAssets(
   options: MarkdownWriterOptions,
   assetUrl: RenderContext['assetUrl'],
 ): string {
+  const chapterSplitLevel = options.chapterSplitLevel ?? 2;
+  const chapterMark = options.chapterMark ?? 'none';
+  if (
+    !Number.isInteger(chapterSplitLevel) ||
+    chapterSplitLevel < 1 ||
+    chapterSplitLevel > 6
+  )
+    throw new TypeError(
+      'Markdown chapter split level must be an integer from 1 to 6.',
+    );
+  if (!isChapterMark(chapterMark))
+    throw new TypeError(
+      'Markdown chapter mark must be pagebreak, rule, none, or both.',
+    );
+  const chapterCount = countChapterGroups(model.blocks, chapterSplitLevel);
+  const chapterModel = {
+    ...model,
+    blocks: applyChapterMarks(model.blocks, chapterSplitLevel, chapterMark),
+  };
+  options.onWarning?.({
+    code: 'markdown-chapter-count',
+    severity: 'info',
+    message: `Markdown output contains ${chapterCount} chapter(s).`,
+    details: { chapters: chapterCount, splitLevel: chapterSplitLevel },
+  });
   const context: RenderContext = {
-    model,
+    model: chapterModel,
     referencedNotes: [],
     warnedStyleIds: new Set(),
     assetUrl,
     warn: (warning) => options.onWarning?.(warning),
     formulaMode: options.formulaMode ?? 'source',
     includeInternalLinks: options.includeInternalLinks ?? true,
-    includePageBreaks: options.includePageBreaks ?? false,
+    includePageBreaks:
+      options.includePageBreaks ??
+      (chapterMark === 'pagebreak' || chapterMark === 'both'),
     indentedParagraphs: 0,
   };
-  const body = renderBlocks(model.blocks, context);
+  const body = renderBlocks(chapterModel.blocks, context);
   const title = renderDocumentTitle(model);
   const notes = renderNotes(context);
   if (context.indentedParagraphs > 0)

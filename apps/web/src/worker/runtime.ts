@@ -169,6 +169,9 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                   conversionDate: request.conversionDate,
                   formulaMode: request.formulaMode ?? 'mathml',
                   imageResizer: resizeRasterImage,
+                  chapterMark: request.chapterMark ?? 'none',
+                  chapterSplitLevel: request.chapterSplitLevel ?? 2,
+                  onWarning: (warning) => warnings.push(warning),
                   ...(request.cover ? { cover: request.cover } : {}),
                   ...(request.coverPng ? { coverPng: request.coverPng } : {}),
                   ...(request.sourceHtml
@@ -182,6 +185,9 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                 ? await writeHtmlZip(request.model, {
                     conversionDate: request.conversionDate,
                     formulaMode: request.formulaMode ?? 'mathml',
+                    chapterMark: request.chapterMark ?? 'none',
+                    chapterSplitLevel: request.chapterSplitLevel ?? 2,
+                    onWarning: (warning) => warnings.push(warning),
                     ...(request.sourceHtml
                       ? {
                           sourceHtml: request.sourceHtml.html,
@@ -195,6 +201,8 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                       formulaMode: request.formulaMode ?? 'mathml',
                       includeInternalLinks:
                         request.includeInternalLinks ?? true,
+                      chapterMark: request.chapterMark ?? 'none',
+                      chapterSplitLevel: request.chapterSplitLevel ?? 2,
                       onWarning: (warning) => warnings.push(warning),
                     })
                   : new TextEncoder().encode(
@@ -202,6 +210,9 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                         ? writeHtml(request.model, {
                             conversionDate: request.conversionDate,
                             formulaMode: request.formulaMode ?? 'mathml',
+                            chapterMark: request.chapterMark ?? 'none',
+                            chapterSplitLevel: request.chapterSplitLevel ?? 2,
+                            onWarning: (warning) => warnings.push(warning),
                             ...(request.sourceHtml
                               ? {
                                   sourceHtml: request.sourceHtml.html,
@@ -214,6 +225,8 @@ export function createWorkerRuntime(send: WorkerSend): WorkerRuntime {
                             formulaMode: request.formulaMode ?? 'mathml',
                             includeInternalLinks:
                               request.includeInternalLinks ?? true,
+                            chapterMark: request.chapterMark ?? 'none',
+                            chapterSplitLevel: request.chapterSplitLevel ?? 2,
                             onWarning: (warning) => warnings.push(warning),
                           }),
                     );

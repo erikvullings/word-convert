@@ -1,8 +1,13 @@
 import {
   DOCUMENT_MODEL_SCHEMA,
   DOCUMENT_MODEL_VERSION,
+  DEFAULT_CHAPTER_DETECTION,
+  mergeHeadingRuns,
+  validateChapterDetection,
   type AnalysedStyle,
   type BlockNode,
+  type ChapterDetectionOptions,
+  type ChapterHeadingLevel,
   type ConversionOptions,
   type ConversionWarning,
   type DocumentMetadata,
@@ -224,6 +229,8 @@ export interface PdfAnalysisOptions extends ConversionOptions {
   removedCandidateIds?: readonly string[];
   retainedCandidateIds?: readonly string[];
   styleMappings?: Readonly<Record<string, StyleMapping>>;
+  chapterDetection?: ChapterDetectionOptions;
+  chapterSplitLevel?: ChapterHeadingLevel;
   formulaDecisions?: Readonly<Record<string, PdfFormulaDecision>>;
   manualFormulaRegions?: readonly PdfManualFormulaRegion[];
   formulaRecognizer?: PdfFormulaRecognizer;
@@ -476,6 +483,23 @@ export async function analysePdf(
   raw: RawPdfDocument,
   options: PdfAnalysisOptions,
 ): Promise<PdfAnalysisResult> {
+  const chapterDetection =
+    options.chapterDetection ?? DEFAULT_CHAPTER_DETECTION;
+  const chapterDetectionValidation = validateChapterDetection(chapterDetection);
+  if (!chapterDetectionValidation.valid) {
+    const firstIssue = chapterDetectionValidation.issues[0]!;
+    throw new PdfReadError(
+      'invalid-input',
+      `Invalid chapter detection option at ${firstIssue.path || 'chapterDetection'}: ${firstIssue.message}`,
+      {
+        phase: 'analyse',
+        details: {
+          path: firstIssue.path || 'chapterDetection',
+          issueCode: firstIssue.code,
+        },
+      },
+    );
+  }
   const crop = validateCrop(options.crop);
   const unwrapFactor = options.unwrapFactor ?? DEFAULT_PDF_UNWRAP_FACTOR;
   if (!Number.isFinite(unwrapFactor) || unwrapFactor < 0 || unwrapFactor > 1)
@@ -834,7 +858,62 @@ export async function analysePdf(
         'uniform page and column margins were removed.',
       details: { paragraphs: normalizedIndentParagraphs },
     });
-  const blocks = normalizePdfLists(normalizePdfToc(tabledBlocks));
+  const chapterResult = detectChapterOpeners(
+    tabledBlocks,
+    lines,
+    styles,
+    chapterDetection,
+    lineMerging,
+  );
+  const mergedHeadings = mergeHeadingRuns(
+    normalizePdfLists(normalizePdfToc(chapterResult.blocks)),
+  );
+  const blocks = mergedHeadings.blocks;
+  if (chapterResult.segmentationTooFlat)
+    warnings.push({
+      code: 'pdf-chapter-segmentation-too-flat',
+      severity: 'warning',
+      message:
+        'Chapter detection was not applied because paragraph segmentation looks too flat to trust.',
+      details: {
+        candidates: chapterResult.candidateCount,
+        segmentationConfidence: chapterResult.segmentationConfidence,
+      },
+    });
+  for (const proposal of chapterResult.proposals)
+    warnings.push({
+      code: 'pdf-chapter-detection-proposal',
+      severity: 'info',
+      message: `Review possible chapter opener "${proposal.text}" in this style mapping.`,
+      details: {
+        styleId: proposal.styleId,
+        candidate: proposal.text,
+      },
+    });
+  if (chapterResult.promotedCount > 0)
+    warnings.push({
+      code: 'pdf-chapters-promoted',
+      severity: 'info',
+      message: `Promoted ${chapterResult.promotedCount} chapter opener(s) from body text.`,
+      details: { headings: chapterResult.promotedCount },
+    });
+  if (mergedHeadings.mergedRuns > 0)
+    warnings.push({
+      code: 'heading-runs-merged',
+      severity: 'info',
+      message: `Merged ${mergedHeadings.mergedRuns} consecutive same-style heading run(s).`,
+      details: { runs: mergedHeadings.mergedRuns },
+    });
+  const chapterCount = countChapters(blocks, options.chapterSplitLevel ?? 2);
+  warnings.push({
+    code: 'chapters-detected',
+    severity: 'info',
+    message: `Detected ${chapterCount} EPUB chapter(s) at heading level ${options.chapterSplitLevel ?? 2}.`,
+    details: {
+      chapters: chapterCount,
+      splitLevel: options.chapterSplitLevel ?? 2,
+    },
+  });
   if (truncatedGeometryPages.length > 0)
     warnings.push({
       code: 'pdf-table-geometry-truncated',
@@ -1471,6 +1550,262 @@ function semanticHeadingLevel(
   const numbered = /^(\d+(?:\.\d+)*)\.?\s+\p{Lu}/u.exec(text);
   if (!numbered) return undefined;
   return Math.min(6, numbered[1]!.split('.').length) as 1 | 2 | 3 | 4 | 5 | 6;
+}
+
+function detectChapterOpeners(
+  blocks: readonly BlockNode[],
+  lines: readonly PdfLine[],
+  styles: readonly AnalysedStyle[],
+  options: ChapterDetectionOptions,
+  lineMerging: { joined: number; kept: number },
+): {
+  blocks: BlockNode[];
+  candidateCount: number;
+  promotedCount: number;
+  proposals: Array<{ text: string; styleId: string }>;
+  segmentationConfidence: number;
+  segmentationTooFlat: boolean;
+} {
+  if (options.mode === 'off')
+    return {
+      blocks: [...blocks],
+      candidateCount: 0,
+      promotedCount: 0,
+      proposals: [],
+      segmentationConfidence: 0,
+      segmentationTooFlat: false,
+    };
+
+  const styleById = new Map(styles.map((style) => [style.id, style]));
+  const lineIndexes = new Map<PdfLine, number>();
+  const linesByStyleAndText = new Map<string, PdfLine[]>();
+  lines.forEach((line, index) => lineIndexes.set(line, index));
+  for (const line of lines) {
+    const key = `${styleId(line)}\u0000${normalizeChapterText(line.text)}`;
+    const matchingLines = linesByStyleAndText.get(key) ?? [];
+    matchingLines.push(line);
+    linesByStyleAndText.set(key, matchingLines);
+  }
+  const lineCursors = new Map<string, number>();
+  const candidateBlocks: Array<{
+    block: Extract<BlockNode, { type: 'paragraph' }>;
+    level: ChapterHeadingLevel;
+    line: PdfLine;
+    lineIndex: number;
+    spaced: boolean;
+  }> = [];
+  for (const block of blocks) {
+    if (block.type !== 'paragraph' || !block.styleId) continue;
+    const style = styleById.get(block.styleId);
+    if (
+      !style ||
+      style.provenance.method === 'user' ||
+      style.proposedMapping !== 'body'
+    )
+      continue;
+    const text = inlineText(block.children).trim();
+    if (text.length === 0 || text.length > 100 || wordCount(text) > 12)
+      continue;
+    const lineKey = `${block.styleId}\u0000${normalizeChapterText(text)}`;
+    const lineIndexForKey = lineCursors.get(lineKey) ?? 0;
+    const line = linesByStyleAndText.get(lineKey)?.[lineIndexForKey];
+    if (!line) continue;
+    lineCursors.set(lineKey, lineIndexForKey + 1);
+    const level = chapterCandidateLevel(text, block.styleId, options);
+    if (!level) continue;
+    const lineIndex = lineIndexes.get(line);
+    if (lineIndex === undefined) continue;
+    candidateBlocks.push({
+      block,
+      level,
+      line,
+      lineIndex,
+      spaced: hasChapterSpacing(lines, lineIndex),
+    });
+    if (candidateBlocks.length === 150) break;
+  }
+  const segmentationConfidence = Math.max(
+    0,
+    1 - lineMerging.joined / Math.max(1, lines.length - 1),
+  );
+  const groupedCandidates = new Map<number, typeof candidateBlocks>();
+  for (const candidate of candidateBlocks) {
+    const group = groupedCandidates.get(candidate.level) ?? [];
+    group.push(candidate);
+    groupedCandidates.set(candidate.level, group);
+  }
+  const regular = [...groupedCandidates.values()].some((group) => {
+    if (group.length < 2) return false;
+    const intervals = group
+      .slice(1)
+      .map((candidate, index) => candidate.lineIndex - group[index]!.lineIndex);
+    const average =
+      intervals.reduce((sum, interval) => sum + interval, 0) / intervals.length;
+    if (average === 0) return false;
+    const variation =
+      Math.sqrt(
+        intervals.reduce(
+          (sum, interval) => sum + (interval - average) ** 2,
+          0,
+        ) / intervals.length,
+      ) / average;
+    return variation <= 0.75;
+  });
+  const segmentationTooFlat =
+    candidateBlocks.length > 0 && segmentationConfidence < 0.1;
+  const documentWordCount = blocks.reduce(
+    (sum, block) => sum + wordCount(blockText(block)),
+    0,
+  );
+  const enoughText = documentWordCount >= 50;
+  const minimumCandidateCount = Math.min(
+    150,
+    Math.ceil(
+      documentWordCount / (documentWordCount > 200_000 ? 15_000 : 7_000),
+    ),
+  );
+  const confident =
+    regular &&
+    enoughText &&
+    candidateBlocks.length >= minimumCandidateCount &&
+    !segmentationTooFlat &&
+    candidateBlocks.every(({ spaced }) => spaced);
+  const candidates = new Set(candidateBlocks.map(({ block }) => block));
+  let promotedCount = 0;
+  const output = blocks.map((block) => {
+    if (block.type !== 'paragraph' || !candidates.has(block) || !confident)
+      return block;
+    const candidate = candidateBlocks.find(
+      ({ block: item }) => item === block,
+    )!;
+    promotedCount++;
+    return {
+      type: 'heading' as const,
+      level: candidate.level,
+      children: block.children,
+      ...(block.styleId ? { styleId: block.styleId } : {}),
+      provenance: {
+        source: 'pdf-chapter-detection',
+        method: 'inferred' as const,
+        confidence: 'high' as const,
+        reason:
+          'Repeated short body line with chapter text and structural spacing.',
+      },
+    };
+  });
+  const proposals = confident
+    ? []
+    : candidateBlocks.map(({ block, line }) => ({
+        text: line.text.trim().slice(0, 80),
+        styleId: block.styleId!,
+      }));
+  return {
+    blocks: output,
+    candidateCount: candidateBlocks.length,
+    promotedCount,
+    proposals,
+    segmentationConfidence: Number(segmentationConfidence.toFixed(2)),
+    segmentationTooFlat,
+  };
+}
+
+function chapterCandidateLevel(
+  text: string,
+  styleIdValue: string,
+  options: ChapterDetectionOptions,
+): ChapterHeadingLevel | undefined {
+  const normalized = normalizeChapterText(text);
+  const keywords = options.keywords.map((keyword) =>
+    keyword.trim().toLocaleLowerCase(),
+  );
+  const keyword = keywords.find((candidate) =>
+    new RegExp(`^${escapeRegExp(candidate)}(?:\\b|\\s|$)`, 'iu').test(
+      normalized,
+    ),
+  );
+  const styleMatch = options.styleIds?.includes(styleIdValue) ?? false;
+  const patternMatch = (options.patterns ?? []).some((pattern) =>
+    new RegExp(pattern, 'iu').test(text.slice(0, 500)),
+  );
+  if (!keyword && !styleMatch && !patternMatch) return undefined;
+  const requested =
+    keyword === 'part' && options.headingLevels.includes(1)
+      ? 1
+      : options.headingLevels.includes(2)
+        ? 2
+        : options.headingLevels[0];
+  return requested;
+}
+
+function hasChapterSpacing(lines: readonly PdfLine[], index: number): boolean {
+  const line = lines[index]!;
+  if (line.top <= 0.15 || line.top + line.height >= 0.85) return true;
+  const previous = lines[index - 1];
+  const next = lines[index + 1];
+  const beforeGap =
+    previous?.page === line.page
+      ? line.top - previous.top - previous.height
+      : 0;
+  const afterGap =
+    next?.page === line.page ? next.top - line.top - line.height : 0;
+  return beforeGap >= line.height * 1.5 || afterGap >= line.height * 1.5;
+}
+
+function normalizeChapterText(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+}
+
+function wordCount(value: string): number {
+  return value.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function blockText(block: BlockNode): string {
+  switch (block.type) {
+    case 'paragraph':
+    case 'heading':
+      return inlineText(block.children);
+    case 'list':
+      return block.items
+        .flatMap((item) => item.blocks.map(blockText))
+        .join(' ');
+    case 'table':
+      return [
+        ...(block.caption ? [inlineText(block.caption)] : []),
+        ...block.rows.flatMap((row) =>
+          row.cells.flatMap((cell) => cell.blocks.map(blockText)),
+        ),
+      ].join(' ');
+    case 'blockquote':
+      return block.blocks.map(blockText).join(' ');
+    case 'codeBlock':
+      return block.text;
+    case 'equationBlock':
+    case 'imageBlock':
+    case 'thematicBreak':
+    case 'pageBreak':
+      return '';
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function countChapters(
+  blocks: readonly BlockNode[],
+  splitLevel: ChapterHeadingLevel,
+): number {
+  let hasHeading = false;
+  let wordsSinceHeading = 0;
+  let count = 1;
+  for (const block of blocks) {
+    if (block.type === 'heading' && block.level === splitLevel) {
+      if (hasHeading && wordsSinceHeading >= 50) count++;
+      hasHeading = true;
+      wordsSinceHeading = 0;
+    } else if (hasHeading) wordsSinceHeading += wordCount(blockText(block));
+  }
+  return count;
 }
 
 function isLikelyHeadingLine(line: PdfLine): boolean {

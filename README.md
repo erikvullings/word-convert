@@ -85,6 +85,18 @@ short-line handling and opt-in `--dehyphenate on` for evidence-based word joins.
 The reader reports suspicious multi-column ordering for review rather than
 treating the PDF text layer as authoritative. See [the CLI guide](documentation/cli.md#pdf-text-reflow).
 
+PDF chapter detection defaults to `automatic`: repeated, short, spaced body-style
+openers matching chapter/book/section/prologue/epilogue/part are promoted to
+headings only when paragraph segmentation is trustworthy. Explicit style mappings
+take precedence; uncertain candidates are reported rather than silently promoted.
+Use `--chapter-detection off|automatic|custom`, `--chapter-split-level 1-6`
+(default `2`), and `--chapter-mark pagebreak|rule|none|both` (default `none`).
+Consecutive same-level heading blocks are merged into one title while retaining
+inline formatting, numbering, and the first block's ID. EPUB marks chapters at
+file boundaries; HTML uses page-break/rule elements and Markdown uses a page-break
+comment/rule. Chapter markers are inserted only between top-level content blocks.
+See [the CLI guide](documentation/cli.md#chapter-detection-and-marking).
+
 The CLI also exposes PDF extraction controls: `--crop-top <0..1>` and
 `--crop-bottom <0..1>` trim rotated-page text (their sum must stay below `0.9`);
 `--no-remove-furniture` retains automatic header/footer/page-number candidates;
