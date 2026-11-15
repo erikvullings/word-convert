@@ -28,6 +28,7 @@ import {
   type EpubWriterOptions,
 } from '@wordconvert/epub-writer';
 import type { MathOutputMode } from '@wordconvert/math-converter';
+import type { PdfAnalysisSummary } from '@wordconvert/pdf-reader';
 import { version } from '../package.json';
 import { isExecutionProvider } from './inference-options.ts';
 import {
@@ -92,6 +93,14 @@ Usage: wordconvert <input.docx|input.pdf|input.md|input.html|input.epub> [option
       --rasterize             Render PDF vectors/pages using the native runtime
       --layout-model <path>   Use a local Heron ONNX model instead of the cached default
       --no-layout             Disable default PDF layout analysis (no Heron download)
+      --crop-top <0..1>       Omit text above this fraction of each PDF page
+      --crop-bottom <0..1>    Omit text below this fraction of each PDF page
+      --no-remove-furniture   Retain detected repeated headers, footers, and page numbers
+      --remove-furniture <id> Remove a detected furniture candidate (repeatable)
+      --keep-furniture <id>   Retain a detected furniture candidate (repeatable)
+      --list-furniture        List detected PDF furniture candidates and exit
+      --no-images             Skip PDF image extraction, including figure and rendered-
+                              equation images; requires --no-layout
       --pdf-tables <list>     PDF table signals: tagged, ruled, borderless (comma
                               separated), or none. Default tagged,ruled; borderless
                               infers tables from aligned columns alone
@@ -223,6 +232,10 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     const format = values.format ?? inferOutputFormat(values.output) ?? 'epub';
     if (!isFormat(format))
       throw new UsageError(`Unknown format. Choose ${FORMATS.join(', ')}.`);
+    if (extension === '.pdf' && values['no-images'] && values['split-chapters'])
+      throw new UsageError(
+        '--no-images applies to PDF input; --split-chapters applies only to existing EPUB input.',
+      );
     if (values['split-chapters'] && extension !== '.epub')
       throw new UsageError(
         '--split-chapters applies only to existing EPUB input.',
@@ -257,6 +270,9 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         'Formula mode must be source, mathml, katex, or disabled.',
       );
     const pdfTables = parsePdfTableSignals(values['pdf-tables']);
+    const crop = parsePdfCrop(values['crop-top'], values['crop-bottom']);
+    const removedCandidateIds = parseFurnitureIds(values['remove-furniture']);
+    const retainedCandidateIds = parseFurnitureIds(values['keep-furniture']);
     const unwrapFactor = parseUnwrapFactor(values['unwrap-factor']);
     const dehyphenate = parseDehyphenate(values.dehyphenate);
     const maxImageSize = parseMaxImageSize(values['max-image-size']);
@@ -314,6 +330,22 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       throw new UsageError(
         '--no-layout cannot be combined with --layout-model.',
       );
+    if (values['no-images'] && extension === '.pdf' && !values['no-layout'])
+      throw new UsageError(
+        '--no-images cannot be combined with layout analysis; add --no-layout.',
+      );
+    if (values['no-remove-furniture'] && removedCandidateIds.length > 0)
+      throw new UsageError(
+        '--no-remove-furniture cannot be combined with --remove-furniture.',
+      );
+    if (removedCandidateIds.some((id) => retainedCandidateIds.includes(id)))
+      throw new UsageError(
+        'A furniture candidate cannot be both removed and kept.',
+      );
+    if (values['list-furniture'] && (values.output || values.format))
+      throw new UsageError(
+        '--list-furniture writes candidates to stdout and cannot be combined with --output or --format.',
+      );
     if (
       values['execution-provider'] &&
       provider !== 'auto' &&
@@ -332,16 +364,32 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         values['formula-ocr'] ||
         values['no-layout'] ||
         values['execution-provider'] ||
+        values['no-images'] ||
+        values['no-remove-furniture'] ||
+        values['remove-furniture'] !== undefined ||
+        values['keep-furniture'] !== undefined ||
+        values['crop-top'] !== undefined ||
+        values['crop-bottom'] !== undefined ||
+        values['list-furniture'] ||
         values['unwrap-factor'] !== undefined ||
         values.dehyphenate !== undefined)
     )
       throw new UsageError(
-        'PDF rendering and model options require PDF input.',
+        'PDF rendering, analysis, and extraction options require PDF input.',
       );
     if (values['frontpage-cover'] && extension !== '.pdf')
       throw new UsageError('--frontpage-cover requires PDF input.');
     if (values['pdf-tables'] && extension !== '.pdf')
       throw new UsageError('--pdf-tables requires PDF input.');
+    if (
+      values['list-furniture'] &&
+      (values['split-chapters'] ||
+        values['frontpage-cover'] ||
+        values.cover !== undefined)
+    )
+      throw new UsageError(
+        '--list-furniture cannot be combined with output or cover options.',
+      );
     if (
       (values['unwrap-factor'] !== undefined ||
         values.dehyphenate !== undefined) &&
@@ -397,7 +445,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         debugPipelineAssets: Boolean(values['debug-pipeline-assets']),
         layout:
           extension === '.pdf'
-            ? values['no-layout']
+            ? values['no-layout'] ||
+              (values['list-furniture'] && !values['layout-model'])
               ? 'disabled'
               : 'automatic'
             : 'not-used',
@@ -416,6 +465,16 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
             : 'not-used',
         rasterize: values.rasterize ?? false,
         frontPageCover: values['frontpage-cover'] ?? false,
+        crop: extension === '.pdf' ? (crop ?? null) : null,
+        removeDetectedFurniture:
+          extension === '.pdf'
+            ? !(values['no-remove-furniture'] ?? false)
+            : null,
+        removedCandidateIds: extension === '.pdf' ? removedCandidateIds : [],
+        retainedCandidateIds: extension === '.pdf' ? retainedCandidateIds : [],
+        extractImages:
+          extension === '.pdf' ? !(values['no-images'] ?? false) : null,
+        listFurniture: values['list-furniture'] ?? false,
         pdfTables:
           extension === '.pdf'
             ? (pdfTables ?? { tagged: true, ruled: true, borderless: false })
@@ -515,7 +574,9 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     let layoutModel = values['layout-model'];
     let formulaModelDir = values['formula-model-dir'];
     if (extension === '.pdf') {
-      const needsLayout = !values['no-layout'];
+      const needsLayout =
+        !values['no-layout'] &&
+        (!values['list-furniture'] || Boolean(layoutModel));
       const needsFormula = values['formula-ocr'] || Boolean(formulaModelDir);
       if (
         needsLayout ||
@@ -583,6 +644,14 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         ...options,
         executionProvider: provider,
         onDiagnostic: io.stderr,
+        ...(crop ? { crop } : {}),
+        ...(values['no-remove-furniture']
+          ? { removeDetectedFurniture: false }
+          : {}),
+        ...(removedCandidateIds.length > 0 ? { removedCandidateIds } : {}),
+        ...(retainedCandidateIds.length > 0 ? { retainedCandidateIds } : {}),
+        ...(values['no-images'] ? { extractImages: false } : {}),
+        ...(values['list-furniture'] ? { listFurniture: true } : {}),
         ...(values.rasterize ? { rasterize: true } : {}),
         ...(values['frontpage-cover'] ? { frontPageCover: true } : {}),
         ...(pdfTables ? { pdfTables } : {}),
@@ -601,6 +670,17 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       });
       model = pdfResult.model;
       coverPng = pdfResult.coverPng;
+      const foundCandidateIds = new Set(
+        pdfResult.analysis.candidates.map(({ id }) => id),
+      );
+      const unknownCandidateIds = [
+        ...removedCandidateIds,
+        ...retainedCandidateIds,
+      ].filter((id) => !foundCandidateIds.has(id));
+      if (unknownCandidateIds.length > 0)
+        throw new UsageError(
+          `Unknown PDF furniture candidate id${unknownCandidateIds.length === 1 ? '' : 's'}: ${unknownCandidateIds.join(', ')}.`,
+        );
       diagnostics.setModelSelection({
         provider: pdfResult.executionProvider ?? 'not-initialized',
         layout: layoutModel ? sanitizeBasename(layoutModel) : 'disabled',
@@ -608,6 +688,15 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
           ? sanitizeBasename(formulaModelDir)
           : 'disabled',
       });
+      if (values['list-furniture']) {
+        for (const warning of model.warnings)
+          io.stderr(
+            `${warning.severity} [${warning.code}]: ${warning.message}\n`,
+          );
+        await io.stdout(formatFurnitureCandidates(pdfResult.analysis));
+        diagnostics.report(io.stderr, pipelineRequest);
+        return 0;
+      }
     }
     if (values.title !== undefined)
       model.metadata.title = userValue(values.title);
@@ -695,6 +784,13 @@ function parseArguments(argv: string[]) {
         author: { type: 'string', multiple: true },
         cover: { type: 'string' },
         'frontpage-cover': { type: 'boolean' },
+        'crop-top': { type: 'string' },
+        'crop-bottom': { type: 'string' },
+        'no-remove-furniture': { type: 'boolean' },
+        'remove-furniture': { type: 'string', multiple: true },
+        'keep-furniture': { type: 'string', multiple: true },
+        'list-furniture': { type: 'boolean' },
+        'no-images': { type: 'boolean' },
         'unwrap-factor': { type: 'string' },
         dehyphenate: { type: 'string' },
         language: { type: 'string' },
@@ -775,6 +871,38 @@ function parseDehyphenate(value: string | undefined): boolean | undefined {
   throw new UsageError('--dehyphenate must be on or off.');
 }
 
+function parsePdfCrop(
+  topValue: string | undefined,
+  bottomValue: string | undefined,
+): Partial<{ top: number; bottom: number }> | undefined {
+  const crop: Partial<{ top: number; bottom: number }> = {};
+  for (const [option, value, edge] of [
+    ['--crop-top', topValue, 'top'],
+    ['--crop-bottom', bottomValue, 'bottom'],
+  ] as const) {
+    if (value === undefined) continue;
+    if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) {
+      throw new UsageError(`${option} must be a fraction from 0 to 1.`);
+    }
+    const fraction = Number(value);
+    if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1)
+      throw new UsageError(`${option} must be a fraction from 0 to 1.`);
+    crop[edge] = fraction;
+  }
+  if ((crop.top ?? 0) + (crop.bottom ?? 0) >= 0.9)
+    throw new UsageError(
+      'PDF crop regions must leave at least 10% of each page content.',
+    );
+  return Object.keys(crop).length > 0 ? crop : undefined;
+}
+
+function parseFurnitureIds(values: string[] | undefined): string[] {
+  if (!values) return [];
+  if (values.some((id) => !id.trim()))
+    throw new UsageError('Furniture candidate ids must not be empty.');
+  return values;
+}
+
 function parsePdfTableSignals(value: string | undefined) {
   if (value === undefined) return undefined;
   const requested = value
@@ -800,6 +928,26 @@ function parsePdfTableSignals(value: string | undefined) {
     ruled: requested.includes('ruled'),
     borderless: requested.includes('borderless'),
   };
+}
+
+function formatFurnitureCandidates(analysis: PdfAnalysisSummary): string {
+  if (analysis.candidates.length === 0)
+    return 'No PDF furniture candidates detected.\n';
+  const rows = [
+    'id\tkind\tparity\tconfidence\tpage coverage\tnormalized text\tremoved',
+    ...analysis.candidates.map((candidate) =>
+      [
+        candidate.id,
+        candidate.kind,
+        candidate.pageParity,
+        candidate.confidence,
+        `${candidate.pageNumbers.length}/${analysis.pageCount} [${candidate.pageNumbers.join(',')}]`,
+        candidate.normalizedText,
+        candidate.removed ? 'yes' : 'no',
+      ].join('\t'),
+    ),
+  ];
+  return `${rows.join('\n')}\n`;
 }
 
 function isFormulaMode(value: string): value is MathOutputMode {

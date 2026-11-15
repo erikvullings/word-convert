@@ -140,6 +140,8 @@ export interface RawPdfPage {
   /** The page exceeded the dense vector illustration threshold. */
   dense?: boolean;
   fallback?: RawPdfPageFallback;
+  /** Image placements not extracted when image extraction was explicitly disabled. */
+  omittedImageCount?: number;
   spans: RawPdfTextSpan[];
   links: RawPdfLink[];
   images: RawPdfImage[];
@@ -302,6 +304,7 @@ const resolveTableSignals = (options: PdfAnalysisOptions) => ({
 export interface PdfReaderOptions extends PdfAnalysisOptions {
   limits?: Partial<PdfReaderLimits>;
   samplePageCount?: number;
+  extractImages?: boolean;
   figureRasterizer?: PdfFigureRasterizer;
   layoutDetector?: PdfLayoutDetector;
   densePageMode?: PdfDensePageMode;
@@ -351,6 +354,9 @@ export const pdfJsReader: PdfReader = {
       ...(options.onProgress ? { onProgress: options.onProgress } : {}),
       ...(options.samplePageCount !== undefined
         ? { samplePageCount: options.samplePageCount }
+        : {}),
+      ...(options.extractImages !== undefined
+        ? { extractImages: options.extractImages }
         : {}),
       ...(options.figureRasterizer
         ? { figureRasterizer: options.figureRasterizer }
@@ -989,8 +995,8 @@ function validateCrop(
 ): PdfCropOptions {
   const value = { ...DEFAULT_CROP, ...crop };
   for (const [edge, amount] of Object.entries(value)) {
-    if (!Number.isFinite(amount) || amount < 0 || amount > 0.45)
-      throw new RangeError(`PDF ${edge} crop must be between 0 and 0.45.`);
+    if (!Number.isFinite(amount) || amount < 0 || amount > 1)
+      throw new RangeError(`PDF ${edge} crop must be between 0 and 1.`);
   }
   if (value.top + value.bottom >= 0.9)
     throw new RangeError('PDF crop regions leave no usable page content.');

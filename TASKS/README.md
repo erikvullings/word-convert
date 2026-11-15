@@ -73,7 +73,7 @@ offline comparison command only. 0045 (PDF tables) was added later at the user's
 and reverses one of 0031's rejections; it shares no sequence with the other subtasks.
 
 - [x] 0031 Adopt calibre-inspired PDF to EPUB conversion stages *(epic)*
-- [ ] 0032 Expose PDF crop furniture and image options in the CLI
+- [x] 0032 Expose PDF crop furniture and image options in the CLI
 - [x] 0033 Add median-length driven PDF line unwrapping with a tunable factor
 - [x] 0034 Add document-wide PDF de-hyphenation *(needs 0033)*
 - [ ] 0035 Normalize PDF indents and remove fake page margins

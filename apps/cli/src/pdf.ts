@@ -11,6 +11,8 @@ import {
   type ProviderSelection,
 } from './inference-options.ts';
 import type {
+  PdfAnalysisSummary,
+  PdfCropOptions,
   PdfFigureRasterizer,
   PdfPipelineStageEvent,
   PdfReaderOptions,
@@ -24,6 +26,12 @@ export interface CliPdfOptions extends ConversionOptions {
   rasterize?: boolean;
   frontPageCover?: boolean;
   pdfTables?: PdfTableOptions;
+  crop?: Partial<PdfCropOptions>;
+  removeDetectedFurniture?: boolean;
+  removedCandidateIds?: readonly string[];
+  retainedCandidateIds?: readonly string[];
+  extractImages?: boolean;
+  listFurniture?: boolean;
   unwrapFactor?: number;
   dehyphenate?: boolean;
   runtimeDir?: string;
@@ -34,6 +42,7 @@ export interface CliPdfOptions extends ConversionOptions {
 
 export interface CliPdfResult {
   model: DocumentModel;
+  analysis: PdfAnalysisSummary;
   coverPng?: Uint8Array;
   executionProvider?: ProviderSelection;
 }
@@ -106,11 +115,24 @@ export async function readPdf(
     const readerOptions: PdfReaderOptions = {
       conversionDate: options.conversionDate,
       filename,
+      ...(options.extractImages !== undefined
+        ? { extractImages: options.extractImages }
+        : {}),
       densePageMode:
         options.rasterize || options.layoutModel || options.formulaModelDir
           ? 'image-and-prose'
           : 'extract',
       ...(options.pdfTables ? { pdfTables: options.pdfTables } : {}),
+      ...(options.crop ? { crop: options.crop } : {}),
+      ...(options.removeDetectedFurniture !== undefined
+        ? { removeDetectedFurniture: options.removeDetectedFurniture }
+        : {}),
+      ...(options.removedCandidateIds
+        ? { removedCandidateIds: options.removedCandidateIds }
+        : {}),
+      ...(options.retainedCandidateIds
+        ? { retainedCandidateIds: options.retainedCandidateIds }
+        : {}),
       ...(options.unwrapFactor !== undefined
         ? { unwrapFactor: options.unwrapFactor }
         : {}),
@@ -137,27 +159,70 @@ export async function readPdf(
     if (options.frontPageCover && raw.pages[0])
       raw.pages[0] = { ...raw.pages[0], images: [] };
     options.onStage?.({ stage: 'raw', data: raw });
-    const { model } = await analysePdf(raw, {
+    const result = await analysePdf(raw, {
       conversionDate: options.conversionDate,
       filename,
       ...(options.pdfTables ? { pdfTables: options.pdfTables } : {}),
+      ...(options.crop ? { crop: options.crop } : {}),
+      ...(options.removeDetectedFurniture !== undefined
+        ? { removeDetectedFurniture: options.removeDetectedFurniture }
+        : {}),
+      ...(options.removedCandidateIds
+        ? { removedCandidateIds: options.removedCandidateIds }
+        : {}),
+      ...(options.retainedCandidateIds
+        ? { retainedCandidateIds: options.retainedCandidateIds }
+        : {}),
       ...(options.unwrapFactor !== undefined
         ? { unwrapFactor: options.unwrapFactor }
         : {}),
       ...(options.dehyphenate !== undefined
         ? { dehyphenate: options.dehyphenate }
         : {}),
-      ...(options.onStage ? { onStage: options.onStage } : {}),
     });
-    if (!options.rasterize && !options.layoutModel && !options.formulaModelDir)
+    const { model, analysis } = result;
+    if (options.extractImages === false) {
+      const omittedImages = raw.pages.reduce(
+        (total, page) => total + (page.omittedImageCount ?? 0),
+        0,
+      );
+      model.warnings.push({
+        code: 'pdf-images-omitted',
+        severity: 'warning',
+        message: `PDF image extraction is disabled; ${omittedImages} image placement${omittedImages === 1 ? '' : 's'} omitted.`,
+        details: { images: omittedImages },
+      });
+    }
+    if (options.removeDetectedFurniture === false) {
+      const retainedCandidates = analysis.candidates.filter(
+        ({ confidence, id }) =>
+          confidence === 'high' && !options.retainedCandidateIds?.includes(id),
+      ).length;
+      if (retainedCandidates > 0)
+        model.warnings.push({
+          code: 'pdf-repeated-page-furniture-retained',
+          severity: 'warning',
+          message: `Automatic repeated page-furniture removal is disabled; ${retainedCandidates} high-confidence candidate${retainedCandidates === 1 ? '' : 's'} were retained.`,
+          details: { candidates: retainedCandidates },
+        });
+    }
+    if (
+      !options.listFurniture &&
+      !options.rasterize &&
+      !options.layoutModel &&
+      !options.formulaModelDir
+    )
       model.warnings.push({
         code: 'cli-pdf-geometry-only',
         severity: 'warning',
         message:
           'PDF conversion uses geometry and embedded raster images only. Enable --rasterize, --layout-model, or --formula-model-dir for richer extraction.',
       });
+    options.onStage?.({ stage: 'analysis', data: analysis });
+    options.onStage?.({ stage: 'model', data: model });
     return {
       model,
+      analysis,
       ...(coverPng ? { coverPng } : {}),
       ...(selectedProvider ? { executionProvider: selectedProvider } : {}),
     };

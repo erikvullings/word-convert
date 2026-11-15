@@ -141,6 +141,12 @@ describe('CLI arguments and output', () => {
     );
     expect((await invoke(['--help'])).output[0]).toContain('--unwrap-factor');
     expect((await invoke(['--help'])).output[0]).toContain('--dehyphenate');
+    expect((await invoke(['--help'])).output[0]).toContain('--crop-top');
+    expect((await invoke(['--help'])).output[0]).toContain(
+      '--remove-furniture',
+    );
+    expect((await invoke(['--help'])).output[0]).toContain('--list-furniture');
+    expect((await invoke(['--help'])).output[0]).toContain('--no-images');
     expect((await invoke(['--help'])).output[0]).toContain('--debug-pipeline');
     expect((await invoke(['--help'])).output[0]).toContain(
       '--debug-pipeline-assets',
@@ -432,6 +438,24 @@ describe('CLI arguments and output', () => {
     [pdf, '--dehyphenate', 'sometimes'],
     [fixture, '--dehyphenate', 'on'],
     [fixture, '--unwrap-factor', '0.5'],
+    [pdf, '--crop-top', '-0.1'],
+    [pdf, '--crop-bottom', '1.1'],
+    [pdf, '--crop-top', '0.5', '--crop-bottom', '0.4'],
+    [pdf, '--no-images'],
+    [pdf, '--no-images', '--layout-model', 'model.onnx'],
+    [pdf, '--no-layout', '--no-remove-furniture', '--remove-furniture', 'id'],
+    [
+      pdf,
+      '--no-layout',
+      '--remove-furniture',
+      'same-id',
+      '--keep-furniture',
+      'same-id',
+    ],
+    [pdf, '--no-layout', '--no-images', '--split-chapters'],
+    [fixture, '--crop-top', '0.1'],
+    ['book.epub', '--no-images'],
+    [pdf, '--list-furniture', '--output', 'book.md'],
   ])('rejects invalid arguments %j', async (...args) => {
     const result = await invoke(args);
     expect(result.code).toBe(2);
@@ -508,6 +532,140 @@ describe('CLI arguments and output', () => {
     expect(result.output[0]).toContain('A Practical Book');
   });
 
+  it('lists furniture candidates and applies saved remove/keep decisions', async () => {
+    const listed = await invoke([pdf, '--list-furniture']);
+    expect(listed.code, listed.errors).toBe(0);
+    const rows = String(listed.output[0])
+      .trim()
+      .split('\n')
+      .slice(1)
+      .map((row) => row.split('\t'));
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0]?.[0]).toMatch(/^pdf-furniture-/);
+    expect(rows[0]?.[5]).toBeTruthy();
+    expect(rows[0]?.slice(1, 5)).toEqual([
+      expect.any(String),
+      expect.stringMatching(/^(?:odd|even)$/),
+      expect.stringMatching(/^(?:low|medium|high)$/),
+      expect.stringMatching(/^\d+\/\d+ \[/),
+    ]);
+    const automaticallyRemoved = rows.find((row) => row[6] === 'yes');
+    if (!automaticallyRemoved?.[0])
+      throw new Error('Expected an automatically removed candidate.');
+    const output = await directory();
+    const keepDebug = join(output, 'keep');
+    const kept = await invoke([
+      pdf,
+      '--no-layout',
+      '--keep-furniture',
+      automaticallyRemoved[0],
+      '-f',
+      'markdown',
+      '-o',
+      '-',
+      ...fixedDate,
+      '--debug-pipeline',
+      keepDebug,
+      '--force',
+    ]);
+    expect(kept.code, kept.errors).toBe(0);
+    const keptAnalysis = await readJson(join(keepDebug, '2-analysis.json'));
+    expect(
+      (keptAnalysis.candidates as Array<{ id: string; removed: boolean }>).find(
+        ({ id }) => id === automaticallyRemoved[0],
+      )?.removed,
+    ).toBe(false);
+    const removeDebug = join(output, 'remove');
+    const removed = await invoke([
+      pdf,
+      '--no-layout',
+      '--remove-furniture',
+      automaticallyRemoved[0],
+      '-f',
+      'markdown',
+      '-o',
+      '-',
+      ...fixedDate,
+      '--debug-pipeline',
+      removeDebug,
+      '--force',
+    ]);
+    expect(removed.code, removed.errors).toBe(0);
+    const removedAnalysis = await readJson(
+      join(removeDebug, '2-analysis.json'),
+    );
+    expect(
+      (
+        removedAnalysis.candidates as Array<{ id: string; removed: boolean }>
+      ).find(({ id }) => id === automaticallyRemoved[0])?.removed,
+    ).toBe(true);
+  }, 30_000);
+
+  it('allows page-relative crop with layout analysis disabled', async () => {
+    const output = await directory();
+    const debug = join(output, 'crop');
+    const result = await invoke([
+      pdf,
+      '--no-layout',
+      '--crop-top',
+      '0.5',
+      '--crop-bottom',
+      '0.02',
+      '-f',
+      'markdown',
+      '-o',
+      '-',
+      ...fixedDate,
+      '--debug-pipeline',
+      debug,
+      '--force',
+    ]);
+
+    expect(result.code, result.errors).toBe(0);
+    expect(await readJson(join(debug, '2-analysis.json'))).toMatchObject({
+      crop: { top: 0.5, bottom: 0.02 },
+    });
+  }, 30_000);
+
+  it('retains automatic furniture when removal is disabled and warns', async () => {
+    const result = await invoke([
+      pdf,
+      '--no-layout',
+      '--no-remove-furniture',
+      '-f',
+      'markdown',
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+
+    expect(result.code, result.errors).toBe(0);
+    expect(result.output[0]).toContain('Page 1 of 6');
+    expect(result.errors).toContain('[pdf-repeated-page-furniture-retained]');
+  }, 30_000);
+
+  it('skips image extraction and warns once with omitted placement count', async () => {
+    const scanned = fileURLToPath(
+      new URL('../../../tests/fixtures/pdf/scanned-page.pdf', import.meta.url),
+    );
+    const result = await invoke([
+      scanned,
+      '--no-layout',
+      '--no-images',
+      '-f',
+      'html',
+      '-o',
+      '-',
+      ...fixedDate,
+    ]);
+
+    expect(result.code, result.errors).toBe(0);
+    expect(result.errors.match(/\[pdf-images-omitted\]/g)).toHaveLength(1);
+    expect(result.errors).toMatch(
+      /image extraction is disabled; \d+ image placement/,
+    );
+  }, 30_000);
+
   it('keeps existing PDF corpus output byte-identical by default', async () => {
     for (const input of existingPdfFixtures) {
       const base = [
@@ -527,6 +685,16 @@ describe('CLI arguments and output', () => {
       expect(defaultOutput.output, input).toEqual(geometryOutput.output);
     }
   });
+
+  it('writes byte-identical PDF output for identical options', async () => {
+    const args = [pdf, '--no-layout', '-f', 'epub', '-o', '-', ...fixedDate];
+    const first = await invoke(args);
+    const second = await invoke(args);
+
+    expect(first.code, first.errors).toBe(0);
+    expect(second.code, second.errors).toBe(0);
+    expect(first.output).toEqual(second.output);
+  }, 30_000);
 
   it('defaults missing PDF language to English for EPUB without an override', async () => {
     const result = await invoke([

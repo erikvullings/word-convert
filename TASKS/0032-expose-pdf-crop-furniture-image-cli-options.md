@@ -1,6 +1,6 @@
 # 0032 Expose PDF crop furniture and image options in the CLI
 
-Status: open
+Status: done
 Priority: high
 Owner: unassigned
 Agent: pi

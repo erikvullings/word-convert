@@ -96,6 +96,7 @@ export type PdfDensePageResolver = (
 export interface PdfExtractionOptions {
   limits: PdfReaderLimits;
   samplePageCount?: number;
+  extractImages?: boolean;
   cancellation?: CancellationSignal;
   onProgress?: (progress: ConversionProgress) => void;
   figureRasterizer?: PdfFigureRasterizer;
@@ -285,7 +286,8 @@ export async function extractPdfWithPdfJs(
             options,
             imageBudget,
             formulaBudget,
-            includeImages: !isSample,
+            includeImages: !isSample && options.extractImages !== false,
+            countOmittedImages: !isSample && options.extractImages === false,
             densePageMode,
             guard,
           });
@@ -407,9 +409,34 @@ export interface GuardedPageContext {
   imageBudget: PdfImageBudget;
   formulaBudget: PdfFormulaBudget;
   includeImages: boolean;
+  countOmittedImages: boolean;
   densePageMode: PdfDensePageMode | undefined;
   /** Set after the first page deadline; later pages no longer share the layout model with abandoned work. */
   guard: { timedOut: boolean };
+}
+
+function countImagePlacements(operators: PdfOperatorList): number {
+  let count = 0;
+  for (let index = 0; index < operators.fnArray.length; index++) {
+    const operation = operators.fnArray[index];
+    const args = operators.argsArray[index] as unknown[] | undefined;
+    if (
+      operation === OPS.paintImageXObject ||
+      operation === OPS.paintInlineImageXObject
+    )
+      count++;
+    else if (
+      operation === OPS.paintInlineImageXObjectGroup &&
+      Array.isArray(args?.[1])
+    )
+      count += args[1].filter(isInlineImageMap).length;
+    else if (
+      operation === OPS.paintImageXObjectRepeat &&
+      isNumberSequence(args?.[3])
+    )
+      count += Math.floor(args[3].length / 2);
+  }
+  return count;
 }
 
 interface PageBudgets {
@@ -437,6 +464,10 @@ export async function readGuardedPage(
     if (!(cause instanceof PageDeadlineExceeded)) throw cause;
     context.guard.timedOut = true;
   }
+  const omittedImages =
+    context.countOmittedImages && operators
+      ? { omittedImageCount: countImagePlacements(operators) }
+      : {};
   let dense = false;
   let denseMode: PdfDensePageMode | undefined;
   if (operators) {
@@ -490,6 +521,7 @@ export async function readGuardedPage(
       return {
         page: {
           ...extracted,
+          ...omittedImages,
           ...densePage,
           ...(rasterMode
             ? { fallback: { reason: 'dense', mode: rasterMode } }
@@ -497,7 +529,7 @@ export async function readGuardedPage(
         },
         ...resolved,
       };
-    if (figureRasterizer && !rasterMode) {
+    if (includeImages && figureRasterizer && !rasterMode) {
       const rasterized = await attemptPage(context, (signal, budgets) =>
         readRasterizedPage(
           page,
@@ -514,6 +546,7 @@ export async function readGuardedPage(
         return {
           page: {
             ...rasterized,
+            ...omittedImages,
             ...densePage,
             fallback: { reason: 'timeout', mode: 'image-and-text' },
           },
@@ -528,6 +561,7 @@ export async function readGuardedPage(
     return {
       page: {
         ...textOnly,
+        ...omittedImages,
         ...(dense ? { dense: true } : {}),
         fallback: { reason: 'timeout', mode: 'text-only' },
       },

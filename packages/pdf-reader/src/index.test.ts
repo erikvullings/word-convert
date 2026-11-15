@@ -1547,6 +1547,36 @@ endcmap CMapName currentdict /CMap defineresource pop end end`,
   });
 
   describe('PDF.js reader', () => {
+    it('keeps furniture candidate ids stable for the book fixture', async () => {
+      const bytes = await fixture('one-column-book.pdf');
+      const options = {
+        conversionDate: '2026-08-29',
+        filename: 'fixture.pdf',
+      };
+      const first = await pdfJsReader.read(bytes, options);
+      const second = await pdfJsReader.read(bytes, options);
+
+      expect(first.analysis.candidates.map(({ id }) => id)).toEqual(
+        second.analysis.candidates.map(({ id }) => id),
+      );
+      expect(first.analysis.candidates.length).toBeGreaterThan(0);
+    });
+
+    it('skips PDF image extraction and counts omitted placements when requested', async () => {
+      const raw = await pdfJsReader.readRaw(await fixture('scanned-page.pdf'), {
+        conversionDate: '2026-08-29',
+        extractImages: false,
+      });
+
+      expect(raw.pages.every(({ images }) => images.length === 0)).toBe(true);
+      expect(
+        raw.pages.reduce(
+          (total, page) => total + (page.omittedImageCount ?? 0),
+          0,
+        ),
+      ).toBeGreaterThan(0);
+    });
+
     it('extracts PDF metadata and positioned text through the public reader', async () => {
       const raw = await pdfJsReader.readRaw(
         await fixture('one-column-book.pdf'),

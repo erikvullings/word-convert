@@ -85,6 +85,15 @@ short-line handling and opt-in `--dehyphenate on` for evidence-based word joins.
 The reader reports suspicious multi-column ordering for review rather than
 treating the PDF text layer as authoritative. See [the CLI guide](documentation/cli.md#pdf-text-reflow).
 
+The CLI also exposes PDF extraction controls: `--crop-top <0..1>` and
+`--crop-bottom <0..1>` trim rotated-page text (their sum must stay below `0.9`);
+`--no-remove-furniture` retains automatic header/footer/page-number candidates;
+repeat `--remove-furniture <id>` or `--keep-furniture <id>` to apply reviewed
+decisions, and `--list-furniture` prints candidate IDs and their evidence.
+`--no-images` skips PDF image extraction, including figure and rendered-equation
+images, and requires `--no-layout`. These are PDF-only options; existing EPUB
+shrinking behavior is unchanged. See [the CLI guide](documentation/cli.md#pdf-page-numbers-running-headers-and-footers).
+
 Use repeatable `--verbose` (up to twice) for stage timings and object counts,
 then applied options and inference provider/model details. `--debug-pipeline
 <dir>` also enables stage timings and writes a versioned request, PDF raw and

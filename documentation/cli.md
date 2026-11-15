@@ -258,6 +258,38 @@ Medium/low-confidence candidates remain to avoid deleting real content.
 The cleanup warning is reported on stderr. Text baked into page images remains
 visible; full-page OCR or image erasure is not performed.
 
+PDF extraction options are independent of EPUB shrinking:
+
+```sh
+wordconvert book.pdf --list-furniture
+wordconvert book.pdf --remove-furniture pdf-furniture-abc123 -o cleaned.epub
+wordconvert book.pdf --keep-furniture pdf-furniture-abc123 -o reviewed.epub
+wordconvert book.pdf --no-remove-furniture --no-layout -o untrimmed.epub
+wordconvert book.pdf --crop-top 0.04 --crop-bottom 0.03 --no-layout
+wordconvert book.pdf --no-images --no-layout
+```
+
+`--list-furniture` prints tab-separated candidate IDs, kind, odd/even page
+parity, confidence, page coverage, normalized text, and the current removal
+decision, then exits. It uses geometry-only analysis unless `--layout-model` is
+explicitly supplied; it cannot be combined with `--format` or `--output`.
+Candidate IDs derive from the reader's normalized text and page geometry and
+remain stable for identical PDF bytes. Repeat `--remove-furniture <id>` or
+`--keep-furniture <id>` to apply saved decisions on later conversions. Unknown
+IDs are rejected. A candidate cannot be both kept and removed; explicit remove
+and `--no-remove-furniture` are conflicting options. `--no-remove-furniture`
+retains high-confidence automatic candidates and reports how many it retained.
+
+`--crop-top` and `--crop-bottom` take fractions from 0 to 1 of each rotated
+page. Their sum must be less than 0.9 so at least 10% remains. Cropping is a
+reader operation and works with `--no-layout`; it changes no defaults when
+omitted. `--no-images` skips PDF image extraction, including figure and
+rendered-equation images, and reports the number of source image placements
+omitted. It requires `--no-layout` because layout inference depends on figure
+images. It cannot be combined with `--split-chapters`; the latter is exclusive
+to existing EPUB input, where PDF-only extraction flags are rejected and the
+EPUB shrinking path is unchanged.
+
 EPUB shrinking removes isolated numeric or Roman-numeral paragraphs only when
 they precede explicit page-break markers and at least two such page numbers are
 present in that XHTML document. It also removes repeated text-only labels that
